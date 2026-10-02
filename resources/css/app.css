@@ -7,3 +7,211 @@
     --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
         'Segoe UI Symbol', 'Noto Color Emoji';
 }
+
+@layer components {
+    .nav-link {
+        @apply rounded-xl px-3 py-2.5 font-medium text-slate-600 transition hover:bg-teal-50 hover:text-teal-900;
+    }
+
+    .form-label {
+        @apply grid gap-1.5 text-sm font-medium text-slate-700;
+    }
+
+    .form-input {
+        @apply min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-teal-600 focus:ring-2 focus:ring-teal-100;
+    }
+
+    .btn-primary {
+        @apply inline-flex min-h-11 items-center justify-center rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800 focus:outline-none focus:ring-2 focus:ring-teal-300;
+    }
+
+    .btn-secondary {
+        @apply inline-flex min-h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-teal-300 hover:bg-teal-50;
+    }
+
+    .btn-small {
+        @apply inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold hover:bg-slate-50;
+    }
+
+    .stat-card {
+        @apply rounded-2xl border border-slate-200 bg-white p-5;
+    }
+
+    .status-badge {
+        @apply inline-flex rounded-full bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-800;
+    }
+
+    .data-table {
+        @apply w-full min-w-[720px] border-collapse text-left text-sm;
+    }
+
+    .data-table tr.selected-bill td {
+        @apply bg-amber-50;
+    }
+
+    .data-table th {
+        @apply border-b border-slate-100 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500;
+    }
+
+    .data-table td {
+        @apply border-b border-slate-100 px-4 py-3 align-top text-slate-700;
+    }
+}
+
+@media (max-width: 1099px) {
+    .data-table {
+        display: block;
+        min-width: 0;
+    }
+
+    .data-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        clip-path: inset(50%);
+    }
+
+    .data-table tbody,
+    .data-table tr,
+    .data-table td {
+        display: block;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .data-table tbody {
+        padding: 0.75rem;
+    }
+
+    .data-table tr:not(:has(td[colspan])) {
+        overflow: hidden;
+        margin-bottom: 0.75rem;
+        border: 1px solid rgb(226 232 240);
+        border-radius: 1rem;
+        background: white;
+    }
+
+    .data-table td:not([colspan]) {
+        display: grid;
+        grid-template-columns: minmax(5.5rem, 30%) minmax(0, 1fr);
+        gap: 0.75rem;
+        padding: 0.7rem 0.85rem;
+        overflow-wrap: anywhere;
+    }
+
+    .data-table td:not([colspan])::before {
+        content: attr(data-label);
+        color: rgb(100 116 139);
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    .data-table td[colspan] {
+        padding: 1.5rem 0.5rem;
+        text-align: center;
+    }
+
+    .data-table td[colspan]::before {
+        content: none;
+    }
+
+    .data-table td form {
+        min-width: 0;
+    }
+
+    .data-table td .min-w-80 {
+        min-width: 0;
+    }
+
+    .data-table tr.selected-bill td {
+        background: rgb(255 251 235);
+    }
+}
+
+@media print {
+    @page {
+        size: A4;
+        margin: 18mm;
+    }
+
+    .app-sidebar,
+    .print-hidden {
+        display: none !important;
+    }
+
+    .app-shell {
+        display: block !important;
+    }
+
+    .app-shell main {
+        padding: 0 !important;
+    }
+
+    .report-note {
+        margin-top: 1rem;
+        color: #334155 !important;
+    }
+
+    .clinic-report-page {
+        width: 100%;
+        color: black;
+    }
+
+    .report-print-header {
+        display: block !important;
+        margin-bottom: 1.5rem;
+        border-bottom: 1px solid #94a3b8;
+        padding-bottom: 1rem;
+        text-align: center;
+    }
+
+    .report-cards {
+        display: none !important;
+    }
+
+    .report-print-table-wrapper {
+        overflow: visible;
+    }
+
+    .report-print-table {
+        display: table !important;
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11pt;
+    }
+
+    .report-print-table th,
+    .report-print-table td {
+        border: 1px solid #94a3b8;
+        padding: 0.65rem;
+        text-align: left;
+    }
+
+    .report-print-table th {
+        background: #f1f5f9 !important;
+        print-color-adjust: exact;
+    }
+
+    .report-print-footer {
+        display: block !important;
+        margin-top: 2rem;
+        border-top: 1px solid #cbd5e1;
+        padding-top: 0.75rem;
+        color: #475569;
+        font-size: 9pt;
+    }
+}
+
+.report-print-header,
+.report-print-footer {
+    display: none;
+}
+
+.report-print-table {
+    display: none;
+}

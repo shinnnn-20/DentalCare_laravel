@@ -2,7 +2,7 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
+use App\Models\Service;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -15,11 +15,19 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // User::factory(10)->create();
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        foreach ([
+            ['Consultation', 500],
+            ['Dental Cleaning', 1000],
+            ['Tooth Extraction', 1500],
+            ['Dental Filling', 1800],
+            ['Root Canal', 6500],
+            ['Dental X-Ray', 800],
+            ['Teeth Whitening', 5000],
+        ] as [$name, $price]) {
+            Service::firstOrCreate(
+                ['name' => $name],
+                ['price' => $price, 'is_active' => true],
+            );
+        }
     }
 }

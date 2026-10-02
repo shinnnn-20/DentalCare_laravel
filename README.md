@@ -1,58 +1,83 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# DentalCare Clinic
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A Laravel 13 clinic portal for patient registration, appointment requests, walk-ins, RFID-assisted check-in, dental records, billing, payments, receipts, and clinic activity logs.
 
-## About Laravel
+## Setup
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+Requirements: PHP 8.3+ with `fileinfo` and `pdo_sqlite` enabled (when using SQLite), Composer, and Node.js/npm.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
-
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
-
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+```powershell
+# Only needed if Node.js is installed but npm is not on PATH:
+$env:PATH = "$env:ProgramFiles\nodejs;$env:PATH"
+composer run setup
+php artisan clinic:create-admin "Clinic Doctor" doctor@example.com
+npm run dev
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+The administrator creation command prompts for a password without echoing it and refuses to create a second administrator. `composer run setup` installs dependencies, creates the default SQLite database file if needed, generates the application key, runs migrations and seeds the example dental services, then installs/builds front-end dependencies.
 
-## Contributing
+In a second terminal, run the web server:
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```powershell
+php artisan serve
+```
 
-## Code of Conduct
+Patient accounts can be registered from the sign-in page. The first administrator must be created with the Artisan command; staff accounts are created by an administrator from **Staff accounts**.
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+For appointment reminders in a local environment, run `php artisan schedule:work` in another terminal. Production should run Laravel's scheduler every minute using the deployment platform's scheduled-task mechanism.
 
-## Security Vulnerabilities
+## Architecture
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### Application modules
 
-## License
+| Module | Main routes | Responsibility |
+| --- | --- | --- |
+| Authentication | `/login`, `/register`, `/logout` | Session login, public patient registration, throttling, and active-account enforcement |
+| Portals | `/dashboard` | Role-specific patient, staff, and administrator summaries |
+| Patients | `/clinic/patients` | Patient directory, registration, profile management, and history |
+| Appointments | `/appointments` | Online requests, walk-ins, approval, rescheduling, cancellation, and status transitions |
+| RFID and queue | `/clinic/rfid`, `/clinic/queue` | UID assignment, scan logging, patient identification, check-in, and queue progression |
+| Dental records | `/clinic/appointments/{appointment}/record`, `/my/dental-records` | Administrator-entered clinical notes and patient-owned history |
+| Services | `/clinic/services` | Service catalog; only administrators can create, edit, activate, or price services |
+| Billing and receipts | `/clinic/billing`, `/receipts/{receipt}` | Bill snapshots, partial payments, immutable payment/receipt records, and print layout |
+| Administration | `/admin/staff`, `/admin/reports`, `/admin/audit-logs`, `/admin/sms-logs` | Staff access, reporting, and operational logs |
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Controllers coordinate HTTP validation and responses. Eloquent models define the relational data, `AuditTrail` records clinic actions, and `SmsNotifier` isolates outbound messaging. Role middleware enforces access on the server as well as in navigation. Patient endpoints scope appointments, records, bills, messages, and receipts to the authenticated patient's own profile.
+
+### Data relationships
+
+```mermaid
+erDiagram
+    USERS ||--o| PATIENTS : owns
+    PATIENTS ||--o{ APPOINTMENTS : books
+    SERVICES ||--o{ APPOINTMENTS : selected_for
+    APPOINTMENTS ||--o| DENTAL_RECORDS : documents
+    APPOINTMENTS ||--o| BILLS : billed_as
+    APPOINTMENTS ||--o| QUEUE_ENTRIES : enters
+    PATIENTS ||--o| RFID_CARDS : assigned
+    RFID_CARDS ||--o{ RFID_LOGS : scanned
+    BILLS ||--|{ BILL_ITEMS : contains
+    BILLS ||--o{ PAYMENTS : paid_by
+    PAYMENTS ||--o| RECEIPTS : generates
+    PATIENTS ||--o{ SMS_LOGS : receives
+    USERS ||--o{ AUDIT_LOGS : performs
+```
+
+The database enforces unique email addresses, patient numbers, service names, RFID UIDs, bill numbers, transaction IDs, receipt numbers, one bill per appointment, and one queue entry per appointment. Billing items keep a snapshot of service name and price so later catalog edits do not rewrite historical bills.
+
+### Appointment and payment flow
+
+1. A patient requests an online appointment; its initial status is `pending`. Staff or the administrator approves or rejects it.
+2. New appointment bookings are available Monday through Saturday, 10:00 AM–5:00 PM, in 10-minute increments; the clinic is closed Sundays. Staff create walk-ins for existing or newly registered patients; walk-ins are immediately placed in the day's queue. An approved appointment can also be checked in with the patient's RFID UID.
+3. Staff use **Patient queue** to call a waiting patient, start the visit, or mark a checked-in patient as a no-show. During consultation, an administrator enters the dental record.
+4. Once a dental record exists, staff or the administrator can create the bill during consultation. The appointment becomes `billed`; its item snapshots the service price, and billing supports discounts and partial payments.
+5. Every successful payment creates a transaction and receipt in the same database transaction. The appointment remains `billed` after payment; staff or an administrator can mark it `completed` only when the bill is itemized and fully paid. A zero-balance bill is finalized as paid when created. Overpayment change is recorded for cash. Payment and receipt records have no delete endpoint.
+
+## External integrations
+
+- **RFID:** the check-in page accepts a scanned UID as text, which works with keyboard-wedge scanners. Direct serial, USB, or network hardware integration is not included. RFID is not used for account authentication.
+- **SMS:** set `CLINIC_SMS_ENDPOINT` and `CLINIC_SMS_TOKEN` in the environment. The endpoint is expected to accept a bearer-authenticated JSON `POST` with `to` and `message` fields. Each attempt is logged; an unconfigured or unavailable gateway is recorded as failed rather than reported as sent. Provider-specific payloads may require adapting `SmsNotifier`.
+- **Payments:** cash, GCash, card, and other transactions are recorded manually. The application does not charge cards or contact a payment processor.
+- **PDF:** use **Print / save PDF** on a receipt or report and select “Save as PDF” in the browser print dialog.
+
+Clinic name, address, contact number, and currency symbol can be set with `CLINIC_NAME`, `CLINIC_ADDRESS`, `CLINIC_PHONE`, and `CLINIC_CURRENCY_SYMBOL`. SMS settings and clinic details belong in the environment, never in source control.

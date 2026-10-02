@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'clinic_sms' => [
+        'endpoint' => env('CLINIC_SMS_ENDPOINT'),
+        'token' => env('CLINIC_SMS_TOKEN'),
+    ],
+
 ];
