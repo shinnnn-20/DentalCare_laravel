@@ -12,14 +12,19 @@
         <section class="rounded-2xl bg-teal-800 p-6 text-white xl:col-span-2">
             <p class="text-sm font-medium text-teal-100">Next appointment</p>
             @if ($nextAppointment)
+                <span class="mt-4 inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide">Next visit</span>
                 <h2 class="mt-3 text-2xl font-bold">{{ $nextAppointment->service->name }}</h2>
-                <p class="mt-2 text-teal-100">{{ $nextAppointment->starts_at->format('l, F j, Y · g:i A') }}</p>
-                <span class="mt-5 inline-flex rounded-full bg-white/15 px-3 py-1 text-sm capitalize">{{ str_replace('_', ' ', $nextAppointment->status) }}</span>
+                <p class="sr-only">{{ $nextAppointment->starts_at->format('l, F j, Y · g:i A') }}</p>
+                <div class="mt-3 grid gap-2 text-sm text-teal-50 sm:grid-cols-2" aria-hidden="true">
+                    <p class="flex items-center gap-2"><span class="grid h-8 w-8 place-items-center rounded-lg bg-white/10">▦</span>{{ $nextAppointment->starts_at->format('l, F j, Y') }}</p>
+                    <p class="flex items-center gap-2"><span class="grid h-8 w-8 place-items-center rounded-lg bg-white/10">◷</span>{{ $nextAppointment->starts_at->format('g:i A') }}</p>
+                </div>
+                <span class="mt-4 inline-flex rounded-full bg-white/15 px-3 py-1 text-sm capitalize">{{ str_replace('_', ' ', $nextAppointment->status) }}</span>
             @else
                 <h2 class="mt-3 text-2xl font-bold">No upcoming appointments</h2>
                 <p class="mt-2 text-teal-100">Book a visit and the clinic will confirm your requested time.</p>
             @endif
-            <a href="{{ route('appointments.index') }}" class="mt-6 inline-flex rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-teal-900 hover:bg-teal-50">Book or manage appointments</a>
+            <a href="{{ route('appointments.index') }}" class="mt-6 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-white px-4 py-2.5 text-center text-sm font-semibold text-teal-900 hover:bg-teal-50 sm:w-auto">Book or manage appointments</a>
         </section>
         <section class="stat-card">
             <p class="text-sm font-medium text-slate-500">Outstanding bills</p>

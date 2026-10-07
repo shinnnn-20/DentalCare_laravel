@@ -20,12 +20,12 @@
                 </div>
                 <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-3"><span class="status-badge capitalize">{{ str_replace('_', ' ', $entry->status) }}</span>
                     @if ($entry->status === 'waiting')
-                        <form method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'call']) }}">@csrf<button class="btn-primary">Call patient</button></form>
+                        <form class="w-full sm:w-auto" method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'call']) }}">@csrf<button class="btn-primary w-full sm:w-auto">Call patient</button></form>
                     @elseif ($entry->status === 'called')
-                        <form method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'consult']) }}">@csrf<button class="btn-primary">Start visit</button></form>
+                        <form class="w-full sm:w-auto" method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'consult']) }}">@csrf<button class="btn-primary w-full sm:w-auto">Start visit</button></form>
                     @endif
                     @if (in_array($entry->status, ['waiting', 'called'], true))
-                        <form method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'no-show']) }}">@csrf<button class="btn-small text-rose-700">No show</button></form>
+                        <form class="w-full sm:w-auto" method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'no-show']) }}">@csrf<button class="btn-small w-full text-rose-700 sm:w-auto">No show</button></form>
                     @endif
                 </div>
             </article>

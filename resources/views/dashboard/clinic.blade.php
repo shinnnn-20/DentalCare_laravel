@@ -50,9 +50,9 @@
                 <tbody>
                 @forelse ($appointments as $appointment)
                     <tr>
-                        <td data-label="Time" class="whitespace-nowrap font-medium">{{ $appointment->starts_at->format('g:i A') }}</td>
+                        <td data-label="Time"><span class="inline-flex flex-col gap-1"><span class="font-semibold text-slate-800">{{ $appointment->starts_at->format('g:i A') }}</span><span class="text-xs text-slate-500">{{ $appointment->starts_at->format('M j, Y') }}</span></span></td>
                         <td data-label="Patient"><a class="font-semibold text-teal-800 hover:underline" href="{{ route('clinic.patients.show', $appointment->patient) }}">{{ $appointment->patient->user->name }}</a><div class="text-xs text-slate-400">{{ $appointment->patient->patient_number }}</div></td>
-                        <td data-label="Service">{{ $appointment->service->name }}</td>
+                        <td data-label="Service"><span class="inline-flex rounded-lg bg-teal-50 px-2.5 py-1.5 font-semibold text-teal-900">{{ $appointment->service->name }}</span></td>
                         <td data-label="Type" class="capitalize">{{ str_replace('_', ' ', $appointment->type) }}</td>
                         <td data-label="Status"><span class="status-badge">{{ str_replace('_', ' ', $appointment->status) }}</span></td>
                         <td data-label="Queue">{{ $appointment->queueEntry?->queue_number ?? '—' }}</td>

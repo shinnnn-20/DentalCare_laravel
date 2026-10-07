@@ -6,6 +6,7 @@ use App\Models\Bill;
 use App\Models\Payment;
 use App\Models\Receipt;
 use App\Services\AuditTrail;
+use App\Services\ClinicNotificationService;
 use App\Services\SmsNotifier;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -16,8 +17,13 @@ use Illuminate\View\View;
 
 class PaymentController extends Controller
 {
-    public function store(Request $request, Bill $bill, AuditTrail $auditTrail, SmsNotifier $smsNotifier): RedirectResponse
-    {
+    public function store(
+        Request $request,
+        Bill $bill,
+        AuditTrail $auditTrail,
+        SmsNotifier $smsNotifier,
+        ClinicNotificationService $notifications,
+    ): RedirectResponse {
         $data = $request->validate([
             'method' => ['required', 'in:cash,gcash,card,other'],
             'amount' => ['required', 'numeric', 'decimal:0,2', 'gt:0', 'max:1000000'],
@@ -66,6 +72,16 @@ class PaymentController extends Controller
 
         $payment->load(['bill.patient.user', 'receipt']);
         $auditTrail->record($request->user(), 'payment_processed', 'payments', $payment);
+        $notifications->notifyClinicStaff(
+            $request->user(),
+            'billing.payment_recorded',
+            'Payment Recorded',
+            "{$request->user()->name} recorded a payment of ₱".number_format((float) $payment->applied_amount, 2)
+                ." for {$payment->bill->patient->user->name}.",
+            route('clinic.billing.index', ['bill' => $payment->bill_id], false).'#bill-'.$payment->bill_id,
+            'bill',
+            $payment->bill_id,
+        );
         $smsNotifier->send(
             $payment->bill->patient,
             'payment',

@@ -4,7 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\Appointment;
 use App\Models\Bill;
+use App\Models\BillItem;
+use App\Models\DentalRecord;
 use App\Models\Patient;
+use App\Models\Payment;
 use App\Models\QueueEntry;
 use App\Models\Receipt;
 use App\Models\RfidCard;
@@ -13,7 +16,11 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Mail;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class ClinicWorkflowTest extends TestCase
@@ -22,6 +29,8 @@ class ClinicWorkflowTest extends TestCase
 
     public function test_public_registration_creates_a_patient_account_only(): void
     {
+        Mail::fake();
+
         $response = $this->post(route('register.store'), [
             'name' => 'Jamie Patient',
             'date_of_birth' => '1990-03-10',
@@ -37,10 +46,16 @@ class ClinicWorkflowTest extends TestCase
 
         $user = User::where('email', 'jamie@example.test')->firstOrFail();
 
-        $response->assertRedirectToRoute('dashboard');
+        $response->assertRedirectToRoute('verification.notice')
+            ->assertSessionHas('verification_user_id', $user->id);
+        $this->get(route('verification.notice'))
+            ->assertSee('Verify Your Email')
+            ->assertSee('jamie@example.test');
         $this->assertSame('patient', $user->role);
+        $this->assertNull($user->email_verified_at);
         $this->assertMatchesRegularExpression('/^P-\d{4}-\d{5}$/', $user->patient->patient_number);
         $this->assertDatabaseHas('audit_logs', ['action' => 'patient_registered']);
+        $this->assertGuest();
     }
 
     public function test_patient_cannot_open_clinic_patient_records(): void
@@ -59,6 +74,113 @@ class ClinicWorkflowTest extends TestCase
             ->assertForbidden();
     }
 
+    #[DataProvider('clinicStaffRoles')]
+    public function test_admin_and_staff_can_remove_patient_access_while_retaining_clinic_records(string $role): void
+    {
+        $actor = User::factory()->create(['role' => $role]);
+        $patient = $this->createPatient('P-2026-00030');
+        $patientUser = $patient->user;
+        $appointment = Appointment::factory()->for($patient)->create();
+        $dentalRecord = DentalRecord::factory()
+            ->for($patient)
+            ->for($appointment)
+            ->create();
+        DB::table('email_verification_tokens')->insert([
+            'user_id' => $patientUser->id,
+            'token_hash' => str_repeat('a', 64),
+            'expires_at' => now()->addMinutes(15),
+            'created_at' => now(),
+        ]);
+        DB::table('sessions')->insert([
+            'id' => 'patient-session-'.$patientUser->id,
+            'user_id' => $patientUser->id,
+            'payload' => 'session-payload',
+            'last_activity' => now()->timestamp,
+        ]);
+
+        $response = $this->actingAs($actor)->delete(route('clinic.patients.destroy', $patient), [
+            'confirmation' => $patient->patient_number,
+        ]);
+
+        $response->assertRedirectToRoute('clinic.patients.index')
+            ->assertSessionHas('status', 'Patient access removed. Profile details were pseudonymized; clinic records were retained.');
+        $this->assertFalse($patientUser->fresh()->is_active);
+        $this->assertSame('Removed Patient '.$patientUser->id, $patientUser->fresh()->name);
+        $this->assertSame('removed-patient-'.$patientUser->id.'@example.invalid', $patientUser->fresh()->email);
+        $this->assertNull($patientUser->fresh()->phone);
+        $this->assertNull($patient->fresh()->date_of_birth);
+        $this->assertNull($patient->fresh()->gender);
+        $this->assertNull($patient->fresh()->address);
+        $this->assertNull($patient->fresh()->emergency_contact);
+        $this->assertModelExists($patient->fresh());
+        $this->assertModelExists($appointment->fresh());
+        $this->assertModelExists($dentalRecord->fresh());
+        $this->assertDatabaseMissing('email_verification_tokens', ['user_id' => $patientUser->id]);
+        $this->assertDatabaseMissing('sessions', ['id' => 'patient-session-'.$patientUser->id]);
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $actor->id,
+            'action' => 'patient_access_removed',
+            'module' => 'patients',
+            'record_type' => 'Patient',
+            'record_id' => (string) $patient->id,
+        ]);
+    }
+
+    public static function clinicStaffRoles(): array
+    {
+        return [
+            'admin' => ['admin'],
+            'staff doctor' => ['staff'],
+        ];
+    }
+
+    public function test_patient_cannot_remove_a_patient_account(): void
+    {
+        $patientUser = User::factory()->create(['role' => 'patient']);
+        $patient = $this->createPatient('P-2026-00031');
+
+        $this->actingAs($patientUser)
+            ->delete(route('clinic.patients.destroy', $patient), [
+                'confirmation' => $patient->patient_number,
+            ])
+            ->assertForbidden();
+
+        $this->assertTrue($patient->user->fresh()->is_active);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'patient_access_removed']);
+    }
+
+    public function test_patient_access_removal_requires_exact_patient_number_confirmation(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $patient = $this->createPatient('P-2026-00032');
+        $originalEmail = $patient->user->email;
+
+        $this->actingAs($admin)
+            ->delete(route('clinic.patients.destroy', $patient), [
+                'confirmation' => 'P-2026-99999',
+            ])
+            ->assertSessionHasErrors([
+                'confirmation' => 'Enter the patient number exactly to confirm account removal.',
+            ]);
+
+        $this->assertTrue($patient->user->fresh()->is_active);
+        $this->assertSame($originalEmail, $patient->user->fresh()->email);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'patient_access_removed']);
+    }
+
+    #[DataProvider('clinicStaffRoles')]
+    public function test_admin_and_staff_can_see_patient_access_removal_form(string $role): void
+    {
+        $actor = User::factory()->create(['role' => $role]);
+        $patient = $this->createPatient('P-2026-00033');
+
+        $this->actingAs($actor)
+            ->get(route('clinic.patients.show', $patient))
+            ->assertSee('Remove patient access')
+            ->assertSee('to confirm')
+            ->assertSee($patient->patient_number);
+    }
+
     public function test_staff_cannot_create_staff_accounts(): void
     {
         $staff = User::factory()->create(['role' => 'staff']);
@@ -66,6 +188,95 @@ class ClinicWorkflowTest extends TestCase
         $this->actingAs($staff)
             ->get(route('admin.staff.index'))
             ->assertForbidden();
+    }
+
+    public function test_admin_can_reset_a_patient_password_and_the_reset_is_audited(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $patient = $this->createPatient('P-2026-00015');
+        $patientUser = $patient->user;
+
+        $response = $this->actingAs($admin)->put(route('clinic.patients.password', $patient), [
+            'password' => 'new-secure-password-456',
+            'password_confirmation' => 'new-secure-password-456',
+        ]);
+
+        $response->assertRedirectToRoute('clinic.patients.show', $patient);
+        $this->assertTrue(Hash::check('new-secure-password-456', $patientUser->fresh()->password));
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $admin->id,
+            'action' => 'patient_password_reset',
+            'module' => 'patients',
+            'record_type' => 'Patient',
+            'record_id' => $patient->id,
+        ]);
+    }
+
+    public function test_guest_cannot_reset_a_patient_password(): void
+    {
+        $patient = $this->createPatient('P-2026-00019');
+        $originalPassword = $patient->user->password;
+
+        $this->put(route('clinic.patients.password', $patient), [
+            'password' => 'new-secure-password-456',
+            'password_confirmation' => 'new-secure-password-456',
+        ])->assertRedirectToRoute('login');
+
+        $this->assertSame($originalPassword, $patient->user->fresh()->password);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'patient_password_reset']);
+    }
+
+    #[DataProvider('nonAdminRoles')]
+    public function test_non_admin_cannot_reset_a_patient_password(string $role): void
+    {
+        $user = User::factory()->create(['role' => $role]);
+        $patient = $this->createPatient('P-2026-00016');
+
+        $this->actingAs($user)
+            ->put(route('clinic.patients.password', $patient), [
+                'password' => 'new-secure-password-456',
+                'password_confirmation' => 'new-secure-password-456',
+            ])
+            ->assertForbidden();
+    }
+
+    public static function nonAdminRoles(): array
+    {
+        return [
+            'staff' => ['staff'],
+            'patient' => ['patient'],
+        ];
+    }
+
+    public function test_patient_password_reset_requires_matching_password_confirmation(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $patient = $this->createPatient('P-2026-00017');
+        $originalPassword = $patient->user->password;
+
+        $this->actingAs($admin)
+            ->put(route('clinic.patients.password', $patient), [
+                'password' => 'new-secure-password-456',
+                'password_confirmation' => 'different-secure-password-789',
+            ])
+            ->assertSessionHasErrors('password');
+
+        $this->assertSame($originalPassword, $patient->user->fresh()->password);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'patient_password_reset']);
+    }
+
+    public function test_patient_password_reset_form_is_only_shown_to_admins(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00018');
+
+        $this->actingAs($admin)
+            ->get(route('clinic.patients.show', $patient))
+            ->assertSee('Reset patient password');
+        $this->actingAs($staff)
+            ->get(route('clinic.patients.show', $patient))
+            ->assertDontSee('Reset patient password');
     }
 
     public function test_rfid_uid_cannot_be_assigned_to_two_patients(): void
@@ -146,9 +357,158 @@ class ClinicWorkflowTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_patient_booking_reserves_a_slot_against_a_second_patient_request(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $firstPatient = $this->createPatient('P-2026-00020');
+        $secondPatient = $this->createPatient('P-2026-00021');
+        $service = Service::create(['name' => 'Slot reservation test', 'price' => 500, 'is_active' => true]);
+        $booking = [
+            'service_id' => $service->id,
+            'appointment_date' => '2026-10-05',
+            'appointment_time' => '10:00',
+        ];
+
+        $this->actingAs($firstPatient->user)
+            ->post(route('appointments.store'), $booking)
+            ->assertRedirectToRoute('appointments.index');
+        $appointment = Appointment::firstOrFail();
+        $this->assertDatabaseHas('appointment_slots', [
+            'starts_at' => '2026-10-05 10:00:00',
+            'appointment_id' => $appointment->id,
+        ]);
+        $this->assertSame(0, DB::table('appointment_slots')->insertOrIgnore([
+            'starts_at' => '2026-10-05 10:00:00',
+            'appointment_id' => null,
+        ]));
+
+        $availability = $this->actingAs($secondPatient->user)
+            ->getJson(route('appointments.availability', ['month' => '2026-10']));
+        $availability->assertOk();
+        $this->assertNotContains('10:00', $availability->json('days')['2026-10-05']);
+
+        $this->actingAs($secondPatient->user)
+            ->post(route('appointments.store'), $booking)
+            ->assertSessionHasErrors([
+                'starts_at' => 'That time is no longer available. Choose another time.',
+            ]);
+
+        $this->assertDatabaseCount('appointments', 1);
+    }
+
+    public function test_availability_endpoint_marks_taken_and_closed_slots_unavailable(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $patient = $this->createPatient('P-2026-00022');
+        $service = Service::create(['name' => 'Availability endpoint test', 'price' => 500, 'is_active' => true]);
+        Appointment::create([
+            'patient_id' => $patient->id,
+            'service_id' => $service->id,
+            'type' => 'online',
+            'starts_at' => '2026-10-05 10:00:00',
+            'status' => 'pending',
+        ]);
+        foreach (range(0, 480, 10) as $minutes) {
+            Appointment::create([
+                'patient_id' => $patient->id,
+                'service_id' => $service->id,
+                'type' => 'online',
+                'starts_at' => Carbon::parse('2026-10-06 09:00:00')->addMinutes($minutes),
+                'status' => 'pending',
+            ]);
+        }
+
+        $response = $this->actingAs($patient->user)
+            ->getJson(route('appointments.availability', ['month' => '2026-10']));
+
+        $response->assertOk();
+        $this->assertContains('09:00', $response->json('days')['2026-10-05']);
+        $this->assertNotContains('10:00', $response->json('days')['2026-10-05']);
+        $this->assertContains('10:10', $response->json('days')['2026-10-05']);
+        $this->assertContains('17:00', $response->json('days')['2026-10-05']);
+        $this->assertSame([], $response->json('days')['2026-10-06']);
+        $this->assertSame([], $response->json('days')['2026-10-11']);
+
+        $this->get(route('appointments.index'))
+            ->assertSee('data-availability-calendar', false)
+            ->assertSee('Appointment Time')
+            ->assertSee('Available')
+            ->assertSee('Unavailable');
+    }
+
+    public function test_cancelling_an_appointment_releases_its_slot_for_rebooking(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $firstPatient = $this->createPatient('P-2026-00023');
+        $secondPatient = $this->createPatient('P-2026-00024');
+        $service = Service::create(['name' => 'Released slot test', 'price' => 500, 'is_active' => true]);
+        $booking = [
+            'service_id' => $service->id,
+            'appointment_date' => '2026-10-05',
+            'appointment_time' => '10:00',
+        ];
+
+        $this->actingAs($firstPatient->user)
+            ->post(route('appointments.store'), $booking)
+            ->assertRedirectToRoute('appointments.index');
+        $appointment = Appointment::firstOrFail();
+        $this->post(route('appointments.transition', [$appointment, 'cancel']))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseMissing('appointment_slots', [
+            'starts_at' => '2026-10-05 10:00:00',
+        ]);
+
+        $this->actingAs($secondPatient->user)
+            ->post(route('appointments.store'), $booking)
+            ->assertRedirectToRoute('appointments.index');
+        $this->assertDatabaseCount('appointments', 2);
+        $this->assertDatabaseHas('appointment_slots', ['starts_at' => '2026-10-05 10:00:00']);
+        $this->assertDatabaseCount('appointment_slots', 1);
+    }
+
+    public function test_staff_rescheduling_moves_the_slot_reservation_atomically(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00025');
+        $service = Service::create(['name' => 'Rescheduled slot test', 'price' => 500, 'is_active' => true]);
+        $appointment = Appointment::create([
+            'patient_id' => $patient->id,
+            'service_id' => $service->id,
+            'type' => 'online',
+            'starts_at' => '2026-10-05 10:00:00',
+            'status' => 'pending',
+        ]);
+
+        $availability = $this->actingAs($staff)
+            ->getJson(route('appointments.availability', [
+                'month' => '2026-10',
+                'exclude_appointment_id' => $appointment->id,
+            ]));
+        $availability->assertOk();
+        $this->assertContains('10:00', $availability->json('days')['2026-10-05']);
+
+        $this->patch(route('clinic.appointments.reschedule', $appointment), [
+            'appointment_date' => '2026-10-06',
+            'appointment_time' => '10:10',
+        ])->assertRedirect();
+
+        $this->assertDatabaseHas('appointment_slots', [
+            'starts_at' => '2026-10-06 10:10:00',
+            'appointment_id' => $appointment->id,
+        ]);
+        $this->assertDatabaseMissing('appointment_slots', ['starts_at' => '2026-10-05 10:00:00']);
+        $this->assertSame('2026-10-06 10:10:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+    }
+
     public function test_staff_rescheduling_persists_a_date_and_ten_minute_time_selection(): void
     {
-        $this->travelTo(now()->startOfDay()->setTime(8, 0));
+        $this->travelTo('2026-10-01 08:00:00');
 
         $staff = User::factory()->create(['role' => 'staff']);
         $patient = $this->createPatient('P-2026-00009');
@@ -174,6 +534,10 @@ class ClinicWorkflowTest extends TestCase
             $newStart->format('Y-m-d H:i:s'),
             $appointment->fresh()->starts_at->format('Y-m-d H:i:s'),
         );
+        $this->assertDatabaseHas('appointment_slots', [
+            'starts_at' => $newStart->format('Y-m-d H:i:s'),
+            'appointment_id' => $appointment->id,
+        ]);
         $this->actingAs($patient->user)
             ->get(route('dashboard'))
             ->assertOk()
@@ -186,7 +550,7 @@ class ClinicWorkflowTest extends TestCase
 
     public function test_rescheduling_rejects_a_taken_time_without_changing_the_appointment(): void
     {
-        $this->travelTo(now()->startOfDay()->setTime(8, 0));
+        $this->travelTo('2026-10-01 08:00:00');
 
         $staff = User::factory()->create(['role' => 'staff']);
         $patient = $this->createPatient('P-2026-00010');
@@ -217,6 +581,58 @@ class ClinicWorkflowTest extends TestCase
             now()->addDays(2)->setTime(10, 0)->format('Y-m-d H:i:s'),
             $appointment->fresh()->starts_at->format('Y-m-d H:i:s'),
         );
+    }
+
+    #[DataProvider('clinicStaffRoles')]
+    public function test_admin_and_staff_can_print_the_billing_page_and_an_individual_bill(string $role): void
+    {
+        $actor = User::factory()->create(['role' => $role]);
+        $bill = Bill::factory()->create([
+            'bill_number' => 'B-2026-PRINT01',
+            'subtotal' => 6500,
+            'total' => 6500,
+            'payment_status' => 'paid',
+        ]);
+        $payment = Payment::factory()->for($bill)->create([
+            'amount' => 6500,
+            'applied_amount' => 6500,
+        ]);
+        Receipt::factory()->for($payment)->create(['receipt_number' => 'OR-2026-PRINT01']);
+        BillItem::factory()->for($bill)->create([
+            'service_name' => 'Dental Cleaning',
+            'quantity' => 1,
+            'unit_price' => 6500,
+            'subtotal' => 6500,
+        ]);
+        $otherBill = Bill::factory()->create(['bill_number' => 'B-2026-PRINT02']);
+
+        $this->actingAs($actor)
+            ->get(route('clinic.billing.index'))
+            ->assertOk()
+            ->assertSee('🖨 Print All')
+            ->assertSee('🖨 Print Bill')
+            ->assertSee('data-billing-print-report', false)
+            ->assertSee('Bill Number')
+            ->assertSee('Bill Date')
+            ->assertSee('Patient Name')
+            ->assertSee('Patient ID')
+            ->assertSee('Total Amount')
+            ->assertSee('Amount Paid')
+            ->assertSee('Remaining Balance')
+            ->assertSee('Payment Status')
+            ->assertSee('OR / Receipt Number')
+            ->assertSee('B-2026-PRINT01')
+            ->assertSee('B-2026-PRINT02')
+            ->assertSee('data-print-bill="bill-print-'.$bill->id.'"', false)
+            ->assertSee('data-print-bill="bill-print-'.$otherBill->id.'"', false)
+            ->assertSee('id="bill-print-'.$bill->id.'"', false)
+            ->assertSee('id="bill-print-'.$otherBill->id.'"', false)
+            ->assertSee($bill->patient->user->name)
+            ->assertSee($bill->patient->patient_number)
+            ->assertSee('Dental Cleaning')
+            ->assertSee('CASH')
+            ->assertSee('OR-2026-PRINT01')
+            ->assertSee('₱6,500.00');
     }
 
     public function test_clinic_walk_in_can_be_completed_billed_and_paid_with_receipt(): void
@@ -367,7 +783,7 @@ class ClinicWorkflowTest extends TestCase
         );
     }
 
-    public function test_patient_booking_is_limited_to_monday_through_saturday_from_ten_to_five(): void
+    public function test_patient_booking_is_limited_to_monday_through_saturday_from_nine_to_five(): void
     {
         $this->travelTo('2026-10-04 08:00:00');
 
@@ -378,13 +794,14 @@ class ClinicWorkflowTest extends TestCase
         $this->actingAs($patientUser)
             ->get(route('appointments.index'))
             ->assertSee('The Dental Clinic is closed on Sundays. Please select another date.')
+            ->assertSee('value="09:00"', false)
             ->assertSee('value="10:00"', false)
             ->assertSee('value="17:00"', false)
-            ->assertDontSee('value="09:50"', false)
+            ->assertDontSee('value="08:50"', false)
             ->assertDontSee('value="17:10"', false);
 
         foreach (range(5, 10) as $day) {
-            foreach (['10:00', '17:00'] as $time) {
+            foreach (['09:00', '17:00'] as $time) {
                 $this->post(route('appointments.store'), [
                     'service_id' => $service->id,
                     'appointment_date' => sprintf('2026-10-%02d', $day),
@@ -397,7 +814,7 @@ class ClinicWorkflowTest extends TestCase
         $this->assertDatabaseCount('appointments', 12);
 
         foreach ([
-            ['appointment_date' => '2026-10-05', 'appointment_time' => '09:50', 'error' => 'appointment_time'],
+            ['appointment_date' => '2026-10-05', 'appointment_time' => '08:50', 'error' => 'appointment_time'],
             ['appointment_date' => '2026-10-07', 'appointment_time' => '17:10', 'error' => 'appointment_time'],
             ['appointment_date' => '2026-10-11', 'appointment_time' => '10:00', 'error' => 'appointment_date'],
         ] as $invalidSlot) {
@@ -422,7 +839,7 @@ class ClinicWorkflowTest extends TestCase
         ]);
         $this->post(route('appointments.store'), [
             'service_id' => $service->id,
-            'starts_at' => '2026-10-05T09:30',
+            'starts_at' => '2026-10-05T08:50',
         ])->assertSessionHasErrors('starts_at');
         $this->post(route('appointments.store'), [
             'service_id' => $service->id,

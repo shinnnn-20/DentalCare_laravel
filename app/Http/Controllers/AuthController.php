@@ -5,13 +5,18 @@ namespace App\Http\Controllers;
 use App\Models\Patient;
 use App\Models\User;
 use App\Services\AuditTrail;
+use App\Services\ClinicNotificationService;
+use App\Services\EmailVerificationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use Throwable;
 
 class AuthController extends Controller
 {
@@ -27,16 +32,18 @@ class AuthController extends Controller
             'password' => ['required', 'string'],
         ]);
 
-        if (! Auth::attempt([
-            'email' => mb_strtolower($credentials['email']),
-            'password' => $credentials['password'],
-            'is_active' => true,
-        ])) {
+        $user = User::query()
+            ->where('email', mb_strtolower($credentials['email']))
+            ->where('is_active', true)
+            ->first();
+
+        if ($user === null || ! Hash::check($credentials['password'], $user->password)) {
             throw ValidationException::withMessages([
                 'email' => 'These credentials do not match an active clinic account.',
             ]);
         }
 
+        Auth::login($user);
         $request->session()->regenerate();
         $auditTrail->record($request->user(), 'login', 'authentication');
 
@@ -48,8 +55,12 @@ class AuthController extends Controller
         return view('auth.register');
     }
 
-    public function storePatient(Request $request, AuditTrail $auditTrail): RedirectResponse
-    {
+    public function storePatient(
+        Request $request,
+        AuditTrail $auditTrail,
+        ClinicNotificationService $notifications,
+        EmailVerificationService $emailVerification,
+    ): RedirectResponse {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'date_of_birth' => ['required', 'date', 'before:today'],
@@ -89,10 +100,31 @@ class AuthController extends Controller
             return $user;
         });
 
-        Auth::login($user);
-        $request->session()->regenerate();
+        $request->session()->put('verification_user_id', $user->id);
+        $patient = $user->patient()->firstOrFail();
+        $notifications->notifyClinicStaff(
+            $user,
+            'patient.registered',
+            'New Patient Registered',
+            "{$user->name} registered a new patient account.",
+            route('clinic.patients.show', $patient, false),
+            'patient',
+            $patient->id,
+        );
 
-        return redirect()->route('dashboard')->with('status', 'Your patient account has been created.');
+        try {
+            $emailVerification->send($user, false);
+        } catch (Throwable $exception) {
+            Log::error('Patient email verification message could not be sent after registration.', [
+                'user_id' => $user->id,
+                'exception' => $exception,
+            ]);
+
+            return redirect()->route('verification.notice')
+                ->withErrors(['email' => 'Unable to send the verification code. Please use Resend Code to try again.']);
+        }
+
+        return redirect()->route('verification.notice');
     }
 
     public function logout(Request $request, AuditTrail $auditTrail): RedirectResponse

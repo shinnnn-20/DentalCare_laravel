@@ -10,7 +10,7 @@
 <body class="min-h-screen bg-slate-50 text-slate-800 antialiased">
     @auth
         <div class="app-shell min-h-screen lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
-            <aside class="app-sidebar border-b border-slate-200 bg-white px-4 py-3 lg:border-r lg:border-b-0 lg:px-5 lg:py-6">
+            <aside class="app-sidebar border-b border-slate-200 bg-white px-4 py-3 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto lg:border-r lg:border-b-0 lg:px-5 lg:py-6">
                 <div class="flex items-center justify-between gap-3">
                 <a href="{{ route('dashboard') }}" class="flex min-w-0 items-center gap-3 font-bold text-xl text-teal-800">
                     <span class="grid h-10 w-10 place-items-center rounded-xl bg-teal-700 text-white">D</span>
@@ -41,6 +41,12 @@
                 </div>
             </aside>
             <main class="min-w-0 px-4 py-5 sm:px-8 sm:py-6 lg:px-10">
+                <div class="mx-auto w-full max-w-screen-2xl">
+                @if (auth()->user()->hasRole('admin', 'staff'))
+                    <div class="mb-5 flex justify-end">
+                        @include('layouts.clinic-notifications')
+                    </div>
+                @endif
                 @if (session('status'))
                     <div class="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800" role="status">{{ session('status') }}</div>
                 @endif
@@ -51,6 +57,7 @@
                     </div>
                 @endif
                 @yield('content')
+                </div>
             </main>
         </div>
     @else

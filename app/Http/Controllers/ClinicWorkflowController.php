@@ -10,6 +10,7 @@ use App\Models\Patient;
 use App\Models\QueueEntry;
 use App\Models\SmsLog;
 use App\Services\AuditTrail;
+use App\Services\ClinicNotificationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -40,8 +41,12 @@ class ClinicWorkflowController extends Controller
         ]);
     }
 
-    public function storeRecord(Request $request, Appointment $appointment, AuditTrail $auditTrail): RedirectResponse
-    {
+    public function storeRecord(
+        Request $request,
+        Appointment $appointment,
+        AuditTrail $auditTrail,
+        ClinicNotificationService $notifications,
+    ): RedirectResponse {
         abort_unless(in_array($appointment->status, ['in_consultation', 'completed'], true), 422);
 
         $data = $request->validate([
@@ -63,6 +68,15 @@ class ClinicWorkflowController extends Controller
             'created_by' => $request->user()->id,
         ]);
         $auditTrail->record($request->user(), 'dental_record_created', 'dental_records', $record);
+        $notifications->notifyClinicStaff(
+            $request->user(),
+            'patient.dental_record_created',
+            'Dental Record Created',
+            "{$request->user()->name} created a dental record for {$appointment->patient->user->name}.",
+            route('clinic.patients.show', $appointment->patient_id, false),
+            'dental_record',
+            $record->id,
+        );
 
         return redirect()->route('clinic.patients.show', $appointment->patient_id)->with('status', 'Dental record saved.');
     }
@@ -78,8 +92,12 @@ class ClinicWorkflowController extends Controller
         ]);
     }
 
-    public function storeBill(Request $request, Appointment $appointment, AuditTrail $auditTrail): RedirectResponse
-    {
+    public function storeBill(
+        Request $request,
+        Appointment $appointment,
+        AuditTrail $auditTrail,
+        ClinicNotificationService $notifications,
+    ): RedirectResponse {
         abort_unless($appointment->status === 'in_consultation', 422);
         abort_if($appointment->dentalRecord()->doesntExist(), 422, 'A dental record is required before billing.');
         abort_if($appointment->bill()->exists(), 409, 'A bill already exists for this appointment.');
@@ -120,6 +138,15 @@ class ClinicWorkflowController extends Controller
         });
 
         $auditTrail->record($request->user(), 'bill_created', 'billing', $bill);
+        $notifications->notifyClinicStaff(
+            $request->user(),
+            'billing.bill_created',
+            'Bill Created',
+            "{$request->user()->name} created bill {$bill->bill_number} for {$appointment->patient->user->name}.",
+            route('clinic.billing.index', ['bill' => $bill->id], false).'#bill-'.$bill->id,
+            'bill',
+            $bill->id,
+        );
 
         return redirect()->route('clinic.billing.index')->with('status', 'Bill created.');
     }
@@ -132,7 +159,7 @@ class ClinicWorkflowController extends Controller
 
         return view('billing.index', [
             'bills' => Bill::query()
-                ->with(['patient.user', 'appointment', 'payments'])
+                ->with(['patient.user', 'appointment', 'items', 'payments.receipt'])
                 ->when(
                     $filters['bill'] ?? null,
                     fn ($query, $billId) => $query->orderByRaw('CASE WHEN bills.id = ? THEN 0 ELSE 1 END', [$billId]),
