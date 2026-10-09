@@ -10,13 +10,21 @@
         </button>
     </div>
     <section class="rounded-2xl border border-slate-200 bg-white">
-        <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Bill</th><th>Patient</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Action</th><th>Record payment</th></tr></thead><tbody>
+        <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Bill</th><th>Patient</th><th>Services</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Action</th><th>Record payment</th></tr></thead><tbody>
             @forelse ($bills as $bill)
                 @php($paid = (float) $bill->payments->sum('applied_amount'))
                 @php($balance = max(0, (float) $bill->total - $paid))
                 <tr id="bill-{{ $bill->id }}" @class(['selected-bill' => $selectedBillId === $bill->id])>
                     <td data-label="Bill" class="font-semibold">{{ $bill->bill_number }}<div class="text-xs font-normal text-slate-400">{{ $bill->created_at->format('M j, Y') }}</div></td>
                     <td data-label="Patient">{{ $bill->patient->user->name }}<div class="text-xs text-slate-400">{{ $bill->patient->patient_number }}</div></td>
+                    <td data-label="Services" class="min-w-56">
+                        @forelse ($bill->items as $item)
+                            <p class="text-sm font-medium">{{ $item->service_name }}</p>
+                            <p class="mb-2 text-xs text-slate-500">{{ $item->quantity }} × ₱{{ number_format((float) $item->unit_price, 2) }} = ₱{{ number_format((float) $item->subtotal, 2) }}</p>
+                        @empty
+                            <span class="text-sm text-slate-500">No services recorded for this bill.</span>
+                        @endforelse
+                    </td>
                     <td data-label="Total">₱{{ number_format((float) $bill->total, 2) }}</td><td data-label="Paid">₱{{ number_format($paid, 2) }}</td><td data-label="Balance">₱{{ number_format($balance, 2) }}</td>
                     <td data-label="Status"><span class="status-badge capitalize">{{ str_replace('_', ' ', $bill->payment_status) }}</span></td>
                     <td data-label="Action"><button class="btn-small whitespace-nowrap" type="button" data-print-bill="bill-print-{{ $bill->id }}">🖨 Print Bill</button></td>
@@ -35,13 +43,13 @@
                         @endif
                     </td>
                 </tr>
-            @empty<tr><td colspan="8" class="py-10 text-center text-slate-500">No bills yet. Create a bill from an appointment during consultation.</td></tr>@endforelse
+            @empty<tr><td colspan="9" class="py-10 text-center text-slate-500">No bills yet. Create a bill from an appointment during consultation.</td></tr>@endforelse
         </tbody></table></div>
         <div class="p-4">{{ $bills->links() }}</div>
     </section>
     <p class="mt-4 text-sm text-slate-500">Card and GCash entries are recorded manually here. No external payment is charged by this application.</p>
 
-    <section class="billing-print-report" data-billing-print-report aria-label="Printable billing report">
+    <section class="billing-print-report" data-billing-print-report data-print-all-page aria-label="Printable billing report">
         <header class="billing-print-header">
             <p>{{ config('clinic.name') }}</p>
             <h1>Billing &amp; Payments</h1>
@@ -163,31 +171,51 @@
     <script>
         const clearBillPrintSelection = () => {
             document.body.classList.remove('printing-single-bill');
+            document.body.classList.remove('printing-all-bills');
             document.querySelectorAll('.billing-print-paper.is-print-target').forEach((paper) => {
                 paper.classList.remove('is-print-target');
             });
         };
 
-        document.querySelector('[data-print-all-bills]').addEventListener('click', () => {
+        let printInProgress = false;
+        const beginBillPrint = (mode, papers = []) => {
+            if (printInProgress) {
+                return false;
+            }
+            printInProgress = true;
             clearBillPrintSelection();
+            papers.forEach((paper) => paper.classList.add('is-print-target'));
+            document.body.classList.add(mode);
+            document.querySelectorAll('[data-print-bill], [data-print-all-bills]').forEach((button) => {
+                button.disabled = true;
+            });
             window.print();
+            return true;
+        };
+
+        document.querySelector('[data-print-all-bills]').addEventListener('click', () => {
+            beginBillPrint('printing-all-bills');
         });
 
         document.querySelectorAll('[data-print-bill]').forEach((button) => {
             button.addEventListener('click', () => {
-                clearBillPrintSelection();
                 const paper = document.getElementById(button.dataset.printBill);
 
                 if (!paper) {
                     throw new Error('The selected bill print layout could not be found.');
                 }
 
-                paper.classList.add('is-print-target');
-                document.body.classList.add('printing-single-bill');
-                window.print();
+                beginBillPrint('printing-single-bill', [paper]);
             });
         });
 
-        window.addEventListener('afterprint', clearBillPrintSelection);
+        window.addEventListener('afterprint', () => {
+            clearBillPrintSelection();
+            document.body.classList.remove('printing-all-bills');
+            printInProgress = false;
+            document.querySelectorAll('[data-print-bill], [data-print-all-bills]').forEach((button) => {
+                button.disabled = false;
+            });
+        });
     </script>
 @endsection

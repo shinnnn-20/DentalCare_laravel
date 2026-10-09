@@ -78,7 +78,22 @@
             @forelse ($patient->dentalRecords as $record)
                 <article class="grid gap-2 px-5 py-4 sm:grid-cols-[150px_1fr]">
                     <p class="text-sm text-slate-500">{{ $record->created_at->format('M j, Y') }}</p>
-                    <div><h3 class="font-semibold">{{ $record->treatment }}</h3><p class="mt-1 text-sm"><span class="font-medium">Diagnosis:</span> {{ $record->diagnosis }}</p>@if ($record->prescription)<p class="mt-1 text-sm text-slate-600"><span class="font-medium">Prescription:</span> {{ $record->prescription }}</p>@endif</div>
+                    <div>
+                        <h3 class="font-semibold">{{ $record->treatment }}</h3>
+                        <p class="mt-1 text-sm"><span class="font-medium">Diagnosis:</span> {{ $record->diagnosis }}</p>
+                        @if ($record->prescription)<p class="mt-1 text-sm text-slate-600"><span class="font-medium">Prescription:</span> {{ $record->prescription }}</p>@endif
+                        <div class="mt-3 rounded-xl bg-slate-50 p-4">
+                            <h4 class="text-sm font-semibold">Services Performed</h4>
+                            @if ($record->appointment?->patient_id === $record->patient_id && $record->appointment?->service)
+                                <p class="mt-2 text-sm font-medium">{{ $record->appointment->service->name }}</p>
+                                <p class="mt-1 text-xs text-slate-500">Visit: {{ $record->appointment->starts_at->format('M j, Y · g:i A') }} · {{ $record->appointment->service->duration_minutes }} minutes</p>
+                                @if ($record->creator)<p class="mt-1 text-xs text-slate-500">Provider: {{ $record->creator->name }}</p>@endif
+                                @if ($record->notes)<p class="mt-1 text-sm text-slate-600">Clinical notes: {{ $record->notes }}</p>@endif
+                            @else
+                                <p class="mt-2 text-sm text-slate-500">No services recorded for this dental record.</p>
+                            @endif
+                        </div>
+                    </div>
                 </article>
             @empty
                 <p class="px-5 py-8 text-sm text-slate-500">No dental records available.</p>

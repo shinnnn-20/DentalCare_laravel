@@ -25,6 +25,22 @@
         @apply min-h-11 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-teal-600 focus:ring-2 focus:ring-teal-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500;
     }
 
+    .password-input-wrap {
+        @apply relative;
+    }
+
+    .password-input-wrap .form-input {
+        @apply pr-11;
+    }
+
+    .password-toggle {
+        @apply absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 transition hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-200 focus-visible:ring-offset-2 focus-visible:ring-offset-white;
+    }
+
+    .password-toggle svg {
+        @apply h-5 w-5;
+    }
+
     .date-time-input {
         @apply min-h-12 bg-slate-50 font-medium text-slate-800 focus:bg-white;
     }
@@ -321,6 +337,11 @@ a {
         margin: 12mm;
     }
 
+    @page billing-report {
+        size: A4 landscape;
+        margin: 7mm;
+    }
+
     .app-sidebar,
     .print-hidden {
         display: none !important;
@@ -328,6 +349,14 @@ a {
 
     .app-shell {
         display: block !important;
+    }
+
+    body.printing-all-bills:has(.billing-print-report) .app-shell {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        overflow: hidden !important;
     }
 
     .app-shell main {
@@ -359,14 +388,19 @@ a {
     }
 
     .billing-print-report {
+        page: billing-report;
         position: fixed !important;
         inset: 0 auto auto 0 !important;
         z-index: 9999 !important;
         display: block !important;
         width: 100% !important;
+        max-height: 196mm !important;
+        overflow: hidden !important;
         background: white !important;
         color: black !important;
         font-family: Arial, sans-serif !important;
+        break-inside: avoid !important;
+        page-break-inside: avoid !important;
     }
 
     .billing-print-paper {
@@ -483,9 +517,9 @@ a {
 
     .billing-print-header {
         display: block !important;
-        margin-bottom: 1rem;
+        margin-bottom: 0.45rem;
         border-bottom: 1px solid #94a3b8;
-        padding-bottom: 0.65rem;
+        padding-bottom: 0.3rem;
         text-align: center;
     }
 
@@ -495,14 +529,14 @@ a {
     }
 
     .billing-print-header h1 {
-        margin: 0.25rem 0;
-        font-size: 16pt;
+        margin: 0.1rem 0;
+        font-size: 12pt;
         font-weight: 700;
     }
 
     .billing-print-header p:last-child {
         color: #475569;
-        font-size: 8pt;
+        font-size: 6.5pt;
     }
 
     .billing-print-table {
@@ -510,30 +544,33 @@ a {
         width: 100% !important;
         table-layout: fixed;
         border-collapse: collapse;
-        font-size: 7pt;
+        font-size: 6.5pt;
         color: black !important;
     }
 
     .billing-print-table th,
     .billing-print-table td {
         border: 1px solid #94a3b8;
-        padding: 0.3rem 0.2rem;
+        padding: 0.12rem 0.18rem;
         text-align: left;
-        vertical-align: top;
-        overflow-wrap: anywhere;
+        vertical-align: middle;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.1;
     }
 
     .billing-print-table th {
         background: #f1f5f9 !important;
-        font-size: 6.5pt;
+        font-size: 6pt;
         print-color-adjust: exact;
     }
 
     .billing-print-footer {
         display: block !important;
-        margin-top: 0.65rem;
+        margin-top: 0.25rem;
         color: #475569 !important;
-        font-size: 8pt;
+        font-size: 6.5pt;
         text-align: right;
     }
 

@@ -39,10 +39,10 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::get('/appointments', [AppointmentController::class, 'index'])->name('appointments.index');
     Route::post('/appointments', [AppointmentController::class, 'store'])->name('appointments.store');
     Route::post('/appointments/{appointment}/action/{action}', [AppointmentController::class, 'transition'])
-        ->whereIn('action', ['approve', 'reject', 'cancel', 'check-in', 'call', 'consult', 'complete', 'no-show'])
+        ->whereIn('action', ['approve', 'reject', 'cancel', 'call', 'consult', 'complete', 'no-show'])
         ->name('appointments.transition');
     Route::patch('/clinic/appointments/{appointment}/reschedule', [AppointmentController::class, 'reschedule'])
-        ->middleware('role:admin,staff')
+        ->middleware('role:admin,staff,doctor')
         ->name('clinic.appointments.reschedule');
     Route::get('/receipts/{receipt}', [PaymentController::class, 'showReceipt'])->name('receipts.show');
 
@@ -73,7 +73,8 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/patients/{patient}/rfid', [RfidController::class, 'assign'])->name('rfid.assign');
         Route::get('/rfid/check-in', [RfidController::class, 'scanPage'])->name('rfid.scan');
         Route::post('/rfid/check-in', [RfidController::class, 'scan'])->name('rfid.scan.submit');
-        Route::post('/rfid/check-in/{appointment}', [RfidController::class, 'checkIn'])->name('rfid.check-in');
+        Route::post('/queue/{appointment}/check-in', [AppointmentController::class, 'checkInFromQueue'])
+            ->name('queue.check-in');
         Route::get('/appointments/{appointment}/record', [ClinicWorkflowController::class, 'createRecord'])
             ->middleware('role:admin')
             ->name('records.create');

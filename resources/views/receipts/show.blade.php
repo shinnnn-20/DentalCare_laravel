@@ -4,7 +4,7 @@
 
 @section('content')
     <div class="mx-auto max-w-3xl">
-        <div class="mb-4 flex justify-end gap-2 print:hidden"><button class="btn-primary" onclick="window.print()">Print / save PDF</button><a class="btn-secondary" href="{{ auth()->user()->role === 'patient' ? route('patient.billing') : route('clinic.billing.index') }}">Back to billing</a></div>
+        <div class="mb-4 flex justify-end gap-2 print:hidden"><button class="btn-primary" type="button" data-print-receipt>Print / save PDF</button><a class="btn-secondary" href="{{ auth()->user()->role === 'patient' ? route('patient.billing') : route('clinic.billing.index') }}">Back to billing</a></div>
         <article class="receipt-paper rounded-2xl border border-slate-200 bg-white p-8 shadow-sm sm:p-12">
             <header class="border-b border-slate-200 pb-6 text-center">
                 <div class="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-teal-700 text-lg font-bold text-white print:hidden">D</div>
@@ -48,4 +48,23 @@
             .receipt-paper { position: absolute; inset: 0; width: 100%; border: 0; padding: 0; box-shadow: none; }
         }
     </style>
+    <script>
+        const receiptPrintButton = document.querySelector('[data-print-receipt]');
+        let receiptPrintInProgress = false;
+
+        receiptPrintButton.addEventListener('click', () => {
+            if (receiptPrintInProgress) {
+                return;
+            }
+
+            receiptPrintInProgress = true;
+            receiptPrintButton.disabled = true;
+            window.print();
+        });
+
+        window.addEventListener('afterprint', () => {
+            receiptPrintInProgress = false;
+            receiptPrintButton.disabled = false;
+        });
+    </script>
 @endsection

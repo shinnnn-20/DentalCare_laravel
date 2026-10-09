@@ -123,7 +123,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('appointment_id')->unique()->constrained()->restrictOnDelete();
             $table->date('queue_date')->index();
-            $table->string('queue_number', 20);
+            $table->string('queue_number', 64);
             $table->string('status', 20)->default('waiting')->index();
             $table->timestamps();
             $table->unique(['queue_date', 'queue_number']);

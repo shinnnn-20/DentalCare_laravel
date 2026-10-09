@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
-#[Fillable(['patient_id', 'service_id', 'created_by', 'type', 'starts_at', 'status', 'notes'])]
+#[Fillable(['patient_id', 'service_id', 'created_by', 'type', 'starts_at', 'duration_minutes', 'status', 'notes'])]
 class Appointment extends Model
 {
     /** @use HasFactory<AppointmentFactory> */
@@ -17,7 +17,10 @@ class Appointment extends Model
 
     protected function casts(): array
     {
-        return ['starts_at' => 'datetime'];
+        return [
+            'starts_at' => 'datetime',
+            'duration_minutes' => 'integer',
+        ];
     }
 
     public function patient(): BelongsTo

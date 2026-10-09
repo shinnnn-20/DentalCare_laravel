@@ -21,14 +21,12 @@
                         @forelse ($appointments as $appointment)
                             <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white p-3">
                                 <div><p class="font-medium">{{ $appointment->starts_at->format('g:i A') }} · {{ $appointment->service->name }}</p><p class="text-xs capitalize text-slate-500">{{ str_replace('_', ' ', $appointment->status) }}</p></div>
-                                @if ($appointment->status === 'approved')
-                                    <form method="POST" action="{{ route('clinic.rfid.check-in', $appointment) }}">@csrf<input type="hidden" name="uid" value="{{ $uid }}"><button class="btn-secondary">Check in</button></form>
-                                @endif
                             </div>
                         @empty
                             <p class="rounded-xl bg-white p-3 text-sm text-slate-600">No approved appointment found for today. Register a walk-in from the Appointments page if needed.</p>
                         @endforelse
                     </div>
+                    <p class="mt-3 text-sm text-slate-600">Approved appointments can only be checked in from the Patient Queue tab.</p>
                     <a class="mt-4 inline-flex text-sm font-semibold text-teal-800 hover:underline" href="{{ route('clinic.patients.show', $patient) }}">Open patient profile →</a>
                 </div>
             @else

@@ -2,16 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Appointment;
 use App\Models\Patient;
-use App\Models\QueueEntry;
 use App\Models\RfidCard;
 use App\Models\RfidLog;
 use App\Services\AuditTrail;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -68,47 +63,10 @@ class RfidController extends Controller
             'patient' => $card?->patient,
             'appointments' => $card?->patient?->appointments()
                 ->with('service')
-                ->whereDate('starts_at', today())
+                ->whereDate('starts_at', today(config('clinic.timezone')))
                 ->whereIn('status', ['approved', 'checked_in', 'waiting'])
                 ->orderBy('starts_at')
                 ->get() ?? collect(),
         ]);
-    }
-
-    public function checkIn(Request $request, Appointment $appointment, AuditTrail $auditTrail): RedirectResponse
-    {
-        $data = $request->validate(['uid' => ['required', 'string', 'max:100']]);
-        $card = RfidCard::query()
-            ->where('uid', mb_strtoupper(trim($data['uid'])))
-            ->where('is_active', true)
-            ->first();
-
-        abort_unless($card !== null && $card->patient_id === $appointment->patient_id, 404);
-        abort_unless($appointment->starts_at->isToday() && $appointment->status === 'approved', 422);
-
-        DB::transaction(function () use ($appointment): void {
-            $appointment->update(['status' => 'checked_in']);
-            if (! $appointment->queueEntry()->exists()) {
-                $queue = QueueEntry::create([
-                    'appointment_id' => $appointment->id,
-                    'queue_date' => today(),
-                    'queue_number' => 'Q-PENDING-'.Str::uuid(),
-                    'status' => 'waiting',
-                ]);
-                $queue->update(['queue_number' => sprintf('Q-%03d', $queue->id)]);
-            }
-        });
-
-        RfidLog::create([
-            'rfid_card_id' => $card->id,
-            'patient_id' => $card->patient_id,
-            'scanned_by' => $request->user()->id,
-            'uid' => $card->uid,
-            'result' => 'checked_in',
-            'scanned_at' => now(),
-        ]);
-        $auditTrail->record($request->user(), 'rfid_check_in', 'rfid', $appointment);
-
-        return redirect()->route('queue.index')->with('status', 'Patient checked in and added to the queue.');
     }
 }

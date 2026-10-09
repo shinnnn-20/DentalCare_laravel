@@ -18,6 +18,25 @@
                         @if ($record->notes)
                             <p class="mt-2 text-sm text-slate-500">{{ $record->notes }}</p>
                         @endif
+                        <section class="mt-4 rounded-xl bg-slate-50 p-4">
+                            <h3 class="text-sm font-semibold text-slate-800">Services Performed</h3>
+                            @if ($record->appointment?->patient_id === $record->patient_id && $record->appointment?->service)
+                                <div class="mt-2 flex flex-wrap items-start justify-between gap-3 text-sm">
+                                    <div>
+                                        <p class="font-medium">{{ $record->appointment->service->name }}</p>
+                                        <p class="mt-1 text-slate-500">Performed {{ $record->appointment->starts_at->format('F j, Y') }} · {{ $record->appointment->service->duration_minutes }} minutes</p>
+                                        @if ($record->creator)
+                                            <p class="mt-1 text-slate-500">Provider: {{ $record->creator->name }}</p>
+                                        @endif
+                                        @if ($record->notes)
+                                            <p class="mt-1 text-slate-500">Clinical details: {{ $record->notes }}</p>
+                                        @endif
+                                    </div>
+                                </div>
+                            @else
+                                <p class="mt-2 text-sm text-slate-500">No services recorded for this dental record.</p>
+                            @endif
+                        </section>
                     </div>
                 </article>
             @empty<p class="p-8 text-sm text-slate-500">No dental records available.</p>@endforelse

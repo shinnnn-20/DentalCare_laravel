@@ -8,15 +8,20 @@ use App\Models\Patient;
 use App\Models\Payment;
 use App\Models\QueueEntry;
 use App\Models\User;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
 class DashboardController extends Controller
 {
-    public function __invoke(Request $request): View
+    public function __invoke(Request $request): View|RedirectResponse
     {
         $user = $request->user();
+
+        if ($user->role === 'doctor') {
+            return redirect()->route('appointments.index');
+        }
 
         if ($user->role === 'patient') {
             $patient = $user->patient()->firstOrFail();

@@ -25,9 +25,16 @@ class ClinicWorkflowController extends Controller
         return view('queue.index', [
             'queueEntries' => QueueEntry::query()
                 ->with(['appointment.patient.user', 'appointment.service'])
-                ->whereDate('queue_date', today())
+                ->whereDate('queue_date', today(config('clinic.timezone')))
                 ->whereIn('status', ['waiting', 'called', 'in_consultation'])
                 ->orderBy('id')
+                ->get(),
+            'checkInAppointments' => Appointment::query()
+                ->with(['patient.user', 'service'])
+                ->whereDate('starts_at', today(config('clinic.timezone')))
+                ->where('status', 'approved')
+                ->whereDoesntHave('queueEntry')
+                ->orderBy('starts_at')
                 ->get(),
         ]);
     }
@@ -175,7 +182,10 @@ class ClinicWorkflowController extends Controller
         $patient = $request->user()->patient()->firstOrFail();
 
         return view('records.index', [
-            'records' => $patient->dentalRecords()->with('creator')->latest()->paginate(20),
+            'records' => $patient->dentalRecords()
+                ->with(['creator', 'appointment.service'])
+                ->latest()
+                ->paginate(20),
         ]);
     }
 
@@ -222,10 +232,40 @@ class ClinicWorkflowController extends Controller
         ]);
     }
 
-    public function auditLogs(): View
+    public function auditLogs(Request $request): View
     {
+        $filters = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'module' => ['nullable', 'string', 'max:80'],
+            'action' => ['nullable', 'string', 'max:80'],
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
+            'sort' => ['nullable', 'in:newest,oldest'],
+        ]);
+
         return view('logs.audit', [
-            'logs' => AuditLog::with('user')->latest()->paginate(40),
+            'logs' => AuditLog::query()
+                ->with('user')
+                ->when($filters['module'] ?? null, fn ($query, $module) => $query->where('module', $module))
+                ->when($filters['action'] ?? null, fn ($query, $action) => $query->where('action', $action))
+                ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('created_at', '>=', $from))
+                ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('created_at', '<=', $to))
+                ->when($filters['search'] ?? null, function ($query, $search): void {
+                    $query->where(function ($query) use ($search): void {
+                        $query->where('action', 'like', '%'.$search.'%')
+                            ->orWhere('module', 'like', '%'.$search.'%')
+                            ->orWhere('record_type', 'like', '%'.$search.'%')
+                            ->orWhere('record_id', 'like', '%'.$search.'%')
+                            ->orWhere('description', 'like', '%'.$search.'%')
+                            ->orWhereHas('user', fn ($userQuery) => $userQuery->where('name', 'like', '%'.$search.'%'));
+                    });
+                })
+                ->orderBy('created_at', ($filters['sort'] ?? 'newest') === 'oldest' ? 'asc' : 'desc')
+                ->orderBy('id', ($filters['sort'] ?? 'newest') === 'oldest' ? 'asc' : 'desc')
+                ->paginate(40)
+                ->withQueryString(),
+            'modules' => AuditLog::query()->select('module')->distinct()->orderBy('module')->pluck('module'),
+            'actions' => AuditLog::query()->select('action')->distinct()->orderBy('action')->pluck('action'),
         ]);
     }
 

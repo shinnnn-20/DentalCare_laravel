@@ -17,5 +17,5 @@
         </tbody></table></div>
         <div class="p-4">{{ $patients->links() }}</div>
     </section>
-    <p class="mt-4 text-sm text-slate-500">RFID identifies a patient for check-in only; it does not grant access to a patient account.</p>
+    <p class="mt-4 text-sm text-slate-500">RFID identifies the patient for staff; it does not grant access to a patient account. Check-in is completed from the Patient Queue tab.</p>
 @endsection

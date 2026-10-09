@@ -20,7 +20,7 @@
                     </div>
                 </div>
             </div>
-            <form method="POST" action="{{ route('appointments.store') }}" class="grid gap-5 p-5 sm:grid-cols-2 sm:p-7 xl:grid-cols-12" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today()->format('Y-m') }}" @if (auth()->user()->role === 'patient') data-patient-booking @endif>
+            <form method="POST" action="{{ route('appointments.store') }}" class="grid gap-5 p-5 sm:grid-cols-2 sm:p-7 xl:grid-cols-12" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" @if (auth()->user()->role === 'patient') data-patient-booking @endif>
                 @csrf
                 @if (auth()->user()->hasRole('admin', 'staff'))
                     <label class="form-label sm:col-span-2 xl:col-span-4">Patient
@@ -48,6 +48,7 @@
                                     @else
                                         <span class="mt-2 block text-sm text-slate-400">Clinic dental service</span>
                                     @endif
+                                    <span class="mt-2 block text-xs font-medium text-slate-500">{{ $service->duration_minutes }} minutes</span>
                                 </span>
                             </label>
                         @endforeach
@@ -124,7 +125,7 @@
 
     <section class="rounded-2xl border border-slate-200 bg-white">
         <form method="GET" class="grid gap-3 border-b border-slate-100 bg-slate-50/60 p-4 sm:flex sm:flex-wrap sm:items-end sm:p-5">
-            @if (auth()->user()->hasRole('admin', 'staff'))
+            @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                 <label class="form-label sm:min-w-48">Filter by date<input class="form-input date-time-input" type="date" name="date" value="{{ request('date') }}"></label>
             @endif
             <label class="form-label sm:min-w-48">Status
@@ -134,7 +135,7 @@
         </form>
         <div class="overflow-x-auto">
             <table class="data-table">
-                <thead><tr><th>Date & time</th>@if (auth()->user()->hasRole('admin', 'staff'))<th>Patient</th>@endif<th>Service</th><th>Type</th><th>Status</th><th>Queue</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Date & time</th>@if (auth()->user()->hasRole('admin', 'staff', 'doctor'))<th>Patient</th>@endif<th>Service</th><th>Type</th><th>Status</th><th>Queue</th><th>Actions</th></tr></thead>
                 <tbody>
                 @forelse ($appointments as $appointment)
                     <tr id="appointment-{{ $appointment->id }}">
@@ -144,55 +145,77 @@
                                 <span class="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500"><span aria-hidden="true">◷</span>{{ $appointment->starts_at->format('g:i A') }}</span>
                             </span>
                         </td>
-                        @if (auth()->user()->hasRole('admin', 'staff'))<td data-label="Patient"><a class="font-semibold text-teal-800 hover:underline" href="{{ route('clinic.patients.show', $appointment->patient) }}">{{ $appointment->patient->user->name }}</a><div class="text-xs text-slate-400">{{ $appointment->patient->patient_number }}</div></td>@endif
+                        @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
+                            <td data-label="Patient">
+                                @if (auth()->user()->hasRole('admin', 'staff'))
+                                    <a class="font-semibold text-teal-800 hover:underline" href="{{ route('clinic.patients.show', $appointment->patient) }}">{{ $appointment->patient->user->name }}</a>
+                                @else
+                                    <span class="font-semibold">{{ $appointment->patient->user->name }}</span>
+                                @endif
+                                <div class="text-xs text-slate-400">{{ $appointment->patient->patient_number }}</div>
+                            </td>
+                        @endif
                         <td data-label="Service"><span class="inline-flex rounded-lg bg-teal-50 px-2.5 py-1.5 font-semibold text-teal-900">{{ $appointment->service->name }}</span></td><td data-label="Type" class="capitalize">{{ str_replace('_', ' ', $appointment->type) }}</td>
                         <td data-label="Status"><span class="status-badge capitalize">{{ str_replace('_', ' ', $appointment->status) }}</span></td>
                         <td data-label="Queue">{{ $appointment->queueEntry?->queue_number ?? '—' }}</td>
                         <td data-label="Actions"><div class="flex flex-wrap gap-2">
                             @if (auth()->user()->role === 'patient' && in_array($appointment->status, ['pending', 'approved'], true))
                                 <form method="POST" action="{{ route('appointments.transition', [$appointment, 'cancel']) }}">@csrf<button class="btn-small text-rose-700">Cancel</button></form>
-                            @elseif (auth()->user()->hasRole('admin', 'staff'))
+                            @elseif (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                 @if (in_array($appointment->status, ['pending', 'approved'], true))
-                                    <form method="POST" action="{{ route('clinic.appointments.reschedule', $appointment) }}" class="flex min-w-0 flex-wrap gap-1" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today()->format('Y-m') }}" data-exclude-appointment-id="{{ $appointment->id }}">
-                                        @csrf @method('PATCH')
-                                        <input class="form-input date-time-input w-full min-w-0 sm:w-auto sm:min-w-40" type="date" name="appointment_date" min="{{ today()->toDateString() }}" value="{{ old('appointment_date', $appointment->starts_at->format('Y-m-d')) }}" data-appointment-date required>
-                                        <span class="relative block min-w-0 sm:w-44">
-                                            <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-teal-700" aria-hidden="true">
-                                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                                                    <circle cx="12" cy="12" r="8.5"></circle>
-                                                    <path stroke-linecap="round" d="M12 7v5l3 2"></path>
-                                                </svg>
+                                    @if (in_array($appointment->id, $reschedulableAppointmentIds, true))
+                                        <form method="POST" action="{{ route('clinic.appointments.reschedule', $appointment) }}" class="flex min-w-0 flex-wrap gap-1" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-exclude-appointment-id="{{ $appointment->id }}">
+                                            @csrf @method('PATCH')
+                                            <input type="hidden" name="service_id" value="{{ $appointment->service_id }}">
+                                            <input class="form-input date-time-input w-full min-w-0 sm:w-auto sm:min-w-40" type="date" name="appointment_date" min="{{ today(config('clinic.timezone'))->toDateString() }}" value="{{ old('appointment_date', $appointment->starts_at->format('Y-m-d')) }}" data-appointment-date required>
+                                            <span class="relative block min-w-0 sm:w-44">
+                                                <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-teal-700" aria-hidden="true">
+                                                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                                        <circle cx="12" cy="12" r="8.5"></circle>
+                                                        <path stroke-linecap="round" d="M12 7v5l3 2"></path>
+                                                    </svg>
+                                                </span>
+                                                <select class="form-input date-time-input time-select min-h-10 pl-9 pr-8 text-xs" name="appointment_time" data-appointment-time required disabled>
+                                                @php($currentTime = $appointment->starts_at->format('H:i'))
+                                                <option value="">Select time</option>
+                                                @foreach ($appointmentTimes as $timeOption)
+                                                    <option value="{{ $timeOption }}" @selected(old('appointment_time', $currentTime) === $timeOption)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeOption)->format('g:i A') }}</option>
+                                                @endforeach
+                                                </select>
                                             </span>
-                                            <select class="form-input date-time-input time-select min-h-10 pl-9 pr-8 text-xs" name="appointment_time" data-appointment-time required disabled>
-                                            @php($currentTime = $appointment->starts_at->format('H:i'))
-                                            <option value="">Select time</option>
-                                            @foreach ($appointmentTimes as $timeOption)
-                                                <option value="{{ $timeOption }}" @selected(old('appointment_time', $currentTime) === $timeOption)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeOption)->format('g:i A') }}</option>
-                                            @endforeach
-                                            </select>
-                                        </span>
-                                        <button type="submit" class="btn-small text-teal-800">Reschedule</button>
-                                    </form>
-                                    <p class="hidden text-sm font-medium text-slate-600" data-availability-message role="status" aria-live="polite"></p>
-                                    <p class="hidden text-sm font-medium text-rose-700" data-sunday-error role="alert">The Dental Clinic is closed on Sundays. Please select another date.</p>
-                                @endif
-                                @if ($appointment->status === 'pending')
-                                    <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}">@csrf<button class="btn-small text-teal-800">Approve</button></form>
-                                    <form method="POST" action="{{ route('appointments.transition', [$appointment, 'reject']) }}">@csrf<button class="btn-small text-rose-700">Reject</button></form>
-                                @elseif ($appointment->status === 'approved')
-                                    <form method="POST" action="{{ route('appointments.transition', [$appointment, 'check-in']) }}">@csrf<button class="btn-small text-teal-800">Check in</button></form>
-                                @elseif ($appointment->status === 'in_consultation')
-                                    @if (auth()->user()->role === 'admin' && ! $appointment->dentalRecord)
-                                        <a class="btn-small text-teal-800" href="{{ route('clinic.records.create', $appointment) }}">Dental record</a>
-                                    @elseif ($appointment->dentalRecord && ! $appointment->bill)
-                                        <a class="btn-small text-teal-800" href="{{ route('clinic.bills.create', $appointment) }}">Create bill</a>
+                                            <button type="submit" class="btn-small text-teal-800">Reschedule</button>
+                                        </form>
+                                        <p class="hidden text-sm font-medium text-slate-600" data-availability-message role="status" aria-live="polite"></p>
+                                        <p class="hidden text-sm font-medium text-rose-700" data-sunday-error role="alert">The Dental Clinic is closed on Sundays. Please select another date.</p>
+                                    @else
+                                        @if (auth()->user()->hasRole('admin', 'staff'))
+                                            @if ($appointment->starts_at->toDateString() < today(config('clinic.timezone'))->toDateString())
+                                                <p class="text-xs font-medium text-slate-500">Past appointments cannot be rescheduled.</p>
+                                            @else
+                                                <p class="text-xs font-medium text-slate-500">Appointments cannot be rescheduled after their scheduled time.</p>
+                                            @endif
+                                        @else
+                                            <p class="text-xs font-medium text-slate-500">Appointments must be rescheduled at least one calendar day in advance.</p>
+                                        @endif
                                     @endif
                                 @endif
-                                @if ($appointment->status === 'billed' && $appointment->bill && auth()->user()->hasRole('admin', 'staff') && $appointment->bill->payment_status === 'paid')
-                                    <form method="POST" action="{{ route('appointments.transition', [$appointment, 'complete']) }}">@csrf<button class="btn-small text-teal-800">Complete</button></form>
-                                @endif
-                                @if ($appointment->bill)
-                                    <a class="btn-small text-teal-800" href="{{ route('clinic.billing.index', ['bill' => $appointment->bill->id]) }}#bill-{{ $appointment->bill->id }}">View bill</a>
+                                @if (auth()->user()->hasRole('admin', 'staff'))
+                                    @if ($appointment->status === 'pending')
+                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}">@csrf<button class="btn-small text-teal-800">Approve</button></form>
+                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'reject']) }}">@csrf<button class="btn-small text-rose-700">Reject</button></form>
+                                    @elseif ($appointment->status === 'in_consultation')
+                                        @if (auth()->user()->role === 'admin' && ! $appointment->dentalRecord)
+                                            <a class="btn-small text-teal-800" href="{{ route('clinic.records.create', $appointment) }}">Dental record</a>
+                                        @elseif ($appointment->dentalRecord && ! $appointment->bill)
+                                            <a class="btn-small text-teal-800" href="{{ route('clinic.bills.create', $appointment) }}">Create bill</a>
+                                        @endif
+                                    @endif
+                                    @if ($appointment->status === 'billed' && $appointment->bill && $appointment->bill->payment_status === 'paid')
+                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'complete']) }}">@csrf<button class="btn-small text-teal-800">Complete</button></form>
+                                    @endif
+                                    @if ($appointment->bill)
+                                        <a class="btn-small text-teal-800" href="{{ route('clinic.billing.index', ['bill' => $appointment->bill->id]) }}#bill-{{ $appointment->bill->id }}">View bill</a>
+                                    @endif
                                 @endif
                             @endif
                         </div></td>
@@ -215,6 +238,7 @@
             const sundayMessage = 'The Dental Clinic is closed on Sundays. Please select another date.';
             const patientBooking = form.hasAttribute('data-patient-booking');
             const excludedAppointmentId = form.dataset.excludeAppointmentId;
+            const serviceInputs = form.querySelectorAll('[name="service_id"]');
             const timePicker = document.createElement('div');
             const timeTrigger = document.createElement('button');
             const timeMenu = document.createElement('div');
@@ -530,6 +554,11 @@
                 if (excludedAppointmentId) {
                     url.searchParams.set('exclude_appointment_id', excludedAppointmentId);
                 }
+                const selectedService = form.querySelector('[name="service_id"]:checked')
+                    || form.querySelector('[name="service_id"]:not([type="radio"])');
+                if (selectedService?.value) {
+                    url.searchParams.set('service_id', selectedService.value);
+                }
 
                 try {
                     const response = await fetch(url, {
@@ -578,6 +607,11 @@
                 preferredTime = timeSelect.value;
                 timeSelect.setCustomValidity('');
             });
+            serviceInputs.forEach((input) => input.addEventListener('change', () => {
+                if (dateInput.value || patientBooking) {
+                    loadAvailability(currentMonth);
+                }
+            }));
             calendar?.querySelector('[data-calendar-previous]').addEventListener('click', () => {
                 const previous = new Date(`${currentMonth}-01T12:00:00`);
                 previous.setMonth(previous.getMonth() - 1);

@@ -18,7 +18,7 @@
                     <p class="mt-1 text-sm text-slate-500">Create a treatment option for the appointment booking form.</p>
                 </div>
             </div>
-            <form method="POST" action="{{ route('admin.services.store') }}" class="grid gap-4 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-[1fr_1.4fr_12rem_auto]">
+            <form method="POST" action="{{ route('admin.services.store') }}" class="grid gap-4 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-[1fr_1.4fr_12rem_10rem_auto]">
                 @csrf
                 <label class="form-label">Service name
                     <input class="form-input" name="name" value="{{ old('name') }}" required maxlength="255" placeholder="e.g. Dental cleaning">
@@ -31,6 +31,13 @@
                         <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold text-slate-500">₱</span>
                         <input class="form-input pl-8" type="number" name="price" value="{{ old('price') }}" min="0" max="1000000" step="0.01" required placeholder="0.00">
                     </span>
+                </label>
+                <label class="form-label">Duration
+                    <select class="form-input" name="duration_minutes" required>
+                        @foreach (range(10, 240, 10) as $duration)
+                            <option value="{{ $duration }}" @selected(old('duration_minutes', 30) == $duration)>{{ $duration }} minutes</option>
+                        @endforeach
+                    </select>
                 </label>
                 <button class="btn-primary w-full self-end sm:w-auto">Add service</button>
             </form>
@@ -70,6 +77,7 @@
                                     'bg-slate-100 text-slate-600' => ! $service->is_active,
                                 ])>{{ $service->is_active ? 'Active' : 'Inactive' }}</span>
                             </div>
+                            <p class="text-sm text-slate-500">Appointment duration: <span class="font-semibold text-slate-700">{{ $service->duration_minutes }} minutes</span></p>
 
                             @if (auth()->user()->role === 'admin')
                                 <details class="border-t border-slate-100 pt-4">
@@ -82,12 +90,19 @@
                                         <label class="form-label">Description
                                             <textarea class="form-input" name="description" rows="2" maxlength="2000">{{ $service->description }}</textarea>
                                         </label>
-                                        <div class="grid gap-3 sm:grid-cols-2">
+                                        <div class="grid gap-3 sm:grid-cols-3">
                                             <label class="form-label">Price
                                                 <span class="relative">
                                                     <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold text-slate-500">₱</span>
                                                     <input class="form-input pl-8" type="number" name="price" min="0" max="1000000" step="0.01" value="{{ $service->price }}" required>
                                                 </span>
+                                            </label>
+                                            <label class="form-label">Duration
+                                                <select class="form-input" name="duration_minutes" required>
+                                                    @foreach (range(10, 240, 10) as $duration)
+                                                        <option value="{{ $duration }}" @selected($service->duration_minutes === $duration)>{{ $duration }} minutes</option>
+                                                    @endforeach
+                                                </select>
                                             </label>
                                             <label class="form-label">Availability
                                                 <select class="form-input" name="is_active" required>

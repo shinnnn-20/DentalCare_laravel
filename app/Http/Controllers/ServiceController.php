@@ -24,6 +24,7 @@ class ServiceController extends Controller
             'name' => ['required', 'string', 'max:255', 'unique:services,name'],
             'description' => ['nullable', 'string', 'max:2000'],
             'price' => ['required', 'numeric', 'min:0', 'max:1000000'],
+            'duration_minutes' => ['required', 'integer', 'in:'.implode(',', range(10, 240, 10))],
         ]);
 
         $service = Service::create([...$data, 'is_active' => true]);
@@ -38,6 +39,7 @@ class ServiceController extends Controller
             'name' => ['required', 'string', 'max:255', Rule::unique('services', 'name')->ignore($service->id)],
             'description' => ['nullable', 'string', 'max:2000'],
             'price' => ['required', 'numeric', 'min:0', 'max:1000000'],
+            'duration_minutes' => ['required', 'integer', 'in:'.implode(',', range(10, 240, 10))],
             'is_active' => ['required', 'boolean'],
         ]);
 

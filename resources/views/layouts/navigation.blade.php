@@ -7,14 +7,14 @@
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('clinic.rfid.scan*')]) href="{{ route('clinic.rfid.scan') }}" @if (request()->routeIs('clinic.rfid.scan*')) aria-current="page" @endif>RFID check-in</a>
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('clinic.services.*')]) href="{{ route('clinic.services.index') }}" @if (request()->routeIs('clinic.services.*')) aria-current="page" @endif>Services</a>
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('clinic.billing.*', 'clinic.payments.*')]) href="{{ route('clinic.billing.index') }}" @if (request()->routeIs('clinic.billing.*', 'clinic.payments.*')) aria-current="page" @endif>Billing & payments</a>
-@else
+@elseif (auth()->user()->role === 'patient')
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('patient.records')]) href="{{ route('patient.records') }}" @if (request()->routeIs('patient.records')) aria-current="page" @endif>Dental records</a>
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('patient.billing')]) href="{{ route('patient.billing') }}" @if (request()->routeIs('patient.billing')) aria-current="page" @endif>My billing</a>
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('patient.notifications')]) href="{{ route('patient.notifications') }}" @if (request()->routeIs('patient.notifications')) aria-current="page" @endif>Notifications</a>
 @endif
 @if (auth()->user()->role === 'admin')
     <div class="my-3 border-t border-slate-100"></div>
-    <a @class(['nav-link', 'nav-link-active' => request()->routeIs('admin.staff.*')]) href="{{ route('admin.staff.index') }}" @if (request()->routeIs('admin.staff.*')) aria-current="page" @endif>Staff accounts</a>
+    <a @class(['nav-link', 'nav-link-active' => request()->routeIs('admin.staff.*')]) href="{{ route('admin.staff.index') }}" @if (request()->routeIs('admin.staff.*')) aria-current="page" @endif>Staff & doctor accounts</a>
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('admin.reports')]) href="{{ route('admin.reports') }}" @if (request()->routeIs('admin.reports')) aria-current="page" @endif>Reports</a>
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('admin.audit-logs')]) href="{{ route('admin.audit-logs') }}" @if (request()->routeIs('admin.audit-logs')) aria-current="page" @endif>Audit logs</a>
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('admin.sms-logs')]) href="{{ route('admin.sms-logs') }}" @if (request()->routeIs('admin.sms-logs')) aria-current="page" @endif>SMS logs</a>
