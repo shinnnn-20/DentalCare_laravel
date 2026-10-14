@@ -416,6 +416,31 @@
                 errorMessage?.classList.toggle('hidden', !isSunday);
             };
 
+            const syncSelectedDateState = () => {
+                if (!dateInput.value) {
+                    preferredTime = '';
+                    timeSelect.value = '';
+                    return;
+                }
+
+                const selectedDateAvailability = availability[dateInput.value] || [];
+                if (form.dataset.availabilityLoaded !== 'true') {
+                    return;
+                }
+
+                if (selectedDateAvailability.length === 0) {
+                    dateInput.value = '';
+                    preferredTime = '';
+                    timeSelect.value = '';
+                    return;
+                }
+
+                if (timeSelect.value && !selectedDateAvailability.includes(timeSelect.value)) {
+                    preferredTime = '';
+                    timeSelect.value = '';
+                }
+            };
+
             const updateTimes = () => {
                 const selectedTime = preferredTime || timeSelect.value;
                 const availableTimes = availability[dateInput.value] || [];
@@ -560,6 +585,11 @@
                     url.searchParams.set('service_id', selectedService.value);
                 }
 
+                if (dateInput.value && !availability[dateInput.value]) {
+                    preferredTime = '';
+                    timeSelect.value = '';
+                }
+
                 try {
                     const response = await fetch(url, {
                         cache: 'no-store',
@@ -576,6 +606,11 @@
                     availability = result.days;
                     currentMonth = result.month;
                     form.dataset.availabilityLoaded = 'true';
+                    if (dateInput.value && (!availability[dateInput.value] || availability[dateInput.value].length === 0)) {
+                        preferredTime = '';
+                        timeSelect.value = '';
+                        dateInput.value = '';
+                    }
                     renderCalendar();
                     updateTimes();
                     return true;
@@ -596,10 +631,12 @@
                 updateSundayValidation();
                 if (dateInput.value) {
                     preferredTime = '';
+                    timeSelect.value = '';
                     loadAvailability(dateInput.value.slice(0, 7));
                     return;
                 }
                 preferredTime = '';
+                timeSelect.value = '';
                 renderCalendar();
                 updateTimes();
             });
