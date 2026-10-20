@@ -39,4 +39,9 @@ class Bill extends Model
     {
         return $this->hasMany(Payment::class);
     }
+
+    public function payMongoBillCheckouts(): HasMany
+    {
+        return $this->hasMany(PayMongoBillCheckout::class);
+    }
 }

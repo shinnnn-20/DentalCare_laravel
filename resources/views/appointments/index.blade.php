@@ -32,27 +32,58 @@
                         </select>
                     </label>
                 @endif
-                <fieldset class="grid min-w-0 gap-3 sm:col-span-2 xl:col-span-12">
-                    <legend class="mb-1 text-sm font-semibold text-slate-800">Choose a service</legend>
-                    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        @foreach ($services as $service)
-                            <label class="service-choice">
-                                <input class="service-choice-input" type="radio" name="service_id" value="{{ $service->id }}" @checked(old('service_id') == $service->id) required>
-                                <span class="service-choice-content">
-                                    <span class="flex min-w-0 items-start justify-between gap-3">
-                                        <span class="font-semibold text-slate-900">{{ $service->name }}</span>
-                                        <span class="shrink-0 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-bold text-teal-800">₱{{ number_format((float) $service->price, 2) }}</span>
+                <fieldset class="grid min-w-0 gap-4 rounded-2xl border border-teal-100 bg-gradient-to-br from-teal-50/70 via-white to-white p-4 sm:col-span-2 sm:p-5 xl:col-span-12">
+                    <legend class="sr-only">Select Dental Treatment</legend>
+                    <div class="flex items-start gap-3">
+                        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-700 text-white shadow-sm" aria-hidden="true">
+                            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 3.5c-3.3-2-7.5-.1-7.5 4.3 0 3.4 1.6 5.3 2.3 8.3.5 2.2 1.1 4.4 2.5 4.4 1.2 0 1.1-2.3 2.7-2.3s1.5 2.3 2.7 2.3c1.4 0 2-2.2 2.5-4.4.7-3 2.3-4.9 2.3-8.3 0-4.4-4.2-6.3-7.5-4.3Z"></path>
+                                <path stroke-linecap="round" d="M9 8.5c.5-.8 1.5-1.2 2.5-1.2"></path>
+                            </svg>
+                        </span>
+                        <div class="min-w-0">
+                            <h3 class="text-sm font-semibold text-slate-900">Select Dental Treatment</h3>
+                            <p class="mt-1 text-xs leading-5 text-slate-500">Choose a service to view its fee and appointment details.</p>
+                        </div>
+                    </div>
+                    <div class="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        @foreach ($services->groupBy('category') as $category => $categoryServices)
+                            <label class="grid min-w-0 content-start gap-2 text-sm font-semibold text-slate-700">
+                                <span class="flex min-h-10 items-center justify-between gap-2">
+                                    <span>{{ $category ?: 'Other Services' }}</span>
+                                    <span class="hidden shrink-0 rounded-full bg-teal-100 px-2.5 py-1 text-[0.65rem] font-bold uppercase tracking-wide text-teal-800" data-category-active>Selected</span>
+                                </span>
+                                <span class="relative block">
+                                    <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-teal-700" aria-hidden="true">
+                                        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                            <path stroke-linecap="round" d="M9 6h11M9 12h11M9 18h11"></path>
+                                            <circle cx="4.5" cy="6" r=".75" fill="currentColor" stroke="none"></circle>
+                                            <circle cx="4.5" cy="12" r=".75" fill="currentColor" stroke="none"></circle>
+                                            <circle cx="4.5" cy="18" r=".75" fill="currentColor" stroke="none"></circle>
+                                        </svg>
                                     </span>
-                                    @if ($service->description)
-                                        <span class="mt-2 block text-sm leading-5 text-slate-500">{{ $service->description }}</span>
-                                    @else
-                                        <span class="mt-2 block text-sm text-slate-400">Clinic dental service</span>
-                                    @endif
-                                    <span class="mt-2 block text-xs font-medium text-slate-500">{{ $service->duration_minutes }} minutes</span>
+                                    <select
+                                        class="form-input min-h-12 appearance-none border-slate-200 bg-white pl-11 pr-11 font-medium shadow-sm hover:border-teal-300 focus:border-teal-600 focus:ring-4 focus:ring-teal-100/80"
+                                        data-service-category
+                                        aria-label="{{ $category ?: 'Other Services' }}"
+                                        @if ($loop->first) name="service_id" required @endif
+                                    >
+                                        <option value="">Choose a treatment...</option>
+                                        @foreach ($categoryServices as $service)
+                                            @php($displayPrice = $service->requires_price_confirmation && $service->price_display ? $service->price_display : config('clinic.currency_symbol').number_format((float) $service->price, 2))
+                                            <option value="{{ $service->id }}" data-service-name="{{ $service->name }}" data-price="{{ $displayPrice }}" @selected(old('service_id') == $service->id)>{{ $service->name }} — {{ $displayPrice }}</option>
+                                        @endforeach
+                                    </select>
+                                    <span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-400" aria-hidden="true">
+                                        <svg class="h-5 w-5 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="m7 10 5 5 5-5"></path>
+                                        </svg>
+                                    </span>
                                 </span>
                             </label>
                         @endforeach
                     </div>
+                    <p class="max-w-3xl text-xs leading-5 text-slate-500">Reference fees are transcribed from the supplied chart list and have not been verified against the clinic's approved fee schedule. They are estimates only; clinic staff must confirm the final amount before billing.</p>
                 </fieldset>
                 <div class="grid min-w-0 content-start gap-2 sm:col-span-2 xl:col-span-6">
                     <div>
@@ -92,7 +123,7 @@
                                 @endforeach
                             </select>
                         </span>
-                        <span class="text-xs font-normal text-slate-500">Select a date to see which appointment times are available.</span>
+                        <span class="text-xs font-normal text-slate-500">Select a date to see available 30-minute slots. Lunch break is 12:00 PM–1:00 PM.</span>
                     </div>
                 @else
                     <div class="form-label sm:col-span-2 xl:col-span-4">Appointment Time
@@ -110,7 +141,7 @@
                                 @endforeach
                             </select>
                         </span>
-                        <span class="text-xs font-normal text-slate-500">Available and booked times are shown for the selected date.</span>
+                        <span class="text-xs font-normal text-slate-500">Available and booked times are shown for the selected date. Lunch break is 12:00 PM–1:00 PM.</span>
                     </div>
                 @endif
                 <p class="hidden rounded-xl bg-teal-50 px-4 py-3 text-sm font-medium text-teal-900 sm:col-span-2 xl:col-span-12" data-availability-message role="status" aria-live="polite"></p>
@@ -164,29 +195,33 @@
                             @elseif (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                 @if (in_array($appointment->status, ['pending', 'approved'], true))
                                     @if (in_array($appointment->id, $reschedulableAppointmentIds, true))
-                                        <form method="POST" action="{{ route('clinic.appointments.reschedule', $appointment) }}" class="flex min-w-0 flex-wrap gap-1" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-exclude-appointment-id="{{ $appointment->id }}">
-                                            @csrf @method('PATCH')
-                                            <input type="hidden" name="service_id" value="{{ $appointment->service_id }}">
-                                            <input class="form-input date-time-input w-full min-w-0 sm:w-auto sm:min-w-40" type="date" name="appointment_date" min="{{ today(config('clinic.timezone'))->toDateString() }}" value="{{ old('appointment_date', $appointment->starts_at->format('Y-m-d')) }}" data-appointment-date required>
-                                            <span class="relative block min-w-0 sm:w-44">
-                                                <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-teal-700" aria-hidden="true">
-                                                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                                                        <circle cx="12" cy="12" r="8.5"></circle>
-                                                        <path stroke-linecap="round" d="M12 7v5l3 2"></path>
-                                                    </svg>
+                                        <details class="min-w-0">
+                                            <summary class="btn-small cursor-pointer list-none text-teal-800">Reschedule</summary>
+                                            <form method="POST" action="{{ route('clinic.appointments.reschedule', $appointment) }}" class="mt-2 flex min-w-0 flex-wrap gap-1" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-exclude-appointment-id="{{ $appointment->id }}">
+                                                @csrf @method('PATCH')
+                                                <input type="hidden" name="service_id" value="{{ $appointment->service_id }}">
+                                                <input class="form-input date-time-input w-full min-w-0 sm:w-auto sm:min-w-40" type="date" name="appointment_date" min="{{ today(config('clinic.timezone'))->toDateString() }}" value="{{ old('appointment_date', $appointment->starts_at->format('Y-m-d')) }}" data-appointment-date required>
+                                                <span class="relative block min-w-0 sm:w-44">
+                                                    <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-teal-700" aria-hidden="true">
+                                                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                                            <circle cx="12" cy="12" r="8.5"></circle>
+                                                            <path stroke-linecap="round" d="M12 7v5l3 2"></path>
+                                                        </svg>
+                                                    </span>
+                                                    <select class="form-input date-time-input time-select min-h-10 pl-9 pr-8 text-xs" name="appointment_time" data-appointment-time required disabled>
+                                                    @php($currentTime = $appointment->starts_at->format('H:i'))
+                                                    <option value="">Select time</option>
+                                                    @foreach ($appointmentTimes as $timeOption)
+                                                        <option value="{{ $timeOption }}" @selected(old('appointment_time', $currentTime) === $timeOption)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeOption)->format('g:i A') }}</option>
+                                                    @endforeach
+                                                    </select>
                                                 </span>
-                                                <select class="form-input date-time-input time-select min-h-10 pl-9 pr-8 text-xs" name="appointment_time" data-appointment-time required disabled>
-                                                @php($currentTime = $appointment->starts_at->format('H:i'))
-                                                <option value="">Select time</option>
-                                                @foreach ($appointmentTimes as $timeOption)
-                                                    <option value="{{ $timeOption }}" @selected(old('appointment_time', $currentTime) === $timeOption)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeOption)->format('g:i A') }}</option>
-                                                @endforeach
-                                                </select>
-                                            </span>
-                                            <button type="submit" class="btn-small text-teal-800">Reschedule</button>
-                                        </form>
-                                        <p class="hidden text-sm font-medium text-slate-600" data-availability-message role="status" aria-live="polite"></p>
-                                        <p class="hidden text-sm font-medium text-rose-700" data-sunday-error role="alert">The Dental Clinic is closed on Sundays. Please select another date.</p>
+                                                <button type="submit" class="btn-small text-teal-800">Save new time</button>
+                                            </form>
+                                            <p class="hidden mt-2 text-sm font-medium text-slate-600" data-availability-message role="status" aria-live="polite"></p>
+                                            <p class="mt-2 text-xs text-slate-500">Choose from 30-minute slots; lunch break is 12:00 PM–1:00 PM.</p>
+                                            <p class="hidden mt-2 text-sm font-medium text-rose-700" data-sunday-error role="alert">The Dental Clinic is closed on Sundays. Please select another date.</p>
+                                        </details>
                                     @else
                                         @if (auth()->user()->hasRole('admin', 'staff'))
                                             @if ($appointment->starts_at->toDateString() < today(config('clinic.timezone'))->toDateString())
@@ -238,7 +273,7 @@
             const sundayMessage = 'The Dental Clinic is closed on Sundays. Please select another date.';
             const patientBooking = form.hasAttribute('data-patient-booking');
             const excludedAppointmentId = form.dataset.excludeAppointmentId;
-            const serviceInputs = form.querySelectorAll('[name="service_id"]');
+            const serviceSelects = form.querySelectorAll('[data-service-category]');
             const timePicker = document.createElement('div');
             const timeTrigger = document.createElement('button');
             const timeMenu = document.createElement('div');
@@ -478,6 +513,35 @@
                 }
             };
 
+            const updateServiceSelection = (changedSelect = null) => {
+                if (!serviceSelects.length) {
+                    return;
+                }
+
+                const selectedSelect = changedSelect?.value
+                    ? changedSelect
+                    : Array.from(serviceSelects).find((select) => select.value);
+                const serviceSelectForValidation = selectedSelect || serviceSelects[0];
+
+                serviceSelects.forEach((select) => {
+                    if (select !== selectedSelect) {
+                        select.value = '';
+                    }
+                    select.removeAttribute('name');
+                    select.required = false;
+                    select.setCustomValidity('');
+                    select.closest('label')
+                        .querySelector('[data-category-active]')
+                        .classList.toggle('hidden', select !== selectedSelect);
+                });
+
+                serviceSelectForValidation.name = 'service_id';
+                serviceSelectForValidation.required = true;
+                serviceSelectForValidation.setCustomValidity(
+                    selectedSelect ? '' : 'Choose one treatment before continuing.',
+                );
+            };
+
             const renderCalendar = () => {
                 if (!calendar) {
                     return;
@@ -607,7 +671,8 @@
                 preferredTime = timeSelect.value;
                 timeSelect.setCustomValidity('');
             });
-            serviceInputs.forEach((input) => input.addEventListener('change', () => {
+            serviceSelects.forEach((select) => select.addEventListener('change', () => {
+                updateServiceSelection(select);
                 if (dateInput.value || patientBooking) {
                     loadAvailability(currentMonth);
                 }
@@ -684,6 +749,7 @@
                 form.requestSubmit(event.submitter);
             });
             updateSundayValidation();
+            updateServiceSelection();
             loadAvailability(currentMonth);
         });
     </script>

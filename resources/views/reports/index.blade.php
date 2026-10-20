@@ -44,7 +44,7 @@
                 </tbody>
             </table>
         </div>
-        <p class="report-note mt-5 text-sm text-slate-500">Revenue uses applied payment amounts; partial payments are included only for their paid portion.</p>
+        <p class="report-note mt-5 text-sm text-slate-500">Revenue uses applied payment amounts; partial payments are included only for their paid portion. Revenue includes PayMongo TEST MODE payments when present; they simulate payment and do not transfer real money.</p>
         <footer class="report-print-footer">Generated {{ now()->format('F j, Y · g:i A') }} · {{ config('clinic.name') }}</footer>
     </div>
 @endsection

@@ -42,6 +42,11 @@ class DashboardController extends Controller
 
         $today = today();
         $isAdmin = $user->role === 'admin';
+        $hasTestPaymentsToday = Payment::query()
+            ->whereDate('created_at', $today)
+            ->where('provider', 'paymongo')
+            ->where('is_test', true)
+            ->exists();
         $appointments = Appointment::query()
             ->with(['patient.user', 'service', 'queueEntry'])
             ->whereDate('starts_at', $today)
@@ -56,7 +61,7 @@ class DashboardController extends Controller
                 ['Pending approval', number_format(Appointment::where('status', 'pending')->count()), 'Online requests'],
                 ['Patients in queue', number_format(QueueEntry::whereDate('queue_date', $today)->whereIn('status', ['waiting', 'called'])->count()), 'Waiting or called today'],
                 ['Completed today', number_format(Appointment::whereDate('starts_at', $today)->where('status', 'completed')->count()), 'Appointments completed'],
-                ["Today's revenue", '₱'.number_format((float) Payment::whereDate('created_at', $today)->sum('applied_amount'), 2), 'Payments applied today'],
+                ["Today's revenue", '₱'.number_format((float) Payment::whereDate('created_at', $today)->sum('applied_amount'), 2), $hasTestPaymentsToday ? 'Includes PayMongo TEST MODE payments' : 'Payments applied today'],
                 ['Unpaid bills', number_format(Bill::whereIn('payment_status', ['unpaid', 'partially_paid'])->count()), 'Including partial balances'],
                 ['Active staff', number_format(User::where('role', 'staff')->where('is_active', true)->count()), 'Clinic team members'],
             ]

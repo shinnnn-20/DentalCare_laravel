@@ -54,7 +54,7 @@ class AppointmentController extends Controller
             })
             ->modelKeys();
 
-        $services = Service::query()->where('is_active', true)->orderBy('name')->get();
+        $services = Service::query()->where('is_active', true)->orderBy('category')->orderBy('name')->get();
         $patients = $request->user()->hasRole('admin', 'staff')
             ? Patient::with('user')->orderBy('patient_number')->get()
             : collect();
@@ -168,18 +168,16 @@ class AppointmentController extends Controller
         $patient = $isPatient
             ? $request->user()->patient()->firstOrFail()
             : Patient::query()->findOrFail($data['patient_id']);
-        $startsAt = Carbon::parse($data['starts_at'] ?? now(config('clinic.timezone'))->ceilMinutes(10)->second(0), config('clinic.timezone'));
         $durationMinutes = (int) $service->duration_minutes;
+        $startsAt = isset($data['starts_at'])
+            ? Carbon::parse($data['starts_at'], config('clinic.timezone'))
+            : $this->nextAppointmentStart(now(config('clinic.timezone')), $durationMinutes);
 
-        if (isset($data['starts_at'])) {
-            $this->ensureAppointmentAvailability($startsAt, $durationMinutes);
-        }
+        $this->ensureAppointmentAvailability($startsAt, $durationMinutes);
 
         $appointment = DB::transaction(function () use ($isPatient, $patient, $service, $startsAt, $durationMinutes, $data, $request): Appointment {
             $slotKeys = $this->appointmentSlotKeys($startsAt, $durationMinutes);
-            if (isset($data['starts_at'])) {
-                $this->ensureAppointmentAvailability($startsAt, $durationMinutes);
-            }
+            $this->ensureAppointmentAvailability($startsAt, $durationMinutes);
             $this->claimAppointmentSlots($slotKeys);
             $appointment = Appointment::create([
                 'patient_id' => $patient->id,
@@ -241,9 +239,9 @@ class AppointmentController extends Controller
                 ]);
             }
 
-            if ($lockedAppointment->starts_at->toDateString() !== today(config('clinic.timezone'))->toDateString()) {
+            if ($lockedAppointment->starts_at->toDateString() < today(config('clinic.timezone'))->toDateString()) {
                 throw ValidationException::withMessages([
-                    'status' => 'Only approved appointments scheduled for today can be checked in.',
+                    'status' => 'Past appointments cannot be checked in.',
                 ]);
             }
 
@@ -534,7 +532,7 @@ class AppointmentController extends Controller
 
         if (! in_array($timeData['appointment_time'], $this->appointmentTimeOptions(), true)) {
             throw ValidationException::withMessages([
-                'appointment_time' => 'Appointments are available Monday to Saturday from 9:00 AM to 5:00 PM.',
+                'appointment_time' => 'Appointments are available Monday to Saturday in 30-minute slots, excluding the 12:00 PM to 1:00 PM lunch break.',
             ]);
         }
 
@@ -545,10 +543,55 @@ class AppointmentController extends Controller
 
     private function appointmentTimeOptions(): array
     {
-        return array_map(
-            static fn (int $minutes): string => sprintf('%02d:%02d', intdiv($minutes, 60), $minutes % 60),
-            range(9 * 60, 17 * 60, 10),
+        $availableMinutes = array_filter(
+            range(9 * 60, (16 * 60) + 30, 30),
+            static fn (int $minutes): bool => $minutes < 12 * 60 || $minutes >= 13 * 60,
         );
+
+        return array_values(array_map(
+            static fn (int $minutes): string => sprintf('%02d:%02d', intdiv($minutes, 60), $minutes % 60),
+            $availableMinutes,
+        ));
+    }
+
+    private function nextAppointmentStart(Carbon $currentTime, int $durationMinutes): Carbon
+    {
+        $candidate = $currentTime->copy()->second(0)->microsecond(0)->ceilMinutes(30);
+
+        if (! $candidate->greaterThan($currentTime)) {
+            $candidate->addMinutes(30);
+        }
+
+        while (true) {
+            if ($candidate->dayOfWeekIso === 7) {
+                $candidate->next(Carbon::MONDAY)->setTime(9, 0);
+
+                continue;
+            }
+
+            $minutes = ($candidate->hour * 60) + $candidate->minute;
+
+            if ($minutes < 9 * 60) {
+                $candidate->setTime(9, 0);
+
+                continue;
+            }
+
+            if (($minutes >= 12 * 60 && $minutes < 13 * 60)
+                || ($minutes < 12 * 60 && $minutes + $durationMinutes > 12 * 60)) {
+                $candidate->setTime(13, 0);
+
+                continue;
+            }
+
+            if ($minutes + $durationMinutes > 17 * 60) {
+                $candidate->addDay()->setTime(9, 0);
+
+                continue;
+            }
+
+            return $candidate;
+        }
     }
 
     /**
@@ -612,10 +655,12 @@ class AppointmentController extends Controller
     private function withinClinicHours(Carbon $startsAt, int $durationMinutes): bool
     {
         $minutes = ($startsAt->hour * 60) + $startsAt->minute;
+        $endsAt = $minutes + $durationMinutes;
 
         return $minutes >= 9 * 60
-            && $minutes % 10 === 0
-            && $minutes + $durationMinutes <= 17 * 60;
+            && $minutes % 30 === 0
+            && $endsAt <= 17 * 60
+            && ($minutes >= 13 * 60 || $endsAt <= 12 * 60);
     }
 
     private function ensureAppointmentAvailability(Carbon $startsAt, int $durationMinutes, ?int $ignoreAppointmentId = null): void
@@ -628,7 +673,7 @@ class AppointmentController extends Controller
 
         if (! $this->withinClinicHours($startsAt, $durationMinutes)) {
             throw ValidationException::withMessages([
-                'starts_at' => 'Appointments are available Monday to Saturday from 9:00 AM, with the full service duration ending by 5:00 PM in 10-minute increments.',
+                'starts_at' => 'Appointments are available Monday to Saturday in 30-minute slots from 9:00 AM to 5:00 PM, excluding the 12:00 PM to 1:00 PM lunch break.',
             ]);
         }
 

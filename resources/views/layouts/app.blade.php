@@ -14,7 +14,7 @@
                 <div class="flex items-center justify-between gap-3">
                 <a href="{{ route('dashboard') }}" class="flex min-w-0 items-center gap-3 font-bold text-xl text-teal-800">
                     <span class="grid h-10 w-10 place-items-center rounded-xl bg-teal-700 text-white">D</span>
-                    <span>DentalCare</span>
+                    <span>{{ config('clinic.name') }}</span>
                 </a>
                 <details class="relative lg:hidden">
                     <summary class="btn-secondary cursor-pointer list-none">Menu</summary>

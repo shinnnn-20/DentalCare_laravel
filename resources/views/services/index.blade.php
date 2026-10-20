@@ -6,7 +6,7 @@
     <div class="mb-8">
         <p class="text-sm font-medium text-teal-700">Clinic setup</p>
         <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Dental services</h1>
-        <p class="mt-2 max-w-2xl text-slate-500">Review clinic treatments and pricing. Active services are available when patients request an appointment.</p>
+        <p class="mt-2 max-w-2xl text-slate-500">Review clinic treatments and pricing. Reference fees are estimates; treatments requiring confirmation need a final staff-confirmed amount before billing.</p>
     </div>
 
     @if (auth()->user()->role === 'admin')
@@ -18,25 +18,38 @@
                     <p class="mt-1 text-sm text-slate-500">Create a treatment option for the appointment booking form.</p>
                 </div>
             </div>
-            <form method="POST" action="{{ route('admin.services.store') }}" class="grid gap-4 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-[1fr_1.4fr_12rem_10rem_auto]">
+            <form method="POST" action="{{ route('admin.services.store') }}" class="grid gap-4 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-4">
                 @csrf
                 <label class="form-label">Service name
                     <input class="form-input" name="name" value="{{ old('name') }}" required maxlength="255" placeholder="e.g. Dental cleaning">
                 </label>
+                <label class="form-label">Category
+                    <input class="form-input" name="category" value="{{ old('category') }}" maxlength="100" placeholder="e.g. Preventive Care">
+                </label>
                 <label class="form-label">Description
                     <input class="form-input" name="description" value="{{ old('description') }}" maxlength="2000" placeholder="A short description for patients">
                 </label>
-                <label class="form-label">Price
+                <label class="form-label">Fixed clinic price
                     <span class="relative">
                         <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold text-slate-500">₱</span>
                         <input class="form-input pl-8" type="number" name="price" value="{{ old('price') }}" min="0" max="1000000" step="0.01" required placeholder="0.00">
                     </span>
+                    <span class="text-xs font-normal text-slate-500">Used for billing only when staff confirmation is off.</span>
+                </label>
+                <label class="form-label">Displayed fee or range
+                    <input class="form-input" name="price_display" value="{{ old('price_display') }}" maxlength="150" placeholder="e.g. ₱1,000–₱1,500">
                 </label>
                 <label class="form-label">Duration
                     <select class="form-input" name="duration_minutes" required>
                         @foreach (range(10, 240, 10) as $duration)
                             <option value="{{ $duration }}" @selected(old('duration_minutes', 30) == $duration)>{{ $duration }} minutes</option>
                         @endforeach
+                    </select>
+                </label>
+                <label class="form-label">Final amount
+                    <select class="form-input" name="requires_price_confirmation" required>
+                        <option value="0" @selected(old('requires_price_confirmation', '0') === '0')>Use fixed clinic price</option>
+                        <option value="1" @selected(old('requires_price_confirmation') === '1')>Staff confirms before billing</option>
                     </select>
                 </label>
                 <button class="btn-primary w-full self-end sm:w-auto">Add service</button>
@@ -50,7 +63,7 @@
                 <h2 class="text-lg font-semibold text-slate-900">Service catalog</h2>
                 <p class="mt-1 text-sm text-slate-500">{{ $services->total() }} {{ \Illuminate\Support\Str::plural('service', $services->total()) }} configured</p>
             </div>
-            <p class="text-xs font-medium text-slate-500">Prices shown in clinic currency (₱)</p>
+            <p class="text-xs font-medium text-slate-500">Configured prices and reference estimates shown in clinic currency (₱)</p>
         </div>
         @if ($services->isEmpty())
             <div class="rounded-3xl border border-dashed border-slate-300 bg-white px-5 py-12 text-center">
@@ -61,12 +74,13 @@
             <div class="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
                 @foreach ($services as $service)
                     <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                        @php($displayPrice = $service->requires_price_confirmation && $service->price_display ? $service->price_display : config('clinic.currency_symbol').number_format((float) $service->price, 2))
                         <div class="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
                             <div class="min-w-0">
                                 <p class="text-xs font-semibold uppercase tracking-wide text-teal-700">Dental treatment</p>
                                 <h3 class="mt-1 break-words text-lg font-semibold text-slate-900">{{ $service->name }}</h3>
                             </div>
-                            <span class="shrink-0 rounded-xl bg-teal-50 px-3 py-2 text-sm font-bold text-teal-900">₱{{ number_format((float) $service->price, 2) }}</span>
+                            <span class="shrink-0 rounded-xl bg-teal-50 px-3 py-2 text-sm font-bold text-teal-900">{{ $service->requires_price_confirmation ? 'Reference: ' : '' }}{{ $displayPrice }}</span>
                         </div>
                         <div class="grid gap-4 p-5">
                             <div class="flex items-center justify-between gap-3">
@@ -78,6 +92,9 @@
                                 ])>{{ $service->is_active ? 'Active' : 'Inactive' }}</span>
                             </div>
                             <p class="text-sm text-slate-500">Appointment duration: <span class="font-semibold text-slate-700">{{ $service->duration_minutes }} minutes</span></p>
+                            @if ($service->requires_price_confirmation)
+                                <p class="text-xs font-medium text-amber-800">Final amount must be confirmed by staff when the bill is created.</p>
+                            @endif
 
                             @if (auth()->user()->role === 'admin')
                                 <details class="border-t border-slate-100 pt-4">
@@ -87,15 +104,28 @@
                                         <label class="form-label">Service name
                                             <input class="form-input" name="name" value="{{ $service->name }}" required maxlength="255">
                                         </label>
+                                        <label class="form-label">Category
+                                            <input class="form-input" name="category" value="{{ $service->category }}" maxlength="100">
+                                        </label>
                                         <label class="form-label">Description
                                             <textarea class="form-input" name="description" rows="2" maxlength="2000">{{ $service->description }}</textarea>
                                         </label>
-                                        <div class="grid gap-3 sm:grid-cols-3">
-                                            <label class="form-label">Price
+                                        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                                            <label class="form-label">Fixed clinic price
                                                 <span class="relative">
                                                     <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm font-semibold text-slate-500">₱</span>
                                                     <input class="form-input pl-8" type="number" name="price" min="0" max="1000000" step="0.01" value="{{ $service->price }}" required>
                                                 </span>
+                                                <span class="text-xs font-normal text-slate-500">Used for billing only when staff confirmation is off.</span>
+                                            </label>
+                                            <label class="form-label">Displayed fee or range
+                                                <input class="form-input" name="price_display" value="{{ $service->price_display }}" maxlength="150" placeholder="e.g. ₱1,000–₱1,500">
+                                            </label>
+                                            <label class="form-label">Final amount
+                                                <select class="form-input" name="requires_price_confirmation" required>
+                                                    <option value="0" @selected(! $service->requires_price_confirmation)>Use fixed clinic price</option>
+                                                    <option value="1" @selected($service->requires_price_confirmation)>Staff confirms before billing</option>
+                                                </select>
                                             </label>
                                             <label class="form-label">Duration
                                                 <select class="form-input" name="duration_minutes" required>

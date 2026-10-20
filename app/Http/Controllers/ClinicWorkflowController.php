@@ -31,7 +31,7 @@ class ClinicWorkflowController extends Controller
                 ->get(),
             'checkInAppointments' => Appointment::query()
                 ->with(['patient.user', 'service'])
-                ->whereDate('starts_at', today(config('clinic.timezone')))
+                ->whereDate('starts_at', '>=', today(config('clinic.timezone')))
                 ->where('status', 'approved')
                 ->whereDoesntHave('queueEntry')
                 ->orderBy('starts_at')
@@ -93,6 +93,7 @@ class ClinicWorkflowController extends Controller
         abort_unless($appointment->status === 'in_consultation', 422);
         abort_if($appointment->dentalRecord()->doesntExist(), 422, 'A dental record is required before billing.');
         abort_if($appointment->bill()->exists(), 409, 'A bill already exists for this appointment.');
+        $appointment->load('service');
 
         return view('billing.create', [
             'appointment' => $appointment->load(['patient.user', 'service']),
@@ -108,11 +109,35 @@ class ClinicWorkflowController extends Controller
         abort_unless($appointment->status === 'in_consultation', 422);
         abort_if($appointment->dentalRecord()->doesntExist(), 422, 'A dental record is required before billing.');
         abort_if($appointment->bill()->exists(), 409, 'A bill already exists for this appointment.');
+        $appointment->load('service');
 
-        $data = $request->validate([
+        $rules = [
             'discount' => ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:1000000'],
-        ]);
-        $subtotalCents = (int) round((float) $appointment->service->price * 100);
+        ];
+
+        if ($appointment->service->requires_price_confirmation) {
+            $rules['final_price'] = ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:1000000'];
+            $rules['confirm_final_price'] = ['accepted'];
+        } else {
+            $rules['final_price'] = ['prohibited'];
+            $rules['confirm_final_price'] = ['prohibited'];
+        }
+
+        foreach (['discount', 'final_price'] as $field) {
+            $value = $request->input($field);
+
+            if (is_string($value)
+                && preg_match('/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/', $value) === 1) {
+                $request->merge([$field => str_replace(',', '', $value)]);
+            }
+        }
+
+        $data = $request->validate($rules);
+        $subtotalCents = (int) round((float) (
+            $appointment->service->requires_price_confirmation
+                ? $data['final_price']
+                : $appointment->service->price
+        ) * 100);
         $discountCents = (int) round((float) $data['discount'] * 100);
 
         if ($discountCents > $subtotalCents) {
@@ -166,7 +191,7 @@ class ClinicWorkflowController extends Controller
 
         return view('billing.index', [
             'bills' => Bill::query()
-                ->with(['patient.user', 'appointment', 'items', 'payments.receipt'])
+                ->with(['patient.user', 'appointment', 'items', 'payments.receipt', 'payMongoBillCheckouts'])
                 ->when(
                     $filters['bill'] ?? null,
                     fn ($query, $billId) => $query->orderByRaw('CASE WHEN bills.id = ? THEN 0 ELSE 1 END', [$billId]),
@@ -174,6 +199,7 @@ class ClinicWorkflowController extends Controller
                 ->latest()
                 ->paginate(20),
             'selectedBillId' => isset($filters['bill']) ? (int) $filters['bill'] : null,
+            'paymongoTestCheckoutAvailable' => $this->paymongoTestCheckoutAvailable(),
         ]);
     }
 
@@ -200,6 +226,20 @@ class ClinicWorkflowController extends Controller
                 ->latest()
                 ->paginate(20),
         ]);
+    }
+
+    private function paymongoTestCheckoutAvailable(): bool
+    {
+        $secretKey = config('services.paymongo.secret');
+        $baseUrl = config('services.paymongo.base_url');
+        $webhookSecret = config('services.paymongo.webhook_secret');
+
+        return (app()->isLocal() || (app()->environment('testing') && app()->runningUnitTests()))
+            && is_string($secretKey)
+            && str_starts_with($secretKey, 'sk_test_')
+            && $baseUrl === 'https://api.paymongo.com/v2'
+            && is_string($webhookSecret)
+            && $webhookSecret !== '';
     }
 
     public function patientNotifications(Request $request): View

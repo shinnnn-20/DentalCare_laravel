@@ -24,6 +24,15 @@ class PaymentController extends Controller
         SmsNotifier $smsNotifier,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
+        foreach (['amount', 'applied_amount'] as $field) {
+            $value = $request->input($field);
+
+            if (is_string($value)
+                && preg_match('/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/', $value) === 1) {
+                $request->merge([$field => str_replace(',', '', $value)]);
+            }
+        }
+
         $data = $request->validate([
             'method' => ['required', 'in:cash,gcash,card,other'],
             'amount' => ['required', 'numeric', 'decimal:0,2', 'gt:0', 'max:1000000'],

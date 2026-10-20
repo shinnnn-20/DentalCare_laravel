@@ -62,6 +62,7 @@ class ClinicWorkflowTest extends TestCase
     {
         $this->get(route('login'))
             ->assertOk()
+            ->assertSee('Doc Brigs Dental Care')
             ->assertSee('data-password-toggle', false)
             ->assertSee('Show password', false)
             ->assertSee('type="password"', false);
@@ -71,6 +72,7 @@ class ClinicWorkflowTest extends TestCase
     {
         $this->get(route('register'))
             ->assertOk()
+            ->assertSee('Doc Brigs Dental Care')
             ->assertSee('data-password-toggle', false)
             ->assertSee('Show password', false)
             ->assertSee('name="password_confirmation"', false)
@@ -376,6 +378,73 @@ class ClinicWorkflowTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_reference_treatment_catalog_is_seeded_once_without_overwriting_legacy_prices(): void
+    {
+        $legacyService = Service::create([
+            'name' => 'Dental Cleaning',
+            'price' => 1000,
+            'is_active' => true,
+        ]);
+
+        $this->seed();
+        $seededServiceCount = Service::count();
+        $this->seed();
+
+        $this->assertSame($seededServiceCount, Service::count());
+        $this->assertSame('1000.00', $legacyService->fresh()->price);
+        $this->assertFalse($legacyService->fresh()->is_active);
+        $this->assertDatabaseHas('services', [
+            'name' => 'Odontectomy',
+            'category' => 'Extraction and Surgical Procedures',
+            'price' => '0.00',
+            'price_display' => '₱10,000 and up',
+            'requires_price_confirmation' => true,
+        ]);
+        $this->assertDatabaseHas('services', [
+            'name' => 'Direct Composite Veneers',
+            'price_display' => '₱6,000',
+            'requires_price_confirmation' => true,
+        ]);
+    }
+
+    public function test_patient_and_staff_appointment_forms_render_a_grouped_reference_fee_dropdown(): void
+    {
+        $this->seed();
+        $service = Service::query()->where('name', 'Periapical X-Ray')->firstOrFail();
+        $patient = $this->createPatient('P-2026-00040');
+        $staff = User::factory()->create(['role' => 'staff']);
+
+        foreach ([$patient->user, $staff] as $user) {
+            $response = $this->actingAs($user)
+                ->get(route('appointments.index'))
+                ->assertSee('data-service-category', false)
+                ->assertSee('aria-label="Consultation and Basic Services"', false)
+                ->assertSee('aria-label="Oral Prophylaxis and Preventive Treatments"', false)
+                ->assertSee('aria-label="Restorative Treatments and Fillings"', false)
+                ->assertSee('aria-label="Extraction and Surgical Procedures"', false)
+                ->assertSee('aria-label="Crowns, Bridges, and Dental Implants"', false)
+                ->assertSee('aria-label="Complete Dentures"', false)
+                ->assertSee('aria-label="Partial Dentures"', false)
+                ->assertSee('aria-label="Denture Repairs and Other Treatments"', false)
+                ->assertSee('name="service_id" required', false)
+                ->assertSee('Direct Composite — ₱6,000')
+                ->assertSee('Complete Denture — ₱45,000 and up')
+                ->assertSee('Natura Tone (U/L) — ₱18,000 and up')
+                ->assertSee('Periapical X-Ray — ₱600–₱800')
+                ->assertDontSee('SELECTED TREATMENT')
+                ->assertDontSee('data-service-selection', false)
+                ->assertSee('staff must confirm the final amount before billing');
+
+            $this->assertSame(1, substr_count($response->getContent(), 'name="service_id" required'));
+        }
+
+        $this->assertSame(1, Service::query()->where('name', 'Periapical X-Ray')->count());
+        $this->assertDatabaseHas('services', ['id' => $service->id, 'is_active' => true]);
+        $this->assertDatabaseHas('services', ['name' => 'Direct Composite', 'category' => 'Restorative Treatments and Fillings']);
+        $this->assertDatabaseHas('services', ['name' => 'Direct Composite Veneers', 'category' => 'Veneers']);
+        $this->assertDatabaseHas('services', ['name' => 'Recementation of Crown (Per Unit)', 'category' => 'Crowns, Bridges, and Dental Implants']);
+    }
+
     public function test_patient_booking_reserves_a_slot_against_a_second_patient_request(): void
     {
         $this->travelTo('2026-10-04 08:00:00');
@@ -452,8 +521,10 @@ class ClinicWorkflowTest extends TestCase
         $response->assertOk();
         $this->assertContains('09:00', $response->json('days')['2026-10-05']);
         $this->assertNotContains('10:00', $response->json('days')['2026-10-05']);
-        $this->assertContains('10:10', $response->json('days')['2026-10-05']);
+        $this->assertContains('10:30', $response->json('days')['2026-10-05']);
         $this->assertNotContains('17:00', $response->json('days')['2026-10-05']);
+        $this->assertNotContains('12:00', $response->json('days')['2026-10-05']);
+        $this->assertNotContains('12:30', $response->json('days')['2026-10-05']);
         $this->assertSame([], $response->json('days')['2026-10-06']);
         $this->assertSame([], $response->json('days')['2026-10-11']);
 
@@ -531,15 +602,15 @@ class ClinicWorkflowTest extends TestCase
 
         $this->patch(route('clinic.appointments.reschedule', $appointment), [
             'appointment_date' => '2026-10-06',
-            'appointment_time' => '10:10',
+            'appointment_time' => '10:30',
         ])->assertRedirect();
 
         $this->assertDatabaseHas('appointment_slots', [
-            'starts_at' => '2026-10-06 10:10:00',
+            'starts_at' => '2026-10-06 10:30:00',
             'appointment_id' => $appointment->id,
         ]);
         $this->assertDatabaseMissing('appointment_slots', ['starts_at' => '2026-10-05 10:00:00']);
-        $this->assertSame('2026-10-06 10:10:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-06 10:30:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
     }
 
     #[DataProvider('clinicStaffRoles')]
@@ -630,12 +701,12 @@ class ClinicWorkflowTest extends TestCase
 
         $this->patch(route('clinic.appointments.reschedule', $appointment), [
             'appointment_date' => '2026-10-06',
-            'appointment_time' => '10:10',
+            'appointment_time' => '10:30',
         ])->assertRedirect();
 
-        $this->assertSame('2026-10-06 10:10:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-06 10:30:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
         $this->assertDatabaseHas('appointment_slots', [
-            'starts_at' => '2026-10-06 10:10:00',
+            'starts_at' => '2026-10-06 10:30:00',
             'appointment_id' => $appointment->id,
         ]);
         $this->assertDatabaseHas('audit_logs', [
@@ -688,7 +759,7 @@ class ClinicWorkflowTest extends TestCase
         $this->assertFalse($doctor->fresh()->is_active);
     }
 
-    public function test_staff_rescheduling_persists_a_date_and_ten_minute_time_selection(): void
+    public function test_staff_rescheduling_persists_a_date_and_thirty_minute_time_selection(): void
     {
         $this->travelTo('2026-10-01 08:00:00');
 
@@ -703,7 +774,7 @@ class ClinicWorkflowTest extends TestCase
             'status' => 'approved',
         ]);
 
-        $newStart = now()->addDays(4)->setTime(15, 40);
+        $newStart = now()->addDays(4)->setTime(15, 30);
         $this->actingAs($staff)
             ->patch(route('clinic.appointments.reschedule', $appointment), [
                 'appointment_date' => $newStart->format('Y-m-d'),
@@ -728,6 +799,12 @@ class ClinicWorkflowTest extends TestCase
             'action' => 'appointment_rescheduled',
             'record_id' => (string) $appointment->id,
         ]);
+        $this->actingAs($staff)
+            ->get(route('appointments.index'))
+            ->assertSee('<details class="min-w-0">', false)
+            ->assertSee('<summary class="btn-small cursor-pointer list-none text-teal-800">Reschedule</summary>', false)
+            ->assertSee('name="appointment_date"', false)
+            ->assertSee('>Save new time</button>', false);
     }
 
     public function test_rescheduling_rejects_a_taken_time_without_changing_the_appointment(): void
@@ -815,7 +892,102 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('Dental Cleaning')
             ->assertSee('CASH')
             ->assertSee('OR-2026-PRINT01')
-            ->assertSee('₱6,500.00');
+            ->assertSee('₱6,500.00')
+            ->assertSee('Doc Brigs Dental Care');
+    }
+
+    public function test_variable_fee_is_confirmed_by_staff_before_it_is_added_to_a_bill(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00041');
+        $service = Service::create([
+            'name' => 'Variable Fee Treatment',
+            'category' => 'Other Services',
+            'price' => 0,
+            'price_display' => '₱1,000–₱1,500',
+            'requires_price_confirmation' => true,
+            'is_active' => true,
+        ]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'in_consultation',
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create();
+
+        $this->actingAs($staff)
+            ->get(route('clinic.bills.create', $appointment))
+            ->assertSee('₱1,000–₱1,500')
+            ->assertSee('name="final_price"', false)
+            ->assertSee('data-money-input', false)
+            ->assertSee('name="confirm_final_price"', false);
+
+        $this->post(route('clinic.bills.store', $appointment), [
+            'discount' => '0.00',
+        ])->assertSessionHasErrors(['final_price', 'confirm_final_price']);
+        $this->assertDatabaseCount('bills', 0);
+        $this->assertSame('in_consultation', $appointment->fresh()->status);
+
+        $this->post(route('clinic.bills.store', $appointment), [
+            'final_price' => '1200.00',
+            'discount' => '100.00',
+        ])->assertSessionHasErrors('confirm_final_price');
+        $this->assertDatabaseCount('bills', 0);
+
+        $this->post(route('clinic.bills.store', $appointment), [
+            'final_price' => '1200.00',
+            'confirm_final_price' => '1',
+            'discount' => '1200.01',
+        ])->assertSessionHasErrors('discount');
+        $this->assertDatabaseCount('bills', 0);
+
+        $this->post(route('clinic.bills.store', $appointment), [
+            'final_price' => '1,200.50',
+            'confirm_final_price' => '1',
+            'discount' => '100.50',
+        ])->assertRedirectToRoute('clinic.billing.index');
+
+        $bill = Bill::firstOrFail();
+        $this->assertDatabaseHas('bills', [
+            'id' => $bill->id,
+            'created_by' => $staff->id,
+            'subtotal' => '1200.50',
+            'discount' => '100.50',
+            'total' => '1100.00',
+        ]);
+        $this->assertDatabaseHas('bill_items', [
+            'bill_id' => $bill->id,
+            'service_id' => $service->id,
+            'service_name' => 'Variable Fee Treatment',
+            'unit_price' => '1200.50',
+            'subtotal' => '1200.50',
+        ]);
+        $this->assertSame('billed', $appointment->fresh()->status);
+    }
+
+    public function test_fixed_fee_cannot_be_overridden_by_a_submitted_final_price(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00042');
+        $service = Service::create([
+            'name' => 'Fixed Fee Treatment',
+            'price' => 500,
+            'requires_price_confirmation' => false,
+            'is_active' => true,
+        ]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'in_consultation',
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create();
+
+        $this->actingAs($staff)
+            ->post(route('clinic.bills.store', $appointment), [
+                'final_price' => '1.00',
+                'confirm_final_price' => '1',
+                'discount' => '0.00',
+            ])
+            ->assertSessionHasErrors('final_price');
+
+        $this->assertDatabaseCount('bills', 0);
+        $this->assertSame('in_consultation', $appointment->fresh()->status);
     }
 
     public function test_clinic_walk_in_can_be_completed_billed_and_paid_with_receipt(): void
@@ -841,6 +1013,8 @@ class ClinicWorkflowTest extends TestCase
 
         $appointment = Appointment::firstOrFail();
         $this->assertSame('checked_in', $appointment->status);
+        $this->assertSame(0, $appointment->starts_at->minute % 30);
+        $this->assertNotSame(12, $appointment->starts_at->hour);
         $this->assertDatabaseHas('queue_entries', ['appointment_id' => $appointment->id]);
 
         $this->post(route('appointments.transition', [$appointment, 'call']))->assertSessionHasNoErrors();
@@ -872,10 +1046,15 @@ class ClinicWorkflowTest extends TestCase
         ])->assertSessionHasErrors('amount');
         $this->assertDatabaseCount('payments', 0);
 
+        $this->get(route('clinic.billing.index'))
+            ->assertSee('data-money-input', false)
+            ->assertSee('Amount received')
+            ->assertSee('Apply to bill');
+
         $this->post(route('clinic.payments.store', $bill), [
             'method' => 'cash',
-            'amount' => '2000.00',
-            'applied_amount' => '1800.00',
+            'amount' => '2,000.00',
+            'applied_amount' => '1,800.00',
         ])->assertRedirect();
 
         $this->assertDatabaseHas('payments', [
@@ -907,10 +1086,15 @@ class ClinicWorkflowTest extends TestCase
         $receipt = Receipt::firstOrFail();
         $this->assertDatabaseHas('receipts', ['id' => $receipt->id]);
         $this->assertDatabaseHas('sms_logs', ['type' => 'payment', 'status' => 'failed']);
+        $this->assertSame(
+            'Doc Brigs Dental Care: Payment received for bill '.$bill->bill_number.'. Receipt '.$receipt->receipt_number.'.',
+            DB::table('sms_logs')->where('type', 'payment')->value('message'),
+        );
 
         $this->actingAs($patientUser)->get(route('receipts.show', $receipt))->assertOk();
         $this->get(route('receipts.show', $receipt))
             ->assertSee('data-print-receipt', false)
+            ->assertSee('Doc Brigs Dental Care')
             ->assertDontSee('onclick="window.print()"', false);
         $otherPatient = User::factory()->create(['role' => 'patient']);
         $this->actingAs($otherPatient)->get(route('receipts.show', $receipt))->assertNotFound();
@@ -1019,7 +1203,7 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('Appointments');
     }
 
-    public function test_booking_and_rescheduling_require_ten_minute_time_slots(): void
+    public function test_booking_and_rescheduling_require_thirty_minute_time_slots(): void
     {
         $this->travelTo(now()->startOfDay()->setTime(8, 0));
 
@@ -1040,13 +1224,24 @@ class ClinicWorkflowTest extends TestCase
             ->assertDontSee('type="datetime-local"', false)
             ->assertDontSee('value="00:01"', false)
             ->assertDontSee('value="00:09"', false)
-            ->assertSee('value="10:10"', false)
+            ->assertSee('value="10:30"', false)
+            ->assertDontSee('value="10:10"', false)
+            ->assertDontSee('value="12:00"', false)
+            ->assertDontSee('value="12:30"', false)
             ->assertDontSee('value="paid"', false);
         $this->actingAs($patientUser)
             ->post(route('appointments.store'), [
                 'service_id' => $service->id,
                 'appointment_date' => $invalidStart->format('Y-m-d'),
                 'appointment_time' => $invalidStart->format('H:i'),
+            ])
+            ->assertSessionHasErrors('appointment_time');
+        $this->actingAs(User::factory()->create(['role' => 'staff']))
+            ->post(route('appointments.store'), [
+                'patient_id' => $patient->id,
+                'service_id' => $service->id,
+                'appointment_date' => $invalidStart->format('Y-m-d'),
+                'appointment_time' => '12:30',
             ])
             ->assertSessionHasErrors('appointment_time');
         $this->assertDatabaseCount('appointments', 0);
@@ -1066,6 +1261,10 @@ class ClinicWorkflowTest extends TestCase
                 'appointment_time' => $invalidStart->format('H:i'),
             ])
             ->assertSessionHasErrors('appointment_time');
+        $this->patch(route('clinic.appointments.reschedule', $appointment), [
+            'appointment_date' => $invalidStart->format('Y-m-d'),
+            'appointment_time' => '12:30',
+        ])->assertSessionHasErrors('appointment_time');
         $this->assertSame(
             now()->addDays(2)->setTime(10, 0)->format('Y-m-d H:i:s'),
             $appointment->fresh()->starts_at->format('Y-m-d H:i:s'),
@@ -1090,11 +1289,13 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('The Dental Clinic is closed on Sundays. Please select another date.')
             ->assertSee('value="09:00"', false)
             ->assertSee('value="10:00"', false)
-            ->assertSee('value="16:50"', false)
+            ->assertSee('value="16:30"', false)
+            ->assertDontSee('value="12:00"', false)
+            ->assertDontSee('value="12:30"', false)
             ->assertDontSee('value="08:50"', false);
 
         foreach (range(5, 10) as $day) {
-            foreach (['09:00', '16:50'] as $time) {
+            foreach (['09:00', '16:30'] as $time) {
                 $this->post(route('appointments.store'), [
                     'service_id' => $service->id,
                     'appointment_date' => sprintf('2026-10-%02d', $day),
@@ -1110,13 +1311,15 @@ class ClinicWorkflowTest extends TestCase
             'service_id' => $service->id,
         ]));
         $availability->assertOk();
-        $this->assertContains('16:40', $availability->json('days')['2026-10-05']);
-        $this->assertNotContains('16:50', $availability->json('days')['2026-10-05']);
+        $this->assertContains('16:00', $availability->json('days')['2026-10-05']);
+        $this->assertNotContains('16:30', $availability->json('days')['2026-10-05']);
         $this->assertNotContains('17:00', $availability->json('days')['2026-10-05']);
 
         foreach ([
             ['appointment_date' => '2026-10-05', 'appointment_time' => '08:50', 'error' => 'appointment_time'],
-            ['appointment_date' => '2026-10-07', 'appointment_time' => '17:00', 'error' => 'starts_at'],
+            ['appointment_date' => '2026-10-05', 'appointment_time' => '12:00', 'error' => 'appointment_time'],
+            ['appointment_date' => '2026-10-05', 'appointment_time' => '12:30', 'error' => 'appointment_time'],
+            ['appointment_date' => '2026-10-07', 'appointment_time' => '17:00', 'error' => 'appointment_time'],
             ['appointment_date' => '2026-10-07', 'appointment_time' => '17:10', 'error' => 'appointment_time'],
             ['appointment_date' => '2026-10-11', 'appointment_time' => '10:00', 'error' => 'appointment_date'],
         ] as $invalidSlot) {
@@ -1147,8 +1350,56 @@ class ClinicWorkflowTest extends TestCase
             'service_id' => $service->id,
             'starts_at' => '2026-10-07T17:10',
         ])->assertSessionHasErrors('starts_at');
+        $this->post(route('appointments.store'), [
+            'service_id' => $service->id,
+            'starts_at' => '2026-10-07T12:30',
+        ])->assertSessionHasErrors('starts_at');
 
         $this->assertDatabaseCount('appointments', 12);
+    }
+
+    public function test_availability_and_booking_respect_the_lunch_break_and_service_duration(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $patient = $this->createPatient('P-2026-00043');
+        $service = Service::create([
+            'name' => 'Long lunch-break appointment',
+            'price' => 500,
+            'duration_minutes' => 60,
+            'is_active' => true,
+        ]);
+        $availability = $this->actingAs($patient->user)
+            ->getJson(route('appointments.availability', [
+                'month' => '2026-10',
+                'service_id' => $service->id,
+            ]));
+
+        $availability->assertOk();
+        $availableTimes = $availability->json('days')['2026-10-05'];
+        $this->assertContains('11:00', $availableTimes);
+        $this->assertNotContains('11:30', $availableTimes);
+        $this->assertNotContains('12:00', $availableTimes);
+        $this->assertNotContains('12:30', $availableTimes);
+        $this->assertContains('13:00', $availableTimes);
+
+        $this->post(route('appointments.store'), [
+            'service_id' => $service->id,
+            'appointment_date' => '2026-10-05',
+            'appointment_time' => '11:30',
+        ])->assertSessionHasErrors('starts_at');
+
+        $this->post(route('appointments.store'), [
+            'service_id' => $service->id,
+            'appointment_date' => '2026-10-05',
+            'appointment_time' => '13:00',
+        ])->assertRedirectToRoute('appointments.index')
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('appointments', [
+            'patient_id' => $patient->id,
+            'starts_at' => '2026-10-05 13:00:00',
+        ]);
     }
 
     public function test_full_schedule_shows_all_historical_appointments_until_a_date_is_selected(): void
@@ -1300,6 +1551,68 @@ class ClinicWorkflowTest extends TestCase
         $this->assertDatabaseCount('audit_logs', 1);
     }
 
+    public function test_staff_can_check_in_an_approved_appointment_scheduled_for_another_day(): void
+    {
+        $this->travelTo('2026-10-20 08:00:00');
+
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00043');
+        $service = Service::create(['name' => 'Future appointment check-in', 'price' => 500, 'is_active' => true]);
+        $appointment = Appointment::factory()->create([
+            'patient_id' => $patient->id,
+            'service_id' => $service->id,
+            'status' => 'approved',
+            'starts_at' => '2026-10-23 10:00:00',
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('clinic.queue.index'))
+            ->assertSee('Approved appointments ready for check-in')
+            ->assertSee('appointments scheduled for another day')
+            ->assertSee('Oct 23, 2026 at 10:00 AM');
+
+        $this->post(route('clinic.queue.check-in', $appointment))
+            ->assertRedirectToRoute('clinic.queue.index')
+            ->assertSessionHas('status', 'Appointment checked in and added to the queue.');
+
+        $this->assertSame('checked_in', $appointment->fresh()->status);
+        $this->assertDatabaseHas('queue_entries', [
+            'appointment_id' => $appointment->id,
+            'queue_date' => '2026-10-20 00:00:00',
+            'status' => 'waiting',
+        ]);
+        $this->assertSame('2026-10-23 10:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+    }
+
+    public function test_staff_cannot_check_in_an_approved_appointment_from_a_past_day(): void
+    {
+        $this->travelTo('2026-10-20 08:00:00');
+
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00044');
+        $service = Service::create(['name' => 'Past appointment check-in', 'price' => 500, 'is_active' => true]);
+        $appointment = Appointment::factory()->create([
+            'patient_id' => $patient->id,
+            'service_id' => $service->id,
+            'status' => 'approved',
+            'starts_at' => '2026-10-19 10:00:00',
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('clinic.queue.index'))
+            ->assertDontSee('Past appointment check-in');
+
+        $this->from(route('clinic.queue.index'))
+            ->post(route('clinic.queue.check-in', $appointment))
+            ->assertRedirectToRoute('clinic.queue.index')
+            ->assertSessionHasErrors([
+                'status' => 'Past appointments cannot be checked in.',
+            ]);
+
+        $this->assertSame('approved', $appointment->fresh()->status);
+        $this->assertDatabaseCount('queue_entries', 0);
+    }
+
     public function test_doctor_rescheduling_is_rejected_on_the_scheduled_clinic_date(): void
     {
         $this->travelTo('2026-10-09 16:30:00');
@@ -1380,9 +1693,9 @@ class ClinicWorkflowTest extends TestCase
         $firstPatient = $this->createPatient('P-2026-00036');
         $secondPatient = $this->createPatient('P-2026-00037');
         $service = Service::create([
-            'name' => 'Thirty-minute treatment',
+            'name' => 'Sixty-minute treatment',
             'price' => 500,
-            'duration_minutes' => 30,
+            'duration_minutes' => 60,
             'is_active' => true,
         ]);
 
@@ -1398,14 +1711,14 @@ class ClinicWorkflowTest extends TestCase
             ->post(route('appointments.store'), [
                 'service_id' => $service->id,
                 'appointment_date' => '2026-10-05',
-                'appointment_time' => '10:20',
+                'appointment_time' => '10:30',
             ])
             ->assertSessionHasErrors([
                 'starts_at' => 'That time is no longer available. Choose another time.',
             ]);
 
         $this->assertDatabaseCount('appointments', 1);
-        $this->assertDatabaseCount('appointment_slots', 3);
+        $this->assertDatabaseCount('appointment_slots', 6);
     }
 
     public function test_call_and_no_show_are_available_only_from_patient_queue(): void

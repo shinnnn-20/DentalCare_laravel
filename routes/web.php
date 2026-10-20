@@ -8,6 +8,9 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EmailVerificationController;
 use App\Http\Controllers\PatientController;
 use App\Http\Controllers\PaymentController;
+use App\Http\Controllers\PayMongoBillCheckoutController;
+use App\Http\Controllers\PayMongoTestCheckoutController;
+use App\Http\Controllers\PayMongoTestWebhookController;
 use App\Http\Controllers\RfidController;
 use App\Http\Controllers\ServiceController;
 use App\Http\Controllers\StaffController;
@@ -24,6 +27,30 @@ Route::post('/email/verify', [EmailVerificationController::class, 'verify'])
 Route::post('/email/resend-code', [EmailVerificationController::class, 'resend'])
     ->middleware('throttle:3,1')
     ->name('verification.resend');
+
+Route::post('/webhooks/paymongo/test', PayMongoTestWebhookController::class)
+    ->middleware('throttle:60,1')
+    ->name('paymongo.test.webhook');
+
+Route::middleware('throttle:10,1')->group(function (): void {
+    Route::get('/paymongo/test-checkout/result/success', [PayMongoTestCheckoutController::class, 'success'])
+        ->name('paymongo.test.success');
+    Route::get('/paymongo/test-checkout/result/cancelled', [PayMongoTestCheckoutController::class, 'cancelled'])
+        ->name('paymongo.test.cancelled');
+    Route::get('/paymongo/bill-checkout/result/{result}', [PayMongoBillCheckoutController::class, 'result'])
+        ->whereIn('result', ['success', 'cancelled'])
+        ->name('paymongo.bill.result');
+});
+
+Route::middleware(['auth', 'active', 'role:admin'])
+    ->prefix('paymongo/test-checkout')
+    ->name('paymongo.test.')
+    ->group(function (): void {
+        Route::get('/', [PayMongoTestCheckoutController::class, 'index'])->name('index');
+        Route::post('/', [PayMongoTestCheckoutController::class, 'store'])
+            ->middleware('throttle:5,1')
+            ->name('store');
+    });
 
 Route::middleware('guest')->group(function (): void {
     Route::get('/login', [AuthController::class, 'login'])->name('login');
@@ -69,6 +96,12 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::get('/queue', [ClinicWorkflowController::class, 'queue'])->name('queue.index');
         Route::get('/billing', [ClinicWorkflowController::class, 'billing'])->name('billing.index');
         Route::post('/bills/{bill}/payments', [PaymentController::class, 'store'])->name('payments.store');
+        Route::post('/bills/{bill}/paymongo-checkout', [PayMongoBillCheckoutController::class, 'store'])
+            ->middleware('throttle:5,1')
+            ->name('billing.paymongo.store');
+        Route::post('/paymongo-bill-checkouts/{checkout}/reconcile', [PayMongoBillCheckoutController::class, 'reconcile'])
+            ->middleware('throttle:5,1')
+            ->name('billing.paymongo.reconcile');
         Route::get('/rfid', [RfidController::class, 'index'])->name('rfid.index');
         Route::post('/patients/{patient}/rfid', [RfidController::class, 'assign'])->name('rfid.assign');
         Route::get('/rfid/check-in', [RfidController::class, 'scanPage'])->name('rfid.scan');

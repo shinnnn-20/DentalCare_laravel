@@ -1,4 +1,63 @@
 document.addEventListener('DOMContentLoaded', () => {
+    const moneyInputs = Array.from(document.querySelectorAll('[data-money-input]'));
+
+    const formatMoneyInput = (input) => {
+        const currentValue = input.value;
+        const selectionStart = input.selectionStart ?? currentValue.length;
+        const selectionEnd = input.selectionEnd ?? selectionStart;
+        const countMeaningfulCharacters = (value) => value.replace(/[^\d.]/g, '').length;
+        const meaningfulCharactersBeforeStart = countMeaningfulCharacters(currentValue.slice(0, selectionStart));
+        const meaningfulCharactersBeforeEnd = countMeaningfulCharacters(currentValue.slice(0, selectionEnd));
+        let normalizedValue = currentValue.replace(/,/g, '').replace(/[^\d.]/g, '');
+        const decimalIndex = normalizedValue.indexOf('.');
+
+        if (decimalIndex !== -1) {
+            normalizedValue = `${normalizedValue.slice(0, decimalIndex + 1)}${normalizedValue.slice(decimalIndex + 1).replace(/\./g, '').slice(0, 2)}`;
+        }
+
+        const [integerPart, decimalPart] = normalizedValue.split('.');
+        const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        const formattedValue = decimalPart === undefined
+            ? groupedInteger
+            : `${groupedInteger}.${decimalPart}`;
+        const positionForMeaningfulCharacterCount = (characterCount) => {
+            if (characterCount === 0) {
+                return 0;
+            }
+
+            let meaningfulCharacters = 0;
+            for (let index = 0; index < formattedValue.length; index += 1) {
+                if (formattedValue[index] !== ',') {
+                    meaningfulCharacters += 1;
+                }
+                if (meaningfulCharacters === characterCount) {
+                    return index + 1;
+                }
+            }
+
+            return formattedValue.length;
+        };
+
+        input.value = formattedValue;
+        input.setSelectionRange(
+            positionForMeaningfulCharacterCount(meaningfulCharactersBeforeStart),
+            positionForMeaningfulCharacterCount(meaningfulCharactersBeforeEnd),
+        );
+    };
+
+    moneyInputs.forEach((input) => {
+        formatMoneyInput(input);
+        input.addEventListener('input', () => formatMoneyInput(input));
+    });
+
+    document.querySelectorAll('form').forEach((form) => {
+        form.addEventListener('submit', () => {
+            form.querySelectorAll('[data-money-input]').forEach((input) => {
+                input.value = input.value.replace(/,/g, '');
+            });
+        });
+    });
+
     document.querySelectorAll('[data-password-toggle]').forEach((button) => {
         const input = button.closest('.password-input-wrap')?.querySelector('input');
 

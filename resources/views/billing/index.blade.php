@@ -3,6 +3,9 @@
 @section('title', 'Billing and payments')
 
 @section('content')
+    @if ($errors->has('checkout'))
+        <div class="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert">{{ $errors->first('checkout') }}</div>
+    @endif
     <div class="mb-8 flex flex-wrap items-end justify-between gap-4 print-hidden">
         <div><p class="text-sm font-medium text-teal-700">Clinic operations</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Billing & payments</h1><p class="mt-2 text-slate-500">Record transactions and issue a receipt for each payment.</p></div>
         <button class="btn-secondary gap-2" type="button" data-print-all-bills>
@@ -14,6 +17,7 @@
             @forelse ($bills as $bill)
                 @php($paid = (float) $bill->payments->sum('applied_amount'))
                 @php($balance = max(0, (float) $bill->total - $paid))
+                @php($unreconciledPaymongoCheckout = $bill->payMongoBillCheckouts->contains(fn ($checkout) => $checkout->status === 'paid' && (! $checkout->paid_payment_id || ! $bill->payments->contains(fn ($payment) => $payment->provider === 'paymongo' && $payment->is_test && $payment->provider_transaction_id === $checkout->paid_payment_id))))
                 <tr id="bill-{{ $bill->id }}" @class(['selected-bill' => $selectedBillId === $bill->id])>
                     <td data-label="Bill" class="font-semibold">{{ $bill->bill_number }}<div class="text-xs font-normal text-slate-400">{{ $bill->created_at->format('M j, Y') }}</div></td>
                     <td data-label="Patient">{{ $bill->patient->user->name }}<div class="text-xs text-slate-400">{{ $bill->patient->patient_number }}</div></td>
@@ -29,17 +33,65 @@
                     <td data-label="Status"><span class="status-badge capitalize">{{ str_replace('_', ' ', $bill->payment_status) }}</span></td>
                     <td data-label="Action"><button class="btn-small whitespace-nowrap" type="button" data-print-bill="bill-print-{{ $bill->id }}">🖨 Print Bill</button></td>
                     <td data-label="Record payment" class="min-w-80">
+                        @if ($bill->payMongoBillCheckouts->contains('status', 'review'))
+                            <p class="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+                                A PayMongo test payment was confirmed, but could not be safely applied. Review this payment before starting another checkout.
+                            </p>
+                        @elseif ($unreconciledPaymongoCheckout)
+                            <p class="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                                A PayMongo test payment was confirmed but is not yet in this bill’s payment history. Reconcile it before starting another checkout.
+                            </p>
+                        @endif
+                        @foreach ($bill->payMongoBillCheckouts as $checkout)
+                            @if ($paymongoTestCheckoutAvailable && $checkout->status === 'pending' && $checkout->checkout_session_id)
+                                <form method="POST" action="{{ route('clinic.billing.paymongo.reconcile', $checkout) }}" class="mb-3">
+                                    @csrf
+                                    <button class="btn-secondary" type="submit">Check existing payment with PayMongo</button>
+                                    <p class="mt-1 text-xs text-slate-500">Checks this checkout’s status; it does not start a new charge.</p>
+                                </form>
+                            @endif
+                        @endforeach
                         @if ($balance > 0)
+                            @if ($paymongoTestCheckoutAvailable)
+                                @if (! $unreconciledPaymongoCheckout && ! $bill->payMongoBillCheckouts->contains('status', 'review'))
+                                    <form method="POST" action="{{ route('clinic.billing.paymongo.store', $bill) }}" class="mb-3">
+                                        @csrf
+                                        <button class="btn-primary" type="submit">Start GCash test checkout</button>
+                                        <p class="mt-1 text-xs text-amber-700">Test mode only; a confirmed checkout is recorded as a clearly labeled test payment and applied to this bill.</p>
+                                    </form>
+                                @endif
+                            @endif
                             <form method="POST" action="{{ route('clinic.payments.store', $bill) }}" class="grid gap-2">
                                 @csrf
                                 <select class="form-input" name="method" required><option value="cash">Cash</option><option value="gcash">GCash</option><option value="card">Card (manual)</option><option value="other">Other</option></select>
-                                <div class="grid grid-cols-2 gap-2"><label class="form-label text-xs">Amount received<input class="form-input" type="number" name="amount" min="0.01" step="0.01" value="{{ number_format($balance, 2, '.', '') }}" required></label><label class="form-label text-xs">Apply to bill<input class="form-input" type="number" name="applied_amount" min="0.01" max="{{ number_format($balance, 2, '.', '') }}" step="0.01" value="{{ number_format($balance, 2, '.', '') }}" required></label></div>
+                                <div class="grid grid-cols-2 gap-2"><label class="form-label text-xs">Amount received<input class="form-input" type="text" inputmode="decimal" name="amount" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ number_format($balance, 2, '.', '') }}" required></label><label class="form-label text-xs">Apply to bill<input class="form-input" type="text" inputmode="decimal" name="applied_amount" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ number_format($balance, 2, '.', '') }}" required></label></div>
                                 <button class="btn-secondary justify-self-start">Record payment</button>
                             </form>
-                        @else
+                        @endif
+                        @if ($bill->payments->isNotEmpty())
+                            <div class="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                                <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment history</p>
                             @foreach ($bill->payments as $payment)
-                                @if ($payment->receipt)<a class="block text-sm font-semibold text-teal-800 hover:underline" href="{{ route('receipts.show', $payment->receipt) }}">{{ $payment->receipt->receipt_number }}</a>@endif
+                                    <div class="rounded-lg bg-slate-50 p-2 text-xs">
+                                        <p class="font-semibold uppercase text-slate-700">
+                                            {{ $payment->method }} · ₱{{ number_format((float) $payment->applied_amount, 2) }}
+                                            @if ($payment->provider === 'paymongo' && $payment->is_test)
+                                                <span class="text-amber-700">· PayMongo TEST MODE</span>
+                                            @endif
+                                        </p>
+                                        <p class="mt-1 text-slate-500">{{ ($payment->paid_at ?? $payment->created_at)->format('M j, Y g:i A') }}</p>
+                                        @if ($payment->provider_transaction_id)
+                                            <p class="mt-1 break-all text-slate-500">PayMongo payment: {{ $payment->provider_transaction_id }}</p>
+                                            <p class="break-all text-slate-500">Checkout session: {{ $payment->provider_checkout_session_id }}</p>
+                                        @endif
+                                        @if ($payment->receipt)
+                                            <a class="mt-1 inline-block font-semibold text-teal-800 hover:underline" href="{{ route('receipts.show', $payment->receipt) }}">
+                                                Receipt {{ $payment->receipt->receipt_number }}
+                                            </a>
+                                        @endif
+                                    </div>
                             @endforeach
+                            </div>
                         @endif
                     </td>
                 </tr>
@@ -47,7 +99,7 @@
         </tbody></table></div>
         <div class="p-4">{{ $bills->links() }}</div>
     </section>
-    <p class="mt-4 text-sm text-slate-500">Card and GCash entries are recorded manually here. No external payment is charged by this application.</p>
+    <p class="mt-4 text-sm text-slate-500">Manual card and GCash entries do not charge an external payment. PayMongo test checkouts are available to staff and admins in local test mode only; confirmed test payments are included in bill balances and reports, and are labeled TEST MODE because no real money is transferred.</p>
 
     <section class="billing-print-report" data-billing-print-report data-print-all-page aria-label="Printable billing report">
         <header class="billing-print-header">
@@ -66,6 +118,7 @@
                     <th>Amount Paid</th>
                     <th>Remaining Balance</th>
                     <th>Payment Status</th>
+                    <th>Payment Details</th>
                     <th>OR / Receipt Number</th>
                 </tr>
             </thead>
@@ -73,7 +126,7 @@
                 @forelse ($bills as $bill)
                     @php($paid = (float) $bill->payments->sum('applied_amount'))
                     @php($balance = max(0, (float) $bill->total - $paid))
-                    @php($receiptNumbers = $bill->payments->pluck('receipt.receipt_number')->filter()->implode(', '))
+                    @php($receiptNumbers = $bill->payments->map(fn ($payment) => $payment->receipt?->receipt_number ? $payment->receipt->receipt_number.($payment->is_test ? ' (TEST MODE)' : '') : null)->filter()->implode(', '))
                     <tr>
                         <td>{{ $bill->bill_number }}</td>
                         <td>{{ $bill->created_at->format('M j, Y') }}</td>
@@ -83,10 +136,25 @@
                         <td>₱{{ number_format($paid, 2) }}</td>
                         <td>₱{{ number_format($balance, 2) }}</td>
                         <td>{{ str_replace('_', ' ', ucfirst($bill->payment_status)) }}</td>
+                        <td>
+                            @forelse ($bill->payments as $payment)
+                                <div>
+                                    {{ strtoupper($payment->method) }}
+                                    @if ($payment->provider === 'paymongo' && $payment->is_test)
+                                        · PayMongo TEST MODE
+                                    @endif
+                                    @if ($payment->provider_transaction_id)
+                                        · {{ $payment->provider_transaction_id }}
+                                    @endif
+                                </div>
+                            @empty
+                                —
+                            @endforelse
+                        </td>
                         <td>{{ $receiptNumbers !== '' ? $receiptNumbers : '—' }}</td>
                     </tr>
                 @empty
-                    <tr><td colspan="9">No billing records are displayed.</td></tr>
+                    <tr><td colspan="10">No billing records are displayed.</td></tr>
                 @endforelse
             </tbody>
         </table>
@@ -143,7 +211,7 @@
                 <div><span>Status</span><strong>{{ strtoupper(str_replace('_', ' ', $bill->payment_status)) }}</strong></div>
                 <div>
                     <span>OR / Receipt Number</span>
-                    <strong>{{ $bill->payments->pluck('receipt.receipt_number')->filter()->implode(', ') ?: '—' }}</strong>
+                    <strong>{{ $bill->payments->map(fn ($payment) => $payment->receipt?->receipt_number ? $payment->receipt->receipt_number.($payment->is_test ? ' (TEST MODE)' : '') : null)->filter()->implode(', ') ?: '—' }}</strong>
                 </div>
             </section>
 
@@ -151,13 +219,26 @@
                 <section class="bill-print-payments">
                     <h3>Payment details</h3>
                     <table>
-                        <thead><tr><th>Date</th><th>Payment method</th><th>Amount applied</th><th>OR / Receipt No</th></tr></thead>
+                        <thead><tr><th>Date</th><th>Payment method / provider</th><th>Amount applied</th><th>Provider reference</th><th>OR / Receipt No</th></tr></thead>
                         <tbody>
                             @foreach ($bill->payments as $payment)
                                 <tr>
-                                    <td>{{ $payment->created_at->format('M j, Y') }}</td>
-                                    <td>{{ strtoupper($payment->method) }}</td>
+                                    <td>{{ ($payment->paid_at ?? $payment->created_at)->format('M j, Y g:i A') }}</td>
+                                    <td>
+                                        {{ strtoupper($payment->method) }}
+                                        @if ($payment->provider === 'paymongo' && $payment->is_test)
+                                            · PayMongo TEST MODE
+                                        @endif
+                                    </td>
                                     <td>₱{{ number_format((float) $payment->applied_amount, 2) }}</td>
+                                    <td>
+                                        @if ($payment->provider_transaction_id)
+                                            Payment: {{ $payment->provider_transaction_id }}<br>
+                                            Session: {{ $payment->provider_checkout_session_id }}
+                                        @else
+                                            —
+                                        @endif
+                                    </td>
                                     <td>{{ $payment->receipt?->receipt_number ?? '—' }}</td>
                                 </tr>
                             @endforeach

@@ -22,10 +22,17 @@ class ServiceController extends Controller
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255', 'unique:services,name'],
+            'category' => ['nullable', 'string', 'max:100'],
             'description' => ['nullable', 'string', 'max:2000'],
             'price' => ['required', 'numeric', 'min:0', 'max:1000000'],
+            'price_display' => [Rule::requiredIf($request->boolean('requires_price_confirmation')), 'nullable', 'string', 'max:150'],
+            'requires_price_confirmation' => ['required', 'boolean'],
             'duration_minutes' => ['required', 'integer', 'in:'.implode(',', range(10, 240, 10))],
         ]);
+
+        if (! $request->boolean('requires_price_confirmation')) {
+            $data['price_display'] = null;
+        }
 
         $service = Service::create([...$data, 'is_active' => true]);
         $auditTrail->record($request->user(), 'service_created', 'services', $service);
@@ -37,11 +44,18 @@ class ServiceController extends Controller
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255', Rule::unique('services', 'name')->ignore($service->id)],
+            'category' => ['nullable', 'string', 'max:100'],
             'description' => ['nullable', 'string', 'max:2000'],
             'price' => ['required', 'numeric', 'min:0', 'max:1000000'],
+            'price_display' => [Rule::requiredIf($request->boolean('requires_price_confirmation')), 'nullable', 'string', 'max:150'],
+            'requires_price_confirmation' => ['required', 'boolean'],
             'duration_minutes' => ['required', 'integer', 'in:'.implode(',', range(10, 240, 10))],
             'is_active' => ['required', 'boolean'],
         ]);
+
+        if (! $request->boolean('requires_price_confirmation')) {
+            $data['price_display'] = null;
+        }
 
         $service->update($data);
         $auditTrail->record($request->user(), 'service_updated', 'services', $service);

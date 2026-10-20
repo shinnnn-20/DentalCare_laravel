@@ -38,7 +38,10 @@ class EmailVerificationTest extends TestCase
             'user_id' => $user->id,
             'token_hash' => hash_hmac('sha256', $code, (string) config('app.key')),
         ]);
-        Mail::assertSent(VerifyPatientEmail::class, fn (VerifyPatientEmail $mail): bool => $mail->hasTo('patient@example.test'));
+        Mail::assertSent(VerifyPatientEmail::class, function (VerifyPatientEmail $mail): bool {
+            return $mail->hasTo('patient@example.test')
+                && str_contains($mail->render(), 'Doc Brigs Dental Care');
+        });
     }
 
     public function test_correct_code_verifies_once_and_patient_can_log_in_normally(): void

@@ -40,4 +40,10 @@ return [
         'token' => env('CLINIC_SMS_TOKEN'),
     ],
 
+    'paymongo' => [
+        'secret' => env('PAYMONGO_SECRET_KEY'),
+        'base_url' => env('PAYMONGO_BASE_URL', 'https://api.paymongo.com/v2'),
+        'webhook_secret' => env('PAYMONGO_WEBHOOK_SECRET'),
+    ],
+
 ];

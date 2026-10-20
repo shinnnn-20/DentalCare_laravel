@@ -12,11 +12,13 @@ class SmsNotifier
 {
     public function send(Patient $patient, string $type, string $message, ?Appointment $appointment = null): SmsLog
     {
+        $brandedMessage = config('clinic.name').': '.$message;
+
         $log = SmsLog::create([
             'patient_id' => $patient->id,
             'appointment_id' => $appointment?->id,
             'phone' => $patient->user->phone ?? '',
-            'message' => $message,
+            'message' => $brandedMessage,
             'type' => $type,
             'status' => 'queued',
         ]);
@@ -45,7 +47,7 @@ class SmsNotifier
         try {
             $response = Http::timeout(10)
                 ->withToken($token)
-                ->post($endpoint, ['to' => $log->phone, 'message' => $message]);
+                ->post($endpoint, ['to' => $log->phone, 'message' => $brandedMessage]);
         } catch (ConnectionException $exception) {
             $log->update([
                 'status' => 'failed',

@@ -21,7 +21,7 @@ class VerifyPatientEmail extends Mailable
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Verify your DentalCare patient account email',
+            subject: 'Verify your '.config('clinic.name').' patient account email',
         );
     }
 
