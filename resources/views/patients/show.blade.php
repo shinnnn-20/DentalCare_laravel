@@ -63,7 +63,7 @@
             <div class="divide-y divide-slate-100">
                 @forelse ($patient->appointments as $appointment)
                     <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-                        <div><p class="font-medium">{{ $appointment->service->name }}</p><p class="mt-1 text-sm text-slate-500">{{ $appointment->starts_at->format('M j, Y · g:i A') }} · {{ str_replace('_', ' ', $appointment->type) }}</p></div>
+                        <div><p class="font-medium">{{ $appointment->treatmentNames() }}</p><p class="mt-1 text-sm text-slate-500">{{ $appointment->starts_at->format('M j, Y · g:i A') }} · {{ str_replace('_', ' ', $appointment->type) }}</p></div>
                         <span class="status-badge capitalize">{{ str_replace('_', ' ', $appointment->status) }}</span>
                     </div>
                 @empty
@@ -84,9 +84,9 @@
                         @if ($record->prescription)<p class="mt-1 text-sm text-slate-600"><span class="font-medium">Prescription:</span> {{ $record->prescription }}</p>@endif
                         <div class="mt-3 rounded-xl bg-slate-50 p-4">
                             <h4 class="text-sm font-semibold">Services Performed</h4>
-                            @if ($record->appointment?->patient_id === $record->patient_id && $record->appointment?->service)
-                                <p class="mt-2 text-sm font-medium">{{ $record->appointment->service->name }}</p>
-                                <p class="mt-1 text-xs text-slate-500">Visit: {{ $record->appointment->starts_at->format('M j, Y · g:i A') }} · {{ $record->appointment->service->duration_minutes }} minutes</p>
+                            @if ($record->appointment?->patient_id === $record->patient_id && ($record->appointment?->service || $record->appointment?->services?->isNotEmpty()))
+                                <p class="mt-2 text-sm font-medium">{{ $record->appointment->treatmentNames() }}</p>
+                                <p class="mt-1 text-xs text-slate-500">Visit: {{ $record->appointment->starts_at->format('M j, Y · g:i A') }} · {{ $record->appointment->duration_minutes }} minutes</p>
                                 @if ($record->creator)<p class="mt-1 text-xs text-slate-500">Provider: {{ $record->creator->name }}</p>@endif
                                 @if ($record->notes)<p class="mt-1 text-sm text-slate-600">Clinical notes: {{ $record->notes }}</p>@endif
                             @else

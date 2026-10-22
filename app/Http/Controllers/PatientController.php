@@ -44,8 +44,8 @@ class PatientController extends Controller
         $patient->load([
             'user',
             'rfidCard',
-            'appointments' => fn ($query) => $query->with(['service', 'bill'])->latest('starts_at'),
-            'dentalRecords' => fn ($query) => $query->with(['creator', 'appointment.service'])->latest(),
+            'appointments' => fn ($query) => $query->with(['service', 'services', 'bill'])->latest('starts_at'),
+            'dentalRecords' => fn ($query) => $query->with(['creator', 'appointment.service', 'appointment.services'])->latest(),
         ]);
 
         return view('patients.show', compact('patient'));

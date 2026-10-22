@@ -12,7 +12,7 @@ use Illuminate\View\View;
 
 class PayMongoTestCheckoutController extends Controller
 {
-    private const int TEST_AMOUNT_CENTAVOS = 10000;
+    private const TEST_AMOUNT_CENTAVOS = 10000;
 
     public function index(): View
     {

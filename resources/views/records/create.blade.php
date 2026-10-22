@@ -7,7 +7,7 @@
     <section class="max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <p class="text-sm font-medium text-teal-700">{{ $appointment->patient->patient_number }} · {{ $appointment->starts_at->format('M j, Y') }}</p>
         <h1 class="mt-1 text-2xl font-bold">Dental record for {{ $appointment->patient->user->name }}</h1>
-        <p class="mt-2 text-sm text-slate-500">Appointment service: {{ $appointment->service->name }}</p>
+        <p class="mt-2 text-sm text-slate-500">Appointment treatment(s): {{ $appointment->treatmentNames() }}</p>
         <form method="POST" action="{{ route('clinic.records.store', $appointment) }}" class="mt-6 grid gap-5">
             @csrf
             <label class="form-label">Diagnosis<textarea class="form-input" name="diagnosis" rows="3" required>{{ old('diagnosis') }}</textarea></label>

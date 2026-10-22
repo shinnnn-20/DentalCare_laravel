@@ -13,6 +13,7 @@ use App\Services\AuditTrail;
 use App\Services\ClinicNotificationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -24,13 +25,13 @@ class ClinicWorkflowController extends Controller
     {
         return view('queue.index', [
             'queueEntries' => QueueEntry::query()
-                ->with(['appointment.patient.user', 'appointment.service'])
+                ->with(['appointment.patient.user', 'appointment.service', 'appointment.services'])
                 ->whereDate('queue_date', today(config('clinic.timezone')))
                 ->whereIn('status', ['waiting', 'called', 'in_consultation'])
                 ->orderBy('id')
                 ->get(),
             'checkInAppointments' => Appointment::query()
-                ->with(['patient.user', 'service'])
+                ->with(['patient.user', 'service', 'services'])
                 ->whereDate('starts_at', '>=', today(config('clinic.timezone')))
                 ->where('status', 'approved')
                 ->whereDoesntHave('queueEntry')
@@ -44,7 +45,7 @@ class ClinicWorkflowController extends Controller
         abort_unless(in_array($appointment->status, ['in_consultation', 'completed'], true), 422);
 
         return view('records.create', [
-            'appointment' => $appointment->load(['patient.user', 'service']),
+            'appointment' => $appointment->load(['patient.user', 'service', 'services']),
         ]);
     }
 
@@ -93,10 +94,10 @@ class ClinicWorkflowController extends Controller
         abort_unless($appointment->status === 'in_consultation', 422);
         abort_if($appointment->dentalRecord()->doesntExist(), 422, 'A dental record is required before billing.');
         abort_if($appointment->bill()->exists(), 409, 'A bill already exists for this appointment.');
-        $appointment->load('service');
+        $appointment->load(['patient.user', 'services', 'service']);
 
         return view('billing.create', [
-            'appointment' => $appointment->load(['patient.user', 'service']),
+            'appointment' => $appointment,
         ]);
     }
 
@@ -109,19 +110,13 @@ class ClinicWorkflowController extends Controller
         abort_unless($appointment->status === 'in_consultation', 422);
         abort_if($appointment->dentalRecord()->doesntExist(), 422, 'A dental record is required before billing.');
         abort_if($appointment->bill()->exists(), 409, 'A bill already exists for this appointment.');
-        $appointment->load('service');
+        $appointment->load(['service', 'services', 'patient.user']);
 
-        $rules = [
-            'discount' => ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:1000000'],
-        ];
+        $services = $appointment->services->isNotEmpty()
+            ? $appointment->services
+            : ($appointment->service ? collect([$appointment->service]) : collect());
 
-        if ($appointment->service->requires_price_confirmation) {
-            $rules['final_price'] = ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:1000000'];
-            $rules['confirm_final_price'] = ['accepted'];
-        } else {
-            $rules['final_price'] = ['prohibited'];
-            $rules['confirm_final_price'] = ['prohibited'];
-        }
+        abort_if($services->isEmpty(), 422, 'This appointment has no treatments associated with it.');
 
         foreach (['discount', 'final_price'] as $field) {
             $value = $request->input($field);
@@ -132,19 +127,72 @@ class ClinicWorkflowController extends Controller
             }
         }
 
+        $itemsInput = $request->input('items');
+        if (is_array($itemsInput)) {
+            foreach ($itemsInput as $key => $itemData) {
+                if (isset($itemData['final_price']) && is_string($itemData['final_price'])
+                    && preg_match('/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/', $itemData['final_price']) === 1) {
+                    $itemsInput[$key]['final_price'] = str_replace(',', '', $itemData['final_price']);
+                }
+            }
+            $request->merge(['items' => $itemsInput]);
+        }
+
+        $rules = [
+            'discount' => ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:1000000'],
+        ];
+
+        if ($services->count() === 1) {
+            $singleService = $services->first();
+            if ($singleService->requires_price_confirmation) {
+                $rules['final_price'] = ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:1000000'];
+                $rules['confirm_final_price'] = ['accepted'];
+            } else {
+                $rules['final_price'] = ['prohibited'];
+                $rules['confirm_final_price'] = ['prohibited'];
+            }
+        } else {
+            foreach ($services as $service) {
+                if ($service->requires_price_confirmation) {
+                    $rules["items.{$service->id}.final_price"] = ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:1000000'];
+                    $rules["items.{$service->id}.confirm_final_price"] = ['accepted'];
+                }
+            }
+        }
+
         $data = $request->validate($rules);
-        $subtotalCents = (int) round((float) (
-            $appointment->service->requires_price_confirmation
-                ? $data['final_price']
-                : $appointment->service->price
-        ) * 100);
+
+        $itemRows = [];
+        $subtotalCents = 0;
+
+        foreach ($services as $service) {
+            if ($service->requires_price_confirmation) {
+                $priceValue = $services->count() === 1
+                    ? $data['final_price']
+                    : ($data['items'][$service->id]['final_price'] ?? $data['final_price'] ?? null);
+            } else {
+                $priceValue = $service->price;
+            }
+
+            $itemCents = (int) round((float) $priceValue * 100);
+            $subtotalCents += $itemCents;
+
+            $itemRows[] = [
+                'service_id' => $service->id,
+                'service_name' => $service->name,
+                'quantity' => 1,
+                'unit_price' => number_format($itemCents / 100, 2, '.', ''),
+                'subtotal' => number_format($itemCents / 100, 2, '.', ''),
+            ];
+        }
+
         $discountCents = (int) round((float) $data['discount'] * 100);
 
         if ($discountCents > $subtotalCents) {
             throw ValidationException::withMessages(['discount' => 'Discount cannot exceed the subtotal.']);
         }
 
-        $bill = DB::transaction(function () use ($appointment, $request, $subtotalCents, $discountCents): Bill {
+        $bill = DB::transaction(function () use ($appointment, $request, $subtotalCents, $discountCents, $itemRows): Bill {
             $totalCents = $subtotalCents - $discountCents;
             $bill = Bill::create([
                 'bill_number' => 'B-PENDING-'.Str::uuid(),
@@ -157,13 +205,11 @@ class ClinicWorkflowController extends Controller
                 'payment_status' => $totalCents === 0 ? 'paid' : 'unpaid',
             ]);
             $bill->update(['bill_number' => sprintf('B-%s-%06d', now()->format('Y'), $bill->id)]);
-            $bill->items()->create([
-                'service_id' => $appointment->service_id,
-                'service_name' => $appointment->service->name,
-                'quantity' => 1,
-                'unit_price' => number_format($subtotalCents / 100, 2, '.', ''),
-                'subtotal' => number_format($subtotalCents / 100, 2, '.', ''),
-            ]);
+
+            foreach ($itemRows as $row) {
+                $bill->items()->create($row);
+            }
+
             $appointment->update(['status' => 'billed']);
 
             return $bill;
@@ -209,7 +255,7 @@ class ClinicWorkflowController extends Controller
 
         return view('records.index', [
             'records' => $patient->dentalRecords()
-                ->with(['creator', 'appointment.service'])
+                ->with(['creator', 'appointment.service', 'appointment.services'])
                 ->latest()
                 ->paginate(20),
         ]);
@@ -259,16 +305,93 @@ class ClinicWorkflowController extends Controller
         ]);
         $from = $filters['from'] ?? today()->toDateString();
         $to = $filters['to'] ?? today()->toDateString();
+        $rangeStart = Carbon::parse($from, config('clinic.timezone'))->startOfDay();
+        $rangeEnd = Carbon::parse($to, config('clinic.timezone'))->endOfDay();
+        $rangeDays = $rangeStart->diffInDays($rangeEnd) + 1;
+        $granularity = $rangeDays <= 31 ? 'day' : ($rangeDays <= 180 ? 'week' : 'month');
+        $bucketKey = static function (Carbon $date) use ($granularity): string {
+            return match ($granularity) {
+                'week' => $date->copy()->startOfWeek()->toDateString(),
+                'month' => $date->format('Y-m'),
+                default => $date->toDateString(),
+            };
+        };
+        $timeline = [];
+        $cursor = $rangeStart->copy();
+
+        while ($cursor->lessThanOrEqualTo($rangeEnd)) {
+            $key = $bucketKey($cursor);
+            if (! isset($timeline[$key])) {
+                $timeline[$key] = [
+                    'label' => match ($granularity) {
+                        'week' => $cursor->copy()->startOfWeek()->format('M j'),
+                        'month' => $cursor->format('M Y'),
+                        default => $cursor->format('M j'),
+                    },
+                    'appointments' => 0,
+                    'revenue' => 0.0,
+                ];
+            }
+            match ($granularity) {
+                'week' => $cursor->addWeek(),
+                'month' => $cursor->addMonth(),
+                default => $cursor->addDay(),
+            };
+        }
+
+        $appointmentRows = Appointment::query()
+            ->selectRaw('DATE(starts_at) as activity_date, COUNT(*) as total')
+            ->whereBetween('starts_at', [$rangeStart, $rangeEnd])
+            ->groupBy('activity_date')
+            ->get();
+        foreach ($appointmentRows as $row) {
+            $key = $bucketKey(Carbon::parse($row->activity_date, config('clinic.timezone')));
+            if (isset($timeline[$key])) {
+                $timeline[$key]['appointments'] += (int) $row->total;
+            }
+        }
+
+        $revenueRows = DB::table('payments')
+            ->selectRaw('DATE(created_at) as activity_date, SUM(applied_amount) as total')
+            ->whereBetween('created_at', [$rangeStart, $rangeEnd])
+            ->groupBy('activity_date')
+            ->get();
+        foreach ($revenueRows as $row) {
+            $key = $bucketKey(Carbon::parse($row->activity_date, config('clinic.timezone')));
+            if (isset($timeline[$key])) {
+                $timeline[$key]['revenue'] += (float) $row->total;
+            }
+        }
+
+        $statusCounts = Appointment::query()
+            ->selectRaw('status, COUNT(*) as total')
+            ->whereBetween('starts_at', [$rangeStart, $rangeEnd])
+            ->groupBy('status')
+            ->orderBy('status')
+            ->get();
+        $statusTotal = max(1, (int) $statusCounts->sum('total'));
+        $statuses = $statusCounts->map(fn (object $row): array => [
+            'label' => str_replace('_', ' ', ucfirst($row->status)),
+            'count' => (int) $row->total,
+            'percentage' => (float) $row->total / $statusTotal * 100,
+        ])->all();
+        $timeline = array_values($timeline);
+        $appointmentMaximum = max(1, ...array_column($timeline, 'appointments'));
+        $revenueMaximum = max(1.0, ...array_column($timeline, 'revenue'));
 
         return view('reports.index', [
             'from' => $from,
             'to' => $to,
-            'appointments' => Appointment::whereBetween('starts_at', [$from.' 00:00:00', $to.' 23:59:59'])->count(),
-            'walkIns' => Appointment::where('type', 'walk_in')->whereBetween('starts_at', [$from.' 00:00:00', $to.' 23:59:59'])->count(),
-            'completed' => Appointment::where('status', 'completed')->whereBetween('starts_at', [$from.' 00:00:00', $to.' 23:59:59'])->count(),
-            'cancelled' => Appointment::where('status', 'cancelled')->whereBetween('starts_at', [$from.' 00:00:00', $to.' 23:59:59'])->count(),
-            'revenue' => DB::table('payments')->whereBetween('created_at', [$from.' 00:00:00', $to.' 23:59:59'])->sum('applied_amount'),
-            'newPatients' => Patient::whereBetween('created_at', [$from.' 00:00:00', $to.' 23:59:59'])->count(),
+            'appointments' => Appointment::whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
+            'walkIns' => Appointment::where('type', 'walk_in')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
+            'completed' => Appointment::where('status', 'completed')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
+            'cancelled' => Appointment::where('status', 'cancelled')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
+            'revenue' => DB::table('payments')->whereBetween('created_at', [$rangeStart, $rangeEnd])->sum('applied_amount'),
+            'newPatients' => Patient::whereBetween('created_at', [$rangeStart, $rangeEnd])->count(),
+            'timeline' => $timeline,
+            'statuses' => $statuses,
+            'appointmentMaximum' => $appointmentMaximum,
+            'revenueMaximum' => $revenueMaximum,
         ]);
     }
 

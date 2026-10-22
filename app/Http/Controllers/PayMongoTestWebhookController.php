@@ -13,7 +13,7 @@ use JsonException;
 
 class PayMongoTestWebhookController extends Controller
 {
-    private const int TEST_AMOUNT_CENTAVOS = 10000;
+    private const TEST_AMOUNT_CENTAVOS = 10000;
 
     public function __invoke(Request $request, PayMongoBillPaymentReconciler $reconciler): JsonResponse
     {

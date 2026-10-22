@@ -10,6 +10,7 @@ use App\Models\QueueEntry;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
@@ -28,7 +29,7 @@ class DashboardController extends Controller
 
             return view('dashboard.patient', [
                 'nextAppointment' => $patient->appointments()
-                    ->with('service')
+                    ->with(['service', 'services'])
                     ->where('starts_at', '>=', now())
                     ->whereNotIn('status', ['cancelled', 'rejected', 'completed', 'no_show', 'billed'])
                     ->orderBy('starts_at')
@@ -40,7 +41,7 @@ class DashboardController extends Controller
             ]);
         }
 
-        $today = today();
+        $today = today(config('clinic.timezone'));
         $isAdmin = $user->role === 'admin';
         $hasTestPaymentsToday = Payment::query()
             ->whereDate('created_at', $today)
@@ -48,7 +49,7 @@ class DashboardController extends Controller
             ->where('is_test', true)
             ->exists();
         $appointments = Appointment::query()
-            ->with(['patient.user', 'service', 'queueEntry'])
+            ->with(['patient.user', 'service', 'services', 'queueEntry'])
             ->whereDate('starts_at', $today)
             ->orderBy('starts_at')
             ->limit(10)
@@ -74,16 +75,105 @@ class DashboardController extends Controller
                 ["Today's payments", number_format(Payment::whereDate('created_at', $today)->count()), 'Payments processed'],
             ];
 
+        $statistics = [];
+        if ($isAdmin) {
+            $filters = $request->validate([
+                'statistics_period' => ['nullable', 'in:week,month,year'],
+            ]);
+            $statistics = $this->dashboardStatistics($filters['statistics_period'] ?? 'week', $today);
+        }
+
         return view('dashboard.clinic', [
             'metrics' => $metrics,
             'isAdmin' => $isAdmin,
             'appointments' => $appointments,
-            'dailyAppointments' => DB::table('appointments')
-                ->selectRaw('DATE(starts_at) as appointment_day, COUNT(*) as total')
-                ->whereBetween('starts_at', [now()->subDays(6)->startOfDay(), now()->endOfDay()])
-                ->groupBy('appointment_day')
-                ->orderBy('appointment_day')
-                ->get(),
+            'statistics' => $statistics,
         ]);
+    }
+
+    /**
+     * @return array{
+     *     period:string,
+     *     rangeLabel:string,
+     *     timeline:array<int, array{label:string, appointments:int, revenue:float}>,
+     *     statuses:array<int, array{label:string, count:int, percentage:float}>,
+     *     appointmentMaximum:int,
+     *     revenueMaximum:float
+     * }
+     */
+    private function dashboardStatistics(string $period, Carbon $today): array
+    {
+        $usesMonths = $period === 'year';
+        $rangeStart = $usesMonths
+            ? $today->copy()->startOfMonth()->subMonths(11)
+            : $today->copy()->startOfDay()->subDays($period === 'week' ? 6 : 29);
+        $rangeEnd = $today->copy()->endOfDay();
+        $bucketKey = static fn (Carbon $date): string => $usesMonths
+            ? $date->format('Y-m')
+            : $date->toDateString();
+        $timeline = [];
+        $cursor = $rangeStart->copy();
+
+        while ($cursor->lessThanOrEqualTo($today)) {
+            $timeline[$bucketKey($cursor)] = [
+                'label' => $usesMonths ? $cursor->format('M Y') : $cursor->format('D j'),
+                'appointments' => 0,
+                'revenue' => 0.0,
+            ];
+            $usesMonths ? $cursor->addMonth() : $cursor->addDay();
+        }
+
+        $appointmentRows = Appointment::query()
+            ->selectRaw('DATE(starts_at) as activity_date, COUNT(*) as total')
+            ->whereBetween('starts_at', [$rangeStart, $rangeEnd])
+            ->groupBy('activity_date')
+            ->get();
+
+        foreach ($appointmentRows as $row) {
+            $key = $bucketKey(Carbon::parse($row->activity_date, config('clinic.timezone')));
+            if (isset($timeline[$key])) {
+                $timeline[$key]['appointments'] = (int) $row->total;
+            }
+        }
+
+        $revenueRows = DB::table('payments')
+            ->selectRaw('DATE(created_at) as activity_date, SUM(applied_amount) as total')
+            ->whereBetween('created_at', [$rangeStart, $rangeEnd])
+            ->groupBy('activity_date')
+            ->get();
+
+        foreach ($revenueRows as $row) {
+            $key = $bucketKey(Carbon::parse($row->activity_date, config('clinic.timezone')));
+            if (isset($timeline[$key])) {
+                $timeline[$key]['revenue'] = (float) $row->total;
+            }
+        }
+
+        $statusCounts = Appointment::query()
+            ->selectRaw('status, COUNT(*) as total')
+            ->whereBetween('starts_at', [$rangeStart, $rangeEnd])
+            ->groupBy('status')
+            ->orderBy('status')
+            ->get();
+        $appointmentTotal = max(1, (int) $statusCounts->sum('total'));
+        $statuses = $statusCounts->map(fn (object $row): array => [
+            'label' => str_replace('_', ' ', ucfirst($row->status)),
+            'count' => (int) $row->total,
+            'percentage' => (float) $row->total / $appointmentTotal * 100,
+        ])->all();
+        $timeline = array_values($timeline);
+
+        return [
+            'period' => $period,
+            'rangeLabel' => match ($period) {
+                'month' => 'Last 30 days',
+                'year' => 'Last 12 months',
+                default => 'Last 7 days',
+            },
+            'timeline' => $timeline,
+            'statuses' => $statuses,
+            'appointmentMaximum' => max(1, ...array_column($timeline, 'appointments')),
+            'revenueMaximum' => max(1.0, ...array_column($timeline, 'revenue')),
+        ];
     }
 }

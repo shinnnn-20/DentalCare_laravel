@@ -193,8 +193,16 @@ class PayMongoBillCheckoutController extends Controller
             return redirect()->away($checkout->checkout_url);
         }
 
+        $bill->loadMissing(['patient.user']);
+        $patientUser = $bill->patient->user;
         $secretKey = config('services.paymongo.secret');
         $baseUrl = config('services.paymongo.base_url');
+
+        $billing = array_filter([
+            'name' => $patientUser->name,
+            'email' => $patientUser->email,
+            'phone' => $bill->patient->emergency_contact,
+        ]);
 
         try {
             $response = Http::acceptJson()
@@ -205,6 +213,8 @@ class PayMongoBillCheckoutController extends Controller
                 ->post(rtrim($baseUrl, '/').'/checkout_sessions', [
                     'data' => [
                         'attributes' => [
+                            'billing' => $billing,
+                            'description' => 'Payment for Bill '.$bill->bill_number.' - '.$patientUser->name,
                             'line_items' => [
                                 [
                                     'name' => config('clinic.name').' bill payment (test)',

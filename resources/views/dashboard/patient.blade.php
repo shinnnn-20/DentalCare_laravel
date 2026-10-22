@@ -13,7 +13,7 @@
             <p class="text-sm font-medium text-teal-100">Next appointment</p>
             @if ($nextAppointment)
                 <span class="mt-4 inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide">Next visit</span>
-                <h2 class="mt-3 text-2xl font-bold">{{ $nextAppointment->service->name }}</h2>
+                <h2 class="mt-3 text-2xl font-bold">{{ $nextAppointment->treatmentNames() }}</h2>
                 <p class="sr-only">{{ $nextAppointment->starts_at->format('l, F j, Y · g:i A') }}</p>
                 <div class="mt-3 grid gap-2 text-sm text-teal-50 sm:grid-cols-2" aria-hidden="true">
                     <p class="flex items-center gap-2"><span class="grid h-8 w-8 place-items-center rounded-lg bg-white/10">▦</span>{{ $nextAppointment->starts_at->format('l, F j, Y') }}</p>

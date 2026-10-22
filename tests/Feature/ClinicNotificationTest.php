@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Appointment;
 use App\Models\Bill;
+use App\Models\Branch;
 use App\Models\Patient;
 use App\Models\Service;
 use App\Models\User;
@@ -32,6 +33,7 @@ class ClinicNotificationTest extends TestCase
         $service = Service::factory()->create();
 
         $response = $this->actingAs($patient->user)->post(route('appointments.store'), [
+            'branch_id' => Branch::query()->where('slug', 'general-trias')->firstOrFail()->id,
             'service_id' => $service->id,
             'appointment_date' => '2026-10-08',
             'appointment_time' => '14:00',

@@ -190,15 +190,15 @@
     }
 
     .btn-primary {
-        @apply inline-flex min-h-11 items-center justify-center rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800 focus:outline-none focus:ring-2 focus:ring-teal-300 disabled:cursor-not-allowed disabled:opacity-50;
+        @apply inline-flex min-h-11 min-w-28 shrink-0 items-center justify-center whitespace-nowrap rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800 focus:outline-none focus:ring-2 focus:ring-teal-300 disabled:cursor-not-allowed disabled:opacity-50;
     }
 
     .btn-secondary {
-        @apply inline-flex min-h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-teal-300 hover:bg-teal-50 focus:outline-none focus:ring-2 focus:ring-teal-200 disabled:cursor-not-allowed disabled:opacity-50;
+        @apply inline-flex min-h-10 min-w-24 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-teal-300 hover:bg-teal-50 focus:outline-none focus:ring-2 focus:ring-teal-200 disabled:cursor-not-allowed disabled:opacity-50;
     }
 
     .btn-small {
-        @apply inline-flex min-h-9 items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-200 disabled:cursor-not-allowed disabled:opacity-50;
+        @apply inline-flex min-h-9 min-w-20 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-200 disabled:cursor-not-allowed disabled:opacity-50;
     }
 
     .stat-card {
@@ -526,6 +526,12 @@ a {
     .billing-print-header p:first-child {
         font-size: 11pt;
         font-weight: 600;
+    }
+
+    .billing-print-header p:nth-of-type(2),
+    .billing-print-header p:nth-of-type(3) {
+        color: #475569;
+        font-size: 7pt;
     }
 
     .billing-print-header h1 {

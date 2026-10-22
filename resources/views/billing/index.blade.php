@@ -63,7 +63,7 @@
                             @endif
                             <form method="POST" action="{{ route('clinic.payments.store', $bill) }}" class="grid gap-2">
                                 @csrf
-                                <select class="form-input" name="method" required><option value="cash">Cash</option><option value="gcash">GCash</option><option value="card">Card (manual)</option><option value="other">Other</option></select>
+                                <select class="form-input" name="method" required><option value="cash">Cash</option><option value="gcash">GCash</option><option value="other">Other</option></select>
                                 <div class="grid grid-cols-2 gap-2"><label class="form-label text-xs">Amount received<input class="form-input" type="text" inputmode="decimal" name="amount" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ number_format($balance, 2, '.', '') }}" required></label><label class="form-label text-xs">Apply to bill<input class="form-input" type="text" inputmode="decimal" name="applied_amount" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ number_format($balance, 2, '.', '') }}" required></label></div>
                                 <button class="btn-secondary justify-self-start">Record payment</button>
                             </form>
@@ -99,11 +99,13 @@
         </tbody></table></div>
         <div class="p-4">{{ $bills->links() }}</div>
     </section>
-    <p class="mt-4 text-sm text-slate-500">Manual card and GCash entries do not charge an external payment. PayMongo test checkouts are available to staff and admins in local test mode only; confirmed test payments are included in bill balances and reports, and are labeled TEST MODE because no real money is transferred.</p>
+    <p class="mt-4 text-sm text-slate-500">Manual cash, GCash, and other entries do not charge an external payment. PayMongo test checkouts are available to staff and admins in local test mode only; confirmed test payments are included in bill balances and reports, and are labeled TEST MODE because no real money is transferred.</p>
 
     <section class="billing-print-report" data-billing-print-report data-print-all-page aria-label="Printable billing report">
         <header class="billing-print-header">
             <p>{{ config('clinic.name') }}</p>
+            <p>{{ config('clinic.address') }}</p>
+            <p>{{ config('clinic.phone') }}</p>
             <h1>Billing &amp; Payments</h1>
             <p>Generated {{ now()->format('F j, Y g:i A') }}</p>
         </header>

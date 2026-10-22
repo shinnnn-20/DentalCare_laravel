@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Appointment;
 use App\Models\Bill;
 use App\Models\BillItem;
+use App\Models\Branch;
 use App\Models\DentalRecord;
 use App\Models\Patient;
 use App\Models\Payment;
@@ -26,6 +27,11 @@ use Tests\TestCase;
 class ClinicWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    private function generalTriasBranchId(): int
+    {
+        return (int) Branch::query()->where('slug', 'general-trias')->firstOrFail()->id;
+    }
 
     public function test_public_registration_creates_a_patient_account_only(): void
     {
@@ -352,6 +358,7 @@ class ClinicWorkflowTest extends TestCase
 
         $this->actingAs($patientUser)
             ->post(route('appointments.store'), [
+                'branch_id' => $this->generalTriasBranchId(),
                 'patient_id' => $otherPatient->id,
                 'service_id' => $service->id,
                 'appointment_date' => $bookingStart->format('Y-m-d'),
@@ -453,6 +460,7 @@ class ClinicWorkflowTest extends TestCase
         $secondPatient = $this->createPatient('P-2026-00021');
         $service = Service::create(['name' => 'Slot reservation test', 'price' => 500, 'is_active' => true]);
         $booking = [
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'appointment_date' => '2026-10-05',
             'appointment_time' => '10:00',
@@ -467,12 +475,16 @@ class ClinicWorkflowTest extends TestCase
             'appointment_id' => $appointment->id,
         ]);
         $this->assertSame(0, DB::table('appointment_slots')->insertOrIgnore([
+            'branch_id' => $this->generalTriasBranchId(),
             'starts_at' => '2026-10-05 10:00:00',
             'appointment_id' => null,
         ]));
 
         $availability = $this->actingAs($secondPatient->user)
-            ->getJson(route('appointments.availability', ['month' => '2026-10']));
+            ->getJson(route('appointments.availability', [
+                'month' => '2026-10',
+                'branch_id' => $this->generalTriasBranchId(),
+            ]));
         $availability->assertOk();
         $this->assertNotContains('10:00', $availability->json('days')['2026-10-05']);
 
@@ -498,6 +510,7 @@ class ClinicWorkflowTest extends TestCase
         ]);
         Appointment::create([
             'patient_id' => $patient->id,
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'type' => 'online',
             'starts_at' => '2026-10-05 10:00:00',
@@ -507,6 +520,7 @@ class ClinicWorkflowTest extends TestCase
         foreach (range(0, 480, 10) as $minutes) {
             Appointment::create([
                 'patient_id' => $patient->id,
+                'branch_id' => $this->generalTriasBranchId(),
                 'service_id' => $service->id,
                 'type' => 'online',
                 'starts_at' => Carbon::parse('2026-10-06 09:00:00')->addMinutes($minutes),
@@ -516,11 +530,14 @@ class ClinicWorkflowTest extends TestCase
         }
 
         $response = $this->actingAs($patient->user)
-            ->getJson(route('appointments.availability', ['month' => '2026-10']));
+            ->getJson(route('appointments.availability', [
+                'month' => '2026-10',
+                'branch_id' => $this->generalTriasBranchId(),
+            ]));
 
         $response->assertOk();
-        $this->assertContains('09:00', $response->json('days')['2026-10-05']);
         $this->assertNotContains('10:00', $response->json('days')['2026-10-05']);
+        $this->assertContains('10:30', $response->json('days')['2026-10-05']);
         $this->assertContains('10:30', $response->json('days')['2026-10-05']);
         $this->assertNotContains('17:00', $response->json('days')['2026-10-05']);
         $this->assertNotContains('12:00', $response->json('days')['2026-10-05']);
@@ -531,10 +548,14 @@ class ClinicWorkflowTest extends TestCase
         foreach (['staff', 'admin'] as $role) {
             $user = User::factory()->create(['role' => $role]);
             $roleResponse = $this->actingAs($user)
-                ->getJson(route('appointments.availability', ['month' => '2026-10']));
+                ->getJson(route('appointments.availability', [
+                    'month' => '2026-10',
+                    'branch_id' => $this->generalTriasBranchId(),
+                ]));
 
             $roleResponse->assertOk()->assertJsonPath('month', '2026-10');
-            $this->assertContains('09:00', $roleResponse->json('days')['2026-10-05']);
+            $this->assertNotContains('10:00', $roleResponse->json('days')['2026-10-05']);
+            $this->assertContains('10:30', $roleResponse->json('days')['2026-10-05']);
             $this->assertNotContains('10:00', $roleResponse->json('days')['2026-10-05']);
         }
 
@@ -553,6 +574,7 @@ class ClinicWorkflowTest extends TestCase
         $secondPatient = $this->createPatient('P-2026-00024');
         $service = Service::create(['name' => 'Released slot test', 'price' => 500, 'is_active' => true]);
         $booking = [
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'appointment_date' => '2026-10-05',
             'appointment_time' => '10:00',
@@ -586,6 +608,7 @@ class ClinicWorkflowTest extends TestCase
         $service = Service::create(['name' => 'Rescheduled slot test', 'price' => 500, 'is_active' => true]);
         $appointment = Appointment::create([
             'patient_id' => $patient->id,
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'type' => 'online',
             'starts_at' => '2026-10-05 10:00:00',
@@ -595,6 +618,7 @@ class ClinicWorkflowTest extends TestCase
         $availability = $this->actingAs($staff)
             ->getJson(route('appointments.availability', [
                 'month' => '2026-10',
+                'branch_id' => $this->generalTriasBranchId(),
                 'exclude_appointment_id' => $appointment->id,
             ]));
         $availability->assertOk();
@@ -628,6 +652,7 @@ class ClinicWorkflowTest extends TestCase
         ]);
         $appointment = Appointment::create([
             'patient_id' => $patient->id,
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'type' => 'online',
             'starts_at' => '2026-10-10 15:10:00',
@@ -635,9 +660,9 @@ class ClinicWorkflowTest extends TestCase
             'status' => 'pending',
         ]);
         DB::table('appointment_slots')->insert([
-            ['starts_at' => '2026-10-10 15:10:00', 'appointment_id' => $appointment->id],
-            ['starts_at' => '2026-10-10 15:20:00', 'appointment_id' => $appointment->id],
-            ['starts_at' => '2026-10-10 15:30:00', 'appointment_id' => $appointment->id],
+            ['branch_id' => $this->generalTriasBranchId(), 'starts_at' => '2026-10-10 15:10:00', 'appointment_id' => $appointment->id],
+            ['branch_id' => $this->generalTriasBranchId(), 'starts_at' => '2026-10-10 15:20:00', 'appointment_id' => $appointment->id],
+            ['branch_id' => $this->generalTriasBranchId(), 'starts_at' => '2026-10-10 15:30:00', 'appointment_id' => $appointment->id],
         ]);
 
         $this->actingAs($user)
@@ -681,6 +706,7 @@ class ClinicWorkflowTest extends TestCase
         ]);
         $appointment = Appointment::create([
             'patient_id' => $patient->id,
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'type' => 'online',
             'starts_at' => '2026-10-05 10:00:00',
@@ -768,6 +794,7 @@ class ClinicWorkflowTest extends TestCase
         $service = Service::create(['name' => 'Checkup', 'price' => 500, 'is_active' => true]);
         $appointment = Appointment::create([
             'patient_id' => $patient->id,
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'type' => 'online',
             'starts_at' => now()->addDays(2)->setTime(10, 0),
@@ -816,14 +843,16 @@ class ClinicWorkflowTest extends TestCase
         $service = Service::create(['name' => 'Dental Exam', 'price' => 500, 'is_active' => true]);
         $appointment = Appointment::create([
             'patient_id' => $patient->id,
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'type' => 'online',
             'starts_at' => now()->addDays(2)->setTime(10, 0),
             'status' => 'pending',
         ]);
-        $takenStart = now()->addDays(4)->setTime(15, 40);
+        $takenStart = now()->addDays(4)->setTime(15, 30);
         Appointment::create([
             'patient_id' => $patient->id,
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'type' => 'online',
             'starts_at' => $takenStart,
@@ -832,7 +861,8 @@ class ClinicWorkflowTest extends TestCase
 
         $this->actingAs($staff)
             ->patch(route('clinic.appointments.reschedule', $appointment), [
-                'starts_at' => $takenStart->format('Y-m-d\TH:i'),
+                'appointment_date' => $takenStart->format('Y-m-d'),
+                'appointment_time' => $takenStart->format('H:i'),
             ])
             ->assertSessionHasErrors('starts_at');
 
@@ -1006,6 +1036,7 @@ class ClinicWorkflowTest extends TestCase
 
         $this->actingAs($staff)
             ->post(route('appointments.store'), [
+                'branch_id' => $this->generalTriasBranchId(),
                 'patient_id' => $patient->id,
                 'service_id' => $service->id,
             ])
@@ -1049,7 +1080,9 @@ class ClinicWorkflowTest extends TestCase
         $this->get(route('clinic.billing.index'))
             ->assertSee('data-money-input', false)
             ->assertSee('Amount received')
-            ->assertSee('Apply to bill');
+            ->assertSee('Apply to bill')
+            ->assertSee('Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107')
+            ->assertSee('0917 160 0541');
 
         $this->post(route('clinic.payments.store', $bill), [
             'method' => 'cash',
@@ -1082,7 +1115,9 @@ class ClinicWorkflowTest extends TestCase
         $this->get(route('clinic.billing.index', ['bill' => $bill->id]))
             ->assertSee($bill->bill_number)
             ->assertSee($otherBill->bill_number)
-            ->assertSee('selected-bill', false);
+            ->assertSee('selected-bill', false)
+            ->assertSee('Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107')
+            ->assertSee('0917 160 0541');
         $receipt = Receipt::firstOrFail();
         $this->assertDatabaseHas('receipts', ['id' => $receipt->id]);
         $this->assertDatabaseHas('sms_logs', ['type' => 'payment', 'status' => 'failed']);
@@ -1095,6 +1130,8 @@ class ClinicWorkflowTest extends TestCase
         $this->get(route('receipts.show', $receipt))
             ->assertSee('data-print-receipt', false)
             ->assertSee('Doc Brigs Dental Care')
+            ->assertSee('Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107')
+            ->assertSee('0917 160 0541')
             ->assertDontSee('onclick="window.print()"', false);
         $otherPatient = User::factory()->create(['role' => 'patient']);
         $this->actingAs($otherPatient)->get(route('receipts.show', $receipt))->assertNotFound();
@@ -1231,6 +1268,7 @@ class ClinicWorkflowTest extends TestCase
             ->assertDontSee('value="paid"', false);
         $this->actingAs($patientUser)
             ->post(route('appointments.store'), [
+                'branch_id' => $this->generalTriasBranchId(),
                 'service_id' => $service->id,
                 'appointment_date' => $invalidStart->format('Y-m-d'),
                 'appointment_time' => $invalidStart->format('H:i'),
@@ -1238,6 +1276,7 @@ class ClinicWorkflowTest extends TestCase
             ->assertSessionHasErrors('appointment_time');
         $this->actingAs(User::factory()->create(['role' => 'staff']))
             ->post(route('appointments.store'), [
+                'branch_id' => $this->generalTriasBranchId(),
                 'patient_id' => $patient->id,
                 'service_id' => $service->id,
                 'appointment_date' => $invalidStart->format('Y-m-d'),
@@ -1248,6 +1287,7 @@ class ClinicWorkflowTest extends TestCase
 
         $appointment = Appointment::create([
             'patient_id' => $patient->id,
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'type' => 'online',
             'starts_at' => now()->addDays(2)->setTime(10, 0),
@@ -1271,7 +1311,7 @@ class ClinicWorkflowTest extends TestCase
         );
     }
 
-    public function test_patient_booking_is_limited_to_monday_through_saturday_from_nine_to_five(): void
+    public function test_patient_booking_is_limited_to_monday_through_saturday_from_ten_to_five(): void
     {
         $this->travelTo('2026-10-04 08:00:00');
 
@@ -1287,7 +1327,7 @@ class ClinicWorkflowTest extends TestCase
         $this->actingAs($patientUser)
             ->get(route('appointments.index'))
             ->assertSee('The Dental Clinic is closed on Sundays. Please select another date.')
-            ->assertSee('value="09:00"', false)
+            ->assertDontSee('value="09:00"', false)
             ->assertSee('value="10:00"', false)
             ->assertSee('value="16:30"', false)
             ->assertDontSee('value="12:00"', false)
@@ -1295,8 +1335,9 @@ class ClinicWorkflowTest extends TestCase
             ->assertDontSee('value="08:50"', false);
 
         foreach (range(5, 10) as $day) {
-            foreach (['09:00', '16:30'] as $time) {
+            foreach (['10:00', '16:30'] as $time) {
                 $this->post(route('appointments.store'), [
+                    'branch_id' => $this->generalTriasBranchId(),
                     'service_id' => $service->id,
                     'appointment_date' => sprintf('2026-10-%02d', $day),
                     'appointment_time' => $time,
@@ -1308,6 +1349,7 @@ class ClinicWorkflowTest extends TestCase
         $this->assertDatabaseCount('appointments', 12);
         $availability = $this->getJson(route('appointments.availability', [
             'month' => '2026-10',
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
         ]));
         $availability->assertOk();
@@ -1324,6 +1366,7 @@ class ClinicWorkflowTest extends TestCase
             ['appointment_date' => '2026-10-11', 'appointment_time' => '10:00', 'error' => 'appointment_date'],
         ] as $invalidSlot) {
             $response = $this->post(route('appointments.store'), [
+                'branch_id' => $this->generalTriasBranchId(),
                 'service_id' => $service->id,
                 'appointment_date' => $invalidSlot['appointment_date'],
                 'appointment_time' => $invalidSlot['appointment_time'],
@@ -1337,20 +1380,24 @@ class ClinicWorkflowTest extends TestCase
         }
 
         $this->post(route('appointments.store'), [
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'starts_at' => '2026-10-11T10:00',
         ])->assertSessionHasErrors([
             'starts_at' => 'The Dental Clinic is closed on Sundays. Please select another date.',
         ]);
         $this->post(route('appointments.store'), [
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'starts_at' => '2026-10-05T08:50',
         ])->assertSessionHasErrors('starts_at');
         $this->post(route('appointments.store'), [
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'starts_at' => '2026-10-07T17:10',
         ])->assertSessionHasErrors('starts_at');
         $this->post(route('appointments.store'), [
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'starts_at' => '2026-10-07T12:30',
         ])->assertSessionHasErrors('starts_at');
@@ -1372,6 +1419,7 @@ class ClinicWorkflowTest extends TestCase
         $availability = $this->actingAs($patient->user)
             ->getJson(route('appointments.availability', [
                 'month' => '2026-10',
+                'branch_id' => $this->generalTriasBranchId(),
                 'service_id' => $service->id,
             ]));
 
@@ -1384,12 +1432,14 @@ class ClinicWorkflowTest extends TestCase
         $this->assertContains('13:00', $availableTimes);
 
         $this->post(route('appointments.store'), [
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'appointment_date' => '2026-10-05',
             'appointment_time' => '11:30',
         ])->assertSessionHasErrors('starts_at');
 
         $this->post(route('appointments.store'), [
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'appointment_date' => '2026-10-05',
             'appointment_time' => '13:00',
@@ -1416,6 +1466,7 @@ class ClinicWorkflowTest extends TestCase
         ] as $startsAt) {
             Appointment::create([
                 'patient_id' => $patient->id,
+                'branch_id' => $this->generalTriasBranchId(),
                 'service_id' => $service->id,
                 'type' => 'online',
                 'starts_at' => $startsAt,
@@ -1627,9 +1678,9 @@ class ClinicWorkflowTest extends TestCase
             'starts_at' => '2026-10-10 10:00:00',
         ]);
         DB::table('appointment_slots')->insert([
-            ['starts_at' => '2026-10-10 10:00:00', 'appointment_id' => $appointment->id],
-            ['starts_at' => '2026-10-10 10:10:00', 'appointment_id' => $appointment->id],
-            ['starts_at' => '2026-10-10 10:20:00', 'appointment_id' => $appointment->id],
+            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:00:00', 'appointment_id' => $appointment->id],
+            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:10:00', 'appointment_id' => $appointment->id],
+            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:20:00', 'appointment_id' => $appointment->id],
         ]);
 
         $this->actingAs($doctor)
@@ -1664,9 +1715,9 @@ class ClinicWorkflowTest extends TestCase
             'starts_at' => '2026-10-10 10:00:00',
         ]);
         DB::table('appointment_slots')->insert([
-            ['starts_at' => '2026-10-10 10:00:00', 'appointment_id' => $appointment->id],
-            ['starts_at' => '2026-10-10 10:10:00', 'appointment_id' => $appointment->id],
-            ['starts_at' => '2026-10-10 10:20:00', 'appointment_id' => $appointment->id],
+            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:00:00', 'appointment_id' => $appointment->id],
+            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:10:00', 'appointment_id' => $appointment->id],
+            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:20:00', 'appointment_id' => $appointment->id],
         ]);
 
         $this->actingAs($user)
@@ -1701,6 +1752,7 @@ class ClinicWorkflowTest extends TestCase
 
         $this->actingAs($firstPatient->user)
             ->post(route('appointments.store'), [
+                'branch_id' => $this->generalTriasBranchId(),
                 'service_id' => $service->id,
                 'appointment_date' => '2026-10-05',
                 'appointment_time' => '10:00',
@@ -1709,6 +1761,7 @@ class ClinicWorkflowTest extends TestCase
 
         $this->actingAs($secondPatient->user)
             ->post(route('appointments.store'), [
+                'branch_id' => $this->generalTriasBranchId(),
                 'service_id' => $service->id,
                 'appointment_date' => '2026-10-05',
                 'appointment_time' => '10:30',
@@ -1794,6 +1847,77 @@ class ClinicWorkflowTest extends TestCase
         foreach (['dashboard', 'appointments.index', 'patient.records', 'patient.billing', 'patient.notifications'] as $routeName) {
             $this->get(route($routeName))->assertOk();
         }
+
+        $staff = User::factory()->create(['role' => 'staff']);
+        $this->actingAs($staff)
+            ->get(route('admin.reports'))
+            ->assertForbidden();
+        $this->get(route('dashboard'))
+            ->assertOk()
+            ->assertDontSee('data-admin-statistics', false);
+    }
+
+    public function test_admin_statistics_graphs_follow_the_selected_period_and_database_records(): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-21 12:00:00', config('clinic.timezone')));
+
+        $patient = $this->createPatient('P-2026-00601');
+        $service = Service::factory()->create(['price' => 500]);
+        Appointment::factory()->for($patient)->for($service)->create([
+            'starts_at' => '2026-10-21 09:00:00',
+            'status' => 'completed',
+        ]);
+        Appointment::factory()->for($patient)->for($service)->create([
+            'starts_at' => '2026-10-21 10:00:00',
+            'status' => 'pending',
+        ]);
+        Appointment::factory()->for($patient)->for($service)->create([
+            'starts_at' => '2026-10-20 10:00:00',
+            'status' => 'cancelled',
+        ]);
+
+        $bill = Bill::factory()->for($patient)->create([
+            'total' => '500.00',
+            'payment_status' => 'partially_paid',
+        ]);
+        Payment::factory()->for($bill)->create([
+            'amount' => '125.00',
+            'applied_amount' => '100.00',
+            'created_at' => '2026-10-21 11:00:00',
+            'updated_at' => '2026-10-21 11:00:00',
+        ]);
+        Payment::factory()->for($bill)->create([
+            'amount' => '250.00',
+            'applied_amount' => '250.00',
+            'created_at' => '2026-10-20 11:00:00',
+            'updated_at' => '2026-10-20 11:00:00',
+        ]);
+
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAs($admin)
+            ->get(route('dashboard', ['statistics_period' => 'week']))
+            ->assertOk()
+            ->assertSee('data-admin-statistics', false)
+            ->assertSee('data-appointments-trend', false)
+            ->assertSee('data-revenue-trend', false)
+            ->assertSee('data-appointment-statuses', false)
+            ->assertSee('Completed')
+            ->assertSee('Pending')
+            ->assertSee('1 appointment');
+
+        $this->get(route('admin.reports', [
+            'from' => '2026-10-21',
+            'to' => '2026-10-21',
+        ]))
+            ->assertOk()
+            ->assertSee('data-report-statistics', false)
+            ->assertSee('data-report-appointments', false)
+            ->assertSee('data-report-revenue', false)
+            ->assertSee('data-report-statuses', false)
+            ->assertSee('₱100.00')
+            ->assertSee('Completed appointments')
+            ->assertSee('Cancelled appointments');
     }
 
     private function createPatient(string $patientNumber): Patient

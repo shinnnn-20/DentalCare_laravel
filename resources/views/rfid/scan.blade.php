@@ -20,7 +20,7 @@
                     <div class="mt-2 grid gap-2">
                         @forelse ($appointments as $appointment)
                             <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white p-3">
-                                <div><p class="font-medium">{{ $appointment->starts_at->format('g:i A') }} · {{ $appointment->service->name }}</p><p class="text-xs capitalize text-slate-500">{{ str_replace('_', ' ', $appointment->status) }}</p></div>
+                                <div><p class="font-medium">{{ $appointment->starts_at->format('g:i A') }} · {{ $appointment->treatmentNames() }}</p><p class="text-xs capitalize text-slate-500">{{ str_replace('_', ' ', $appointment->status) }}</p></div>
                             </div>
                         @empty
                             <p class="rounded-xl bg-white p-3 text-sm text-slate-600">No approved appointment found for today. Register a walk-in from the Appointments page if needed.</p>

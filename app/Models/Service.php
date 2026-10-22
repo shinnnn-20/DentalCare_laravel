@@ -6,6 +6,7 @@ use Database\Factories\ServiceFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 #[Fillable(['name', 'category', 'description', 'price', 'price_display', 'requires_price_confirmation', 'duration_minutes', 'is_active'])]
@@ -27,5 +28,10 @@ class Service extends Model
     public function appointments(): HasMany
     {
         return $this->hasMany(Appointment::class);
+    }
+
+    public function scheduledAppointments(): BelongsToMany
+    {
+        return $this->belongsToMany(Appointment::class, 'appointment_service')->withTimestamps();
     }
 }

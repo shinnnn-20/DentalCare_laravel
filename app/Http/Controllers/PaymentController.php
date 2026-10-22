@@ -34,7 +34,7 @@ class PaymentController extends Controller
         }
 
         $data = $request->validate([
-            'method' => ['required', 'in:cash,gcash,card,other'],
+            'method' => ['required', 'in:cash,gcash,other'],
             'amount' => ['required', 'numeric', 'decimal:0,2', 'gt:0', 'max:1000000'],
             'applied_amount' => ['required', 'numeric', 'decimal:0,2', 'gt:0', 'max:1000000'],
         ]);

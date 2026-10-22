@@ -6,6 +6,7 @@ use App\Models\Patient;
 use App\Models\RfidCard;
 use App\Models\RfidLog;
 use App\Services\AuditTrail;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
@@ -62,7 +63,7 @@ class RfidController extends Controller
             'uid' => $uid,
             'patient' => $card?->patient,
             'appointments' => $card?->patient?->appointments()
-                ->with('service')
+                ->with(['service', 'services'])
                 ->whereDate('starts_at', today(config('clinic.timezone')))
                 ->whereIn('status', ['approved', 'checked_in', 'waiting'])
                 ->orderBy('starts_at')

@@ -10,7 +10,7 @@
             @php($balance = max(0, (float) $bill->total - $paid))
             <article class="rounded-2xl border border-slate-200 bg-white p-5">
                 <div class="flex flex-wrap items-start justify-between gap-4">
-                    <div><p class="text-sm text-slate-500">{{ $bill->bill_number }} · {{ $bill->created_at->format('M j, Y') }}</p><h2 class="mt-1 text-lg font-semibold">{{ $bill->appointment->service->name ?? 'Dental services' }}</h2></div>
+                    <div><p class="text-sm text-slate-500">{{ $bill->bill_number }} · {{ $bill->created_at->format('M j, Y') }}</p><h2 class="mt-1 text-lg font-semibold">{{ $bill->appointment?->treatmentNames() ?? 'Dental services' }}</h2></div>
                     <span class="status-badge capitalize">{{ str_replace('_', ' ', $bill->payment_status) }}</span>
                 </div>
                 <section class="mt-4 border-t border-slate-100 pt-4">
