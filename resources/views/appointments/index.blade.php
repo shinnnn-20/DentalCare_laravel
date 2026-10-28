@@ -190,6 +190,12 @@
         </section>
     @endif
 
+    @if ($highlightedAppointmentId !== null)
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            <p>This visit is highlighted. Open its dental record or create a bill from the appointment actions.</p>
+            <a class="font-semibold text-amber-900 underline underline-offset-2" href="{{ route('appointments.index', collect(request()->query())->except(['appointment_id', 'page'])->all()) }}">Dismiss highlight</a>
+        </div>
+    @endif
     <section class="rounded-2xl border border-slate-200 bg-white">
         <form method="GET" class="grid gap-3 border-b border-slate-100 bg-slate-50/60 p-4 sm:flex sm:flex-wrap sm:items-end sm:p-5">
             <label class="form-label sm:min-w-48">Filter by Branch
@@ -219,7 +225,7 @@
                 <thead><tr><th>Date & time</th>@if (auth()->user()->hasRole('admin', 'staff', 'doctor'))<th>Patient</th>@endif<th>Branch</th><th>Service</th><th>Type</th><th>Status</th><th>Queue</th><th>Actions</th></tr></thead>
                 <tbody>
                 @forelse ($appointments as $appointment)
-                    <tr id="appointment-{{ $appointment->id }}">
+                    <tr id="appointment-{{ $appointment->id }}" @class(['bg-amber-50 outline outline-2 outline-amber-400 outline-offset-[-2px]' => $highlightedAppointmentId === $appointment->id]) @if ($highlightedAppointmentId === $appointment->id) aria-current="true" @endif>
                         <td data-label="Date & time">
                             <span class="inline-flex flex-col gap-1 whitespace-nowrap">
                                 <span class="font-semibold text-slate-800">{{ $appointment->starts_at->format('M j, Y') }}</span>
@@ -311,9 +317,9 @@
                                         <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}">@csrf<button class="btn-small text-teal-800">Approve</button></form>
                                         <form method="POST" action="{{ route('appointments.transition', [$appointment, 'reject']) }}">@csrf<button class="btn-small text-rose-700">Reject</button></form>
                                     @elseif ($appointment->status === 'in_consultation')
-                                        @if (auth()->user()->role === 'admin' && ! $appointment->dentalRecord)
-                                            <a class="btn-small text-teal-800" href="{{ route('clinic.records.create', $appointment) }}">Dental record</a>
-                                        @elseif ($appointment->dentalRecord && ! $appointment->bill)
+                                        @if (auth()->user()->hasRole('admin', 'staff') && ! $appointment->dentalRecord)
+                                            <a class="btn-small text-teal-800" href="{{ route('clinic.records.create', ['appointment' => $appointment->id, ...$appointmentListFilters]) }}">Dental record</a>
+                                        @elseif (auth()->user()->hasRole('admin', 'staff') && $appointment->dentalRecord && ! $appointment->bill)
                                             <a class="btn-small text-teal-800" href="{{ route('clinic.bills.create', $appointment) }}">Create bill</a>
                                         @endif
                                     @endif

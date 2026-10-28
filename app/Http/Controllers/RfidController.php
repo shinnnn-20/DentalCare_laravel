@@ -49,6 +49,7 @@ class RfidController extends Controller
         $data = $request->validate(['uid' => ['required', 'string', 'max:100']]);
         $uid = mb_strtoupper(trim($data['uid']));
         $card = RfidCard::query()->with(['patient.user'])->where('uid', $uid)->where('is_active', true)->first();
+        $patient = $card?->patient;
 
         RfidLog::create([
             'rfid_card_id' => $card?->id,
@@ -59,15 +60,20 @@ class RfidController extends Controller
             'scanned_at' => now(),
         ]);
 
+        $now = now(config('clinic.timezone'));
+        $dentalRecords = $patient?->dentalRecords()->latest()->get() ?? collect();
+        $appointments = $patient?->appointments()
+            ->with(['branch', 'service', 'services'])
+            ->orderByRaw('CASE WHEN starts_at >= ? THEN 0 ELSE 1 END', [$now])
+            ->orderByRaw('CASE WHEN starts_at >= ? THEN starts_at END ASC', [$now])
+            ->orderByRaw('CASE WHEN starts_at < ? THEN starts_at END DESC', [$now])
+            ->get() ?? collect();
+
         return view('rfid.scan', [
             'uid' => $uid,
-            'patient' => $card?->patient,
-            'appointments' => $card?->patient?->appointments()
-                ->with(['service', 'services'])
-                ->whereDate('starts_at', today(config('clinic.timezone')))
-                ->whereIn('status', ['approved', 'checked_in', 'waiting'])
-                ->orderBy('starts_at')
-                ->get() ?? collect(),
+            'patient' => $patient,
+            'dentalRecords' => $dentalRecords,
+            'appointments' => $appointments,
         ]);
     }
 }

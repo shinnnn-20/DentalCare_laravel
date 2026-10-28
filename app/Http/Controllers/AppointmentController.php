@@ -30,14 +30,20 @@ class AppointmentController extends Controller
         $filters = $request->validate([
             'date' => ['nullable', 'date'],
             'status' => ['nullable', 'in:pending,approved,rejected,checked_in,waiting,in_consultation,billed,completed,cancelled,no_show'],
+            'appointment_id' => ['nullable', 'integer', 'exists:appointments,id'],
             'branch_id' => ['nullable', 'string', Rule::in([
                 'unassigned',
                 ...$branches->pluck('id')->map(fn (int $id): string => (string) $id)->all(),
             ])],
             'search' => ['nullable', 'string', 'max:100'],
         ]);
+        if (isset($filters['appointment_id'])) {
+            abort_unless($request->user()->hasRole('admin', 'staff'), 404);
+        }
+
         $appointments = Appointment::query()
             ->with(['patient.user', 'service', 'services', 'branch', 'queueEntry', 'dentalRecord', 'bill'])
+            ->when($filters['appointment_id'] ?? null, fn ($query, $appointmentId) => $query->whereKey($appointmentId))
             ->when($request->user()->role === 'patient', fn ($query) => $query->whereBelongsTo($request->user()->patient()->firstOrFail()))
             ->when($request->user()->role === 'doctor', fn ($query) => $query
                 ->whereIn('status', ['pending', 'approved'])
@@ -90,6 +96,8 @@ class AppointmentController extends Controller
         $appointmentTimes = $this->appointmentTimeOptions();
 
         $hasUnassignedAppointments = Appointment::query()->whereNull('branch_id')->exists();
+        $highlightedAppointmentId = isset($filters['appointment_id']) ? (int) $filters['appointment_id'] : null;
+        $appointmentListFilters = array_intersect_key($filters, array_flip(['branch_id', 'search']));
 
         return view('appointments.index', compact(
             'appointments',
@@ -99,6 +107,8 @@ class AppointmentController extends Controller
             'hasUnassignedAppointments',
             'appointmentTimes',
             'reschedulableAppointmentIds',
+            'highlightedAppointmentId',
+            'appointmentListFilters',
         ));
     }
 
@@ -488,7 +498,49 @@ class AppointmentController extends Controller
             $smsNotifier->send($appointment->patient, 'appointment_'.$action, $message, $appointment);
         }
 
-        return back()->with('status', 'Appointment updated to '.str_replace('_', ' ', $appointment->status).'.');
+        $statusMessage = 'Appointment updated to '.str_replace('_', ' ', $appointment->status).'.';
+
+        if ($action === 'consult' && $user->hasRole('admin', 'staff')) {
+            return $this->redirectToAppointment($request, $appointment, $statusMessage);
+        }
+
+        return back()->with('status', $statusMessage);
+    }
+
+    /**
+     * @return array<string, int|string>
+     */
+    private function appointmentListFilters(Request $request): array
+    {
+        $filters = [];
+        $branchId = $request->query('branch_id');
+
+        if (is_string($branchId) && $branchId === 'unassigned') {
+            $filters['branch_id'] = $branchId;
+        } elseif (is_string($branchId) && ctype_digit($branchId) && Branch::query()->whereKey($branchId)->exists()) {
+            $filters['branch_id'] = $branchId;
+        }
+
+        $search = $request->query('search');
+
+        if (is_string($search) && mb_strlen($search) <= 100) {
+            $filters['search'] = $search;
+        }
+
+        return $filters;
+    }
+
+    private function redirectToAppointment(Request $request, Appointment $appointment, string $message): RedirectResponse
+    {
+        $query = [
+            ...$this->appointmentListFilters($request),
+            'date' => $appointment->starts_at->toDateString(),
+            'status' => $appointment->status,
+            'appointment_id' => $appointment->id,
+        ];
+
+        return redirect()->to(route('appointments.index', $query).'#appointment-'.$appointment->id)
+            ->with('status', $message);
     }
 
     public function reschedule(

@@ -161,6 +161,123 @@ class ClinicWorkflowTest extends TestCase
         ];
     }
 
+    #[DataProvider('clinicStaffRoles')]
+    public function test_starting_a_visit_redirects_to_the_highlighted_appointment_for_staff_and_admin(string $role): void
+    {
+        $actor = User::factory()->create(['role' => $role]);
+        $patient = $this->createPatient('P-2026-00061');
+        $service = Service::factory()->create();
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'waiting',
+        ]);
+        $otherAppointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'in_consultation',
+        ]);
+        QueueEntry::factory()->for($appointment)->create(['status' => 'called']);
+        $filters = [
+            'branch_id' => (string) $appointment->branch_id,
+            'search' => $patient->user->name,
+            'date' => $appointment->starts_at->toDateString(),
+            'status' => 'in_consultation',
+            'appointment_id' => $appointment->id,
+        ];
+        $transitionUrl = route('appointments.transition', [$appointment, 'consult']).'?'.http_build_query([
+            'branch_id' => $filters['branch_id'],
+            'search' => $filters['search'],
+        ]);
+
+        $this->actingAs($actor)
+            ->post($transitionUrl)
+            ->assertRedirect(route('appointments.index', $filters).'#appointment-'.$appointment->id)
+            ->assertSessionHas('status', 'Appointment updated to in consultation.');
+
+        $this->assertDatabaseHas('appointments', ['id' => $appointment->id, 'status' => 'in_consultation']);
+        $this->assertDatabaseHas('queue_entries', ['appointment_id' => $appointment->id, 'status' => 'in_consultation']);
+
+        $this->get(route('appointments.index', $filters))
+            ->assertSee('id="appointment-'.$appointment->id.'"', false)
+            ->assertSee('bg-amber-50')
+            ->assertSee('Dental record')
+            ->assertDontSee('id="appointment-'.$otherAppointment->id.'"', false);
+    }
+
+    #[DataProvider('clinicStaffRoles')]
+    public function test_saving_a_dental_record_returns_to_the_same_appointment_with_create_bill_available(string $role): void
+    {
+        $actor = User::factory()->create(['role' => $role]);
+        $patient = $this->createPatient('P-2026-00062');
+        $appointment = Appointment::factory()->for($patient)->create([
+            'status' => 'in_consultation',
+        ]);
+        $otherAppointment = Appointment::factory()->for($patient)->create([
+            'status' => 'in_consultation',
+        ]);
+        $filters = [
+            'branch_id' => (string) $appointment->branch_id,
+            'search' => $patient->user->name,
+        ];
+        $listFilters = [
+            ...$filters,
+            'date' => $appointment->starts_at->toDateString(),
+            'status' => 'in_consultation',
+            'appointment_id' => $appointment->id,
+        ];
+
+        $this->actingAs($actor)
+            ->get(route('clinic.records.create', ['appointment' => $appointment->id, ...$filters]))
+            ->assertSee('Save dental record');
+
+        $this->post(route('clinic.records.store', ['appointment' => $appointment->id, ...$filters]), [
+            'diagnosis' => 'Routine examination',
+            'treatment' => 'Dental cleaning',
+            'prescription' => 'Use fluoride rinse',
+            'follow_up_date' => now()->addMonth()->toDateString(),
+        ])
+            ->assertRedirect(route('appointments.index', $listFilters).'#appointment-'.$appointment->id)
+            ->assertSessionHas('status', 'Dental record saved.');
+
+        $this->assertDatabaseHas('dental_records', [
+            'appointment_id' => $appointment->id,
+            'patient_id' => $patient->id,
+            'diagnosis' => 'Routine examination',
+        ]);
+        $this->assertDatabaseCount('bills', 0);
+
+        $this->get(route('appointments.index', $listFilters))
+            ->assertSee('id="appointment-'.$appointment->id.'"', false)
+            ->assertSee('bg-amber-50')
+            ->assertSee('Create bill')
+            ->assertDontSee('id="appointment-'.$otherAppointment->id.'"', false);
+
+        $this->get(route('clinic.records.create', ['appointment' => $appointment->id, ...$filters]))
+            ->assertRedirect(route('appointments.index', $listFilters).'#appointment-'.$appointment->id)
+            ->assertSessionHas('status', 'A dental record already exists for this appointment.');
+
+        $this->assertDatabaseCount('dental_records', 1);
+        $this->assertDatabaseCount('bills', 0);
+    }
+
+    public function test_invalid_dental_record_submission_returns_to_the_form_without_creating_a_record(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00063');
+        $appointment = Appointment::factory()->for($patient)->create([
+            'status' => 'in_consultation',
+        ]);
+        $formUrl = route('clinic.records.create', $appointment);
+
+        $this->from($formUrl)
+            ->actingAs($staff)
+            ->post(route('clinic.records.store', $appointment), [
+                'diagnosis' => '',
+                'treatment' => '',
+            ])
+            ->assertRedirect($formUrl)
+            ->assertSessionHasErrors(['diagnosis', 'treatment']);
+
+        $this->assertDatabaseCount('dental_records', 0);
+    }
+
     public function test_patient_cannot_remove_a_patient_account(): void
     {
         $patientUser = User::factory()->create(['role' => 'patient']);
@@ -902,6 +1019,10 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('🖨 Print Bill')
             ->assertSee('data-billing-print-report', false)
             ->assertSee('data-print-all-page', false)
+            ->assertSee('class="billing-print-logo"', false)
+            ->assertSee('class="bill-print-logo"', false)
+            ->assertSee(asset('images/landing/doc-brigs-logo.png'))
+            ->assertSee('billing-print-column-payment', false)
             ->assertSee('Bill Number')
             ->assertSee('Bill Date')
             ->assertSee('Patient Name')
@@ -993,6 +1114,45 @@ class ClinicWorkflowTest extends TestCase
         $this->assertSame('billed', $appointment->fresh()->status);
     }
 
+    public function test_opening_bill_creation_for_an_already_billed_appointment_redirects_to_its_bill(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00051');
+        $appointment = Appointment::factory()->for($patient)->create(['status' => 'billed']);
+        DentalRecord::factory()->for($patient)->for($appointment)->create();
+        $bill = Bill::factory()->for($appointment)->create(['patient_id' => $patient->id]);
+
+        $billingUrl = route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id;
+
+        $this->actingAs($staff)
+            ->get(route('clinic.bills.create', $appointment))
+            ->assertRedirect($billingUrl)
+            ->assertSessionHas('status', 'A bill already exists for this appointment.');
+
+        $this->assertDatabaseCount('bills', 1);
+        $this->assertDatabaseHas('bills', ['id' => $bill->id, 'appointment_id' => $appointment->id]);
+    }
+
+    public function test_submitting_bill_creation_for_an_already_billed_appointment_redirects_without_creating_another_bill(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00052');
+        $appointment = Appointment::factory()->for($patient)->create(['status' => 'billed']);
+        DentalRecord::factory()->for($patient)->for($appointment)->create();
+        $bill = Bill::factory()->for($appointment)->create(['patient_id' => $patient->id]);
+
+        $billingUrl = route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id;
+
+        $this->actingAs($staff)
+            ->post(route('clinic.bills.store', $appointment), ['discount' => '0.00'])
+            ->assertRedirect($billingUrl)
+            ->assertSessionHas('status', 'A bill already exists for this appointment.');
+
+        $this->assertDatabaseCount('bills', 1);
+        $this->assertDatabaseHas('bills', ['id' => $bill->id, 'appointment_id' => $appointment->id]);
+        $this->assertSame('billed', $appointment->fresh()->status);
+    }
+
     public function test_fixed_fee_cannot_be_overridden_by_a_submitted_final_price(): void
     {
         $staff = User::factory()->create(['role' => 'staff']);
@@ -1056,7 +1216,11 @@ class ClinicWorkflowTest extends TestCase
                 'diagnosis' => 'Routine examination',
                 'treatment' => 'Cleaning completed',
             ])
-            ->assertRedirectToRoute('clinic.patients.show', $patient);
+            ->assertRedirect(route('appointments.index', [
+                'date' => $appointment->starts_at->toDateString(),
+                'status' => 'in_consultation',
+                'appointment_id' => $appointment->id,
+            ]).'#appointment-'.$appointment->id);
 
         $this->post(route('clinic.bills.store', $appointment), ['discount' => '0.00'])
             ->assertRedirectToRoute('clinic.billing.index');
@@ -1554,7 +1718,11 @@ class ClinicWorkflowTest extends TestCase
                 'diagnosis' => 'Routine check',
                 'treatment' => 'No charge',
             ])
-            ->assertRedirectToRoute('clinic.patients.show', $patient);
+            ->assertRedirect(route('appointments.index', [
+                'date' => $appointment->starts_at->toDateString(),
+                'status' => 'in_consultation',
+                'appointment_id' => $appointment->id,
+            ]).'#appointment-'.$appointment->id);
         $this->post(route('clinic.bills.store', $appointment), ['discount' => '0.00'])
             ->assertRedirectToRoute('clinic.billing.index');
 

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Appointment;
 use App\Models\AuditLog;
 use App\Models\Bill;
+use App\Models\Branch;
 use App\Models\DentalRecord;
 use App\Models\Patient;
 use App\Models\QueueEntry;
@@ -40,12 +41,17 @@ class ClinicWorkflowController extends Controller
         ]);
     }
 
-    public function createRecord(Appointment $appointment): View
+    public function createRecord(Request $request, Appointment $appointment): View|RedirectResponse
     {
+        if ($appointment->dentalRecord()->exists()) {
+            return $this->redirectToAppointment($request, $appointment, 'A dental record already exists for this appointment.');
+        }
+
         abort_unless(in_array($appointment->status, ['in_consultation', 'completed'], true), 422);
 
         return view('records.create', [
             'appointment' => $appointment->load(['patient.user', 'service', 'services']),
+            'appointmentListFilters' => $this->appointmentListFilters($request),
         ]);
     }
 
@@ -55,6 +61,10 @@ class ClinicWorkflowController extends Controller
         AuditTrail $auditTrail,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
+        if ($appointment->dentalRecord()->exists()) {
+            return $this->redirectToAppointment($request, $appointment, 'A dental record already exists for this appointment.');
+        }
+
         abort_unless(in_array($appointment->status, ['in_consultation', 'completed'], true), 422);
 
         $data = $request->validate([
@@ -64,10 +74,6 @@ class ClinicWorkflowController extends Controller
             'notes' => ['nullable', 'string', 'max:5000'],
             'follow_up_date' => ['nullable', 'date', 'after_or_equal:today'],
         ]);
-
-        if ($appointment->dentalRecord()->exists()) {
-            throw ValidationException::withMessages(['appointment' => 'A dental record already exists for this appointment.']);
-        }
 
         $record = DentalRecord::create([
             ...$data,
@@ -86,14 +92,55 @@ class ClinicWorkflowController extends Controller
             $record->id,
         );
 
-        return redirect()->route('clinic.patients.show', $appointment->patient_id)->with('status', 'Dental record saved.');
+        return $this->redirectToAppointment($request, $appointment, 'Dental record saved.');
     }
 
-    public function createBill(Appointment $appointment): View
+    /**
+     * @return array<string, int|string>
+     */
+    private function appointmentListFilters(Request $request): array
     {
+        $filters = [];
+        $branchId = $request->query('branch_id');
+
+        if (is_string($branchId) && $branchId === 'unassigned') {
+            $filters['branch_id'] = $branchId;
+        } elseif (is_string($branchId) && ctype_digit($branchId) && Branch::query()->whereKey($branchId)->exists()) {
+            $filters['branch_id'] = $branchId;
+        }
+
+        $search = $request->query('search');
+
+        if (is_string($search) && mb_strlen($search) <= 100) {
+            $filters['search'] = $search;
+        }
+
+        return $filters;
+    }
+
+    private function redirectToAppointment(Request $request, Appointment $appointment, string $message): RedirectResponse
+    {
+        $query = [
+            ...$this->appointmentListFilters($request),
+            'date' => $appointment->starts_at->toDateString(),
+            'status' => $appointment->status,
+            'appointment_id' => $appointment->id,
+        ];
+
+        return redirect()->to(route('appointments.index', $query).'#appointment-'.$appointment->id)
+            ->with('status', $message);
+    }
+
+    public function createBill(Appointment $appointment): View|RedirectResponse
+    {
+        $existingBill = $appointment->bill()->first();
+
+        if ($existingBill !== null) {
+            return $this->redirectToExistingBill($existingBill);
+        }
+
         abort_unless($appointment->status === 'in_consultation', 422);
         abort_if($appointment->dentalRecord()->doesntExist(), 422, 'A dental record is required before billing.');
-        abort_if($appointment->bill()->exists(), 409, 'A bill already exists for this appointment.');
         $appointment->load(['patient.user', 'services', 'service']);
 
         return view('billing.create', [
@@ -107,9 +154,14 @@ class ClinicWorkflowController extends Controller
         AuditTrail $auditTrail,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
+        $existingBill = $appointment->bill()->first();
+
+        if ($existingBill !== null) {
+            return $this->redirectToExistingBill($existingBill);
+        }
+
         abort_unless($appointment->status === 'in_consultation', 422);
         abort_if($appointment->dentalRecord()->doesntExist(), 422, 'A dental record is required before billing.');
-        abort_if($appointment->bill()->exists(), 409, 'A bill already exists for this appointment.');
         $appointment->load(['service', 'services', 'patient.user']);
 
         $services = $appointment->services->isNotEmpty()
@@ -227,6 +279,13 @@ class ClinicWorkflowController extends Controller
         );
 
         return redirect()->route('clinic.billing.index')->with('status', 'Bill created.');
+    }
+
+    private function redirectToExistingBill(Bill $bill): RedirectResponse
+    {
+        $billingUrl = route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id;
+
+        return redirect()->to($billingUrl)->with('status', 'A bill already exists for this appointment.');
     }
 
     public function billing(Request $request): View

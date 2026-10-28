@@ -117,10 +117,10 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/queue/{appointment}/check-in', [AppointmentController::class, 'checkInFromQueue'])
             ->name('queue.check-in');
         Route::get('/appointments/{appointment}/record', [ClinicWorkflowController::class, 'createRecord'])
-            ->middleware('role:admin')
+            ->middleware('role:admin,staff')
             ->name('records.create');
         Route::post('/appointments/{appointment}/record', [ClinicWorkflowController::class, 'storeRecord'])
-            ->middleware('role:admin')
+            ->middleware('role:admin,staff')
             ->name('records.store');
         Route::get('/appointments/{appointment}/bill', [ClinicWorkflowController::class, 'createBill'])->name('bills.create');
         Route::post('/appointments/{appointment}/bill', [ClinicWorkflowController::class, 'storeBill'])->name('bills.store');

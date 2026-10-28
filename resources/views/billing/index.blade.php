@@ -103,13 +103,28 @@
 
     <section class="billing-print-report" data-billing-print-report data-print-all-page aria-label="Printable billing report">
         <header class="billing-print-header">
-            <p>{{ config('clinic.name') }}</p>
-            <p>{{ config('clinic.address') }}</p>
-            <p>{{ config('clinic.phone') }}</p>
-            <h1>Billing &amp; Payments</h1>
-            <p>Generated {{ now()->format('F j, Y g:i A') }}</p>
+            <img class="billing-print-logo" src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="Doc Brigs Dental Care logo">
+            <div class="billing-print-brand">
+                <p>{{ config('clinic.name') }}</p>
+                <p>{{ config('clinic.address') }}</p>
+                <p>{{ config('clinic.phone') }}</p>
+                <h1>Billing &amp; Payments</h1>
+                <p>Generated {{ now()->format('F j, Y g:i A') }}</p>
+            </div>
         </header>
         <table class="billing-print-table">
+            <colgroup>
+                <col class="billing-print-column-number">
+                <col class="billing-print-column-date">
+                <col class="billing-print-column-patient">
+                <col class="billing-print-column-patient-id">
+                <col class="billing-print-column-amount">
+                <col class="billing-print-column-amount">
+                <col class="billing-print-column-amount">
+                <col class="billing-print-column-status">
+                <col class="billing-print-column-payment">
+                <col class="billing-print-column-receipt">
+            </colgroup>
             <thead>
                 <tr>
                     <th>Bill Number</th>
@@ -170,14 +185,17 @@
         @php($balance = max(0, (float) $bill->total - $paid))
         <article class="billing-print-paper" id="bill-print-{{ $bill->id }}">
             <header class="bill-print-header">
-                <h1>{{ config('clinic.name') }}</h1>
-                @if (config('clinic.address') !== 'Clinic address not configured')
-                    <p>{{ config('clinic.address') }}</p>
-                @endif
-                @if (config('clinic.phone') !== 'Clinic contact not configured')
-                    <p>{{ config('clinic.phone') }}</p>
-                @endif
-                <h2>Bill / Payment Receipt</h2>
+                <img class="bill-print-logo" src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="Doc Brigs Dental Care logo">
+                <div class="bill-print-brand">
+                    <h1>{{ config('clinic.name') }}</h1>
+                    @if (config('clinic.address') !== 'Clinic address not configured')
+                        <p>{{ config('clinic.address') }}</p>
+                    @endif
+                    @if (config('clinic.phone') !== 'Clinic contact not configured')
+                        <p>{{ config('clinic.phone') }}</p>
+                    @endif
+                    <h2>Bill / Payment Receipt</h2>
+                </div>
             </header>
 
             <section class="bill-print-details">
@@ -261,7 +279,26 @@
         };
 
         let printInProgress = false;
-        const beginBillPrint = (mode, papers = []) => {
+        const preparePrintImages = async (container) => {
+            const images = Array.from(container.querySelectorAll('img'));
+
+            await Promise.all(images.map(async (image) => {
+                if (!image.complete) {
+                    await new Promise((resolve, reject) => {
+                        image.addEventListener('load', resolve, { once: true });
+                        image.addEventListener('error', () => reject(new Error('The clinic logo could not be loaded.')), { once: true });
+                    });
+                }
+
+                if (image.naturalWidth === 0) {
+                    throw new Error('The clinic logo could not be loaded.');
+                }
+
+                await image.decode();
+            }));
+        };
+
+        const beginBillPrint = async (mode, printContent, papers = []) => {
             if (printInProgress) {
                 return false;
             }
@@ -272,12 +309,25 @@
             document.querySelectorAll('[data-print-bill], [data-print-all-bills]').forEach((button) => {
                 button.disabled = true;
             });
-            window.print();
+
+            try {
+                await preparePrintImages(printContent);
+                window.print();
+            } catch (error) {
+                console.error(error);
+                clearBillPrintSelection();
+                printInProgress = false;
+                document.querySelectorAll('[data-print-bill], [data-print-all-bills]').forEach((button) => {
+                    button.disabled = false;
+                });
+                window.alert('The clinic logo could not be loaded, so the document was not printed. Please try again.');
+            }
+
             return true;
         };
 
         document.querySelector('[data-print-all-bills]').addEventListener('click', () => {
-            beginBillPrint('printing-all-bills');
+            beginBillPrint('printing-all-bills', document.querySelector('[data-billing-print-report]'));
         });
 
         document.querySelectorAll('[data-print-bill]').forEach((button) => {
@@ -288,7 +338,7 @@
                     throw new Error('The selected bill print layout could not be found.');
                 }
 
-                beginBillPrint('printing-single-bill', [paper]);
+                beginBillPrint('printing-single-bill', paper, [paper]);
             });
         });
 
