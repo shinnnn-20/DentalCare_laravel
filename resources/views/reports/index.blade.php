@@ -5,18 +5,28 @@
 @section('content')
     <div class="clinic-report-page">
         <div class="mb-8 flex flex-wrap items-end justify-between gap-4 print-hidden">
-            <div><p class="text-sm font-medium text-teal-700">Administration</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Clinic reports</h1><p class="mt-2 text-slate-500">Summary for {{ $from }} through {{ $to }}.</p></div>
+            <div><p class="text-sm font-medium text-teal-700">Administration</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Clinic reports</h1><p class="mt-2 text-slate-500">Summary for {{ $from }} through {{ $to }} · {{ $selectedBranchName }}.</p></div>
             <button class="btn-secondary" onclick="window.print()">Print / save PDF</button>
         </div>
         <form method="GET" class="mb-6 flex flex-wrap items-end gap-4 rounded-2xl border border-slate-200 bg-white p-5 print-hidden">
             <label class="form-label">From<input class="form-input" type="date" name="from" value="{{ $from }}" required></label>
             <label class="form-label">To<input class="form-input" type="date" name="to" value="{{ $to }}" required></label>
+            <label class="form-label">Branch
+                <select class="form-input min-w-48" name="branch_id">
+                    <option value="" @selected($selectedBranchId === null)>All branches</option>
+                    @foreach ($branches as $branch)
+                        <option value="{{ $branch->id }}" @selected((string) $selectedBranchId === (string) $branch->id)>{{ $branch->name }}</option>
+                    @endforeach
+                    <option value="unassigned" @selected($selectedBranchId === 'unassigned')>Unassigned appointments</option>
+                </select>
+            </label>
             <button class="btn-primary">Apply range</button>
         </form>
-        <header class="report-print-header">
+        <header class="report-print-header" data-report-branch="{{ $selectedBranchName }}">
             <p class="text-sm font-semibold uppercase tracking-[0.16em] text-teal-800">{{ config('clinic.name') }}</p>
             <h1 class="mt-2 text-2xl font-bold">Clinic Activity Report</h1>
             <p class="mt-2 text-sm">Reporting period: <strong>{{ \Illuminate\Support\Carbon::parse($from)->format('F j, Y') }}</strong> through <strong>{{ \Illuminate\Support\Carbon::parse($to)->format('F j, Y') }}</strong></p>
+            <p class="mt-1 text-sm">Branch: <strong>{{ $selectedBranchName }}</strong></p>
             <p class="mt-1 text-xs text-slate-500">{{ config('clinic.address') }} · {{ config('clinic.phone') }}</p>
         </header>
         <div class="report-cards grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

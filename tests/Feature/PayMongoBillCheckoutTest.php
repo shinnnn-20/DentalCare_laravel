@@ -523,7 +523,7 @@ class PayMongoBillCheckoutTest extends TestCase
         $this->assertDatabaseCount('receipts', 1);
         $this->assertDatabaseHas('receipts', [
             'payment_id' => 2,
-            'receipt_number' => 'OR-'.now()->setTimestamp($paidAtTimestamp)->format('Y').'-000001',
+            'receipt_number' => 'AR-'.now()->setTimestamp($paidAtTimestamp)->format('Y').'-000001',
         ]);
         $this->assertDatabaseHas('bills', [
             'id' => $bill->id,
@@ -548,7 +548,17 @@ class PayMongoBillCheckoutTest extends TestCase
             ->assertSee('pay_bill_test_123')
             ->assertSee('cs_bill_test_webhook');
 
-        $this->get(route('clinic.billing.index'))
+        $this->actingAs($bill->patient->user)
+            ->get(route('patient.billing.receipts.preview', ['bill' => $bill, 'receipt' => $receipt]))
+            ->assertSee('Payment Receipt Preview')
+            ->assertSee('PayMongo test mode')
+            ->assertDontSee('data-print-receipt', false)
+            ->assertDontSee('Print / save PDF')
+            ->assertDontSee('pay_bill_test_123')
+            ->assertDontSee('cs_bill_test_webhook')
+            ->assertDontSee($receipt->payment->transaction_id);
+
+        $this->actingAs($staff)->get(route('clinic.billing.index'))
             ->assertSee('PayMongo TEST MODE')
             ->assertSee('pay_bill_test_123')
             ->assertSee($receipt->receipt_number);

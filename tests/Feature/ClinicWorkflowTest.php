@@ -188,13 +188,13 @@ class ClinicWorkflowTest extends TestCase
 
         $this->actingAs($actor)
             ->post($transitionUrl)
-            ->assertRedirect(route('appointments.index', $filters).'#appointment-'.$appointment->id)
+            ->assertRedirect(route('clinic.appointment-records', $filters).'#appointment-'.$appointment->id)
             ->assertSessionHas('status', 'Appointment updated to in consultation.');
 
         $this->assertDatabaseHas('appointments', ['id' => $appointment->id, 'status' => 'in_consultation']);
         $this->assertDatabaseHas('queue_entries', ['appointment_id' => $appointment->id, 'status' => 'in_consultation']);
 
-        $this->get(route('appointments.index', $filters))
+        $this->get(route('clinic.appointment-records', $filters))
             ->assertSee('id="appointment-'.$appointment->id.'"', false)
             ->assertSee('bg-amber-50')
             ->assertSee('Dental record')
@@ -233,7 +233,7 @@ class ClinicWorkflowTest extends TestCase
             'prescription' => 'Use fluoride rinse',
             'follow_up_date' => now()->addMonth()->toDateString(),
         ])
-            ->assertRedirect(route('appointments.index', $listFilters).'#appointment-'.$appointment->id)
+            ->assertRedirect(route('clinic.appointment-records', $listFilters).'#appointment-'.$appointment->id)
             ->assertSessionHas('status', 'Dental record saved.');
 
         $this->assertDatabaseHas('dental_records', [
@@ -243,14 +243,14 @@ class ClinicWorkflowTest extends TestCase
         ]);
         $this->assertDatabaseCount('bills', 0);
 
-        $this->get(route('appointments.index', $listFilters))
+        $this->get(route('clinic.appointment-records', $listFilters))
             ->assertSee('id="appointment-'.$appointment->id.'"', false)
             ->assertSee('bg-amber-50')
             ->assertSee('Create bill')
             ->assertDontSee('id="appointment-'.$otherAppointment->id.'"', false);
 
         $this->get(route('clinic.records.create', ['appointment' => $appointment->id, ...$filters]))
-            ->assertRedirect(route('appointments.index', $listFilters).'#appointment-'.$appointment->id)
+            ->assertRedirect(route('clinic.appointment-records', $listFilters).'#appointment-'.$appointment->id)
             ->assertSessionHas('status', 'A dental record already exists for this appointment.');
 
         $this->assertDatabaseCount('dental_records', 1);
@@ -783,7 +783,7 @@ class ClinicWorkflowTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->get(route('appointments.index'))
+            ->get(route('clinic.appointment-records'))
             ->assertSee('Reschedule')
             ->assertSee('name="appointment_date"', false)
             ->assertDontSee('Appointments must be rescheduled at least one calendar day in advance.');
@@ -833,7 +833,9 @@ class ClinicWorkflowTest extends TestCase
 
         $this->actingAs($doctor)
             ->get(route('dashboard'))
-            ->assertRedirectToRoute('appointments.index');
+            ->assertOk()
+            ->assertSee('Clinic overview')
+            ->assertSee('data-dashboard-detail="today_appointments"', false);
 
         $this->actingAs($doctor)
             ->get(route('appointments.index'))
@@ -944,7 +946,7 @@ class ClinicWorkflowTest extends TestCase
             'record_id' => (string) $appointment->id,
         ]);
         $this->actingAs($staff)
-            ->get(route('appointments.index'))
+            ->get(route('clinic.appointment-records'))
             ->assertSee('<details class="min-w-0">', false)
             ->assertSee('<summary class="btn-small cursor-pointer list-none text-teal-800">Reschedule</summary>', false)
             ->assertSee('name="appointment_date"', false)
@@ -1003,7 +1005,7 @@ class ClinicWorkflowTest extends TestCase
             'amount' => 6500,
             'applied_amount' => 6500,
         ]);
-        Receipt::factory()->for($payment)->create(['receipt_number' => 'OR-2026-PRINT01']);
+        Receipt::factory()->for($payment)->create(['receipt_number' => 'AR-2026-PRINT01']);
         BillItem::factory()->for($bill)->create([
             'service_name' => 'Dental Cleaning',
             'quantity' => 1,
@@ -1031,18 +1033,20 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('Amount Paid')
             ->assertSee('Remaining Balance')
             ->assertSee('Payment Status')
-            ->assertSee('OR / Receipt Number')
+            ->assertSee('AR / Receipt Number')
             ->assertSee('B-2026-PRINT01')
             ->assertSee('B-2026-PRINT02')
             ->assertSee('data-print-bill="bill-print-'.$bill->id.'"', false)
             ->assertSee('data-print-bill="bill-print-'.$otherBill->id.'"', false)
             ->assertSee('id="bill-print-'.$bill->id.'"', false)
             ->assertSee('id="bill-print-'.$otherBill->id.'"', false)
+            ->assertSee('ACKNOWLEDGEMENT RECEIPT (AR) ONLY')
+            ->assertSee('ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.')
             ->assertSee($bill->patient->user->name)
             ->assertSee($bill->patient->patient_number)
             ->assertSee('Dental Cleaning')
             ->assertSee('CASH')
-            ->assertSee('OR-2026-PRINT01')
+            ->assertSee('AR-2026-PRINT01')
             ->assertSee('₱6,500.00')
             ->assertSee('Doc Brigs Dental Care');
     }
@@ -1200,7 +1204,7 @@ class ClinicWorkflowTest extends TestCase
                 'patient_id' => $patient->id,
                 'service_id' => $service->id,
             ])
-            ->assertRedirectToRoute('appointments.index');
+            ->assertRedirectToRoute('clinic.appointment-records');
 
         $appointment = Appointment::firstOrFail();
         $this->assertSame('checked_in', $appointment->status);
@@ -1216,7 +1220,7 @@ class ClinicWorkflowTest extends TestCase
                 'diagnosis' => 'Routine examination',
                 'treatment' => 'Cleaning completed',
             ])
-            ->assertRedirect(route('appointments.index', [
+            ->assertRedirect(route('clinic.appointment-records', [
                 'date' => $appointment->starts_at->toDateString(),
                 'status' => 'in_consultation',
                 'appointment_id' => $appointment->id,
@@ -1248,7 +1252,16 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107')
             ->assertSee('0917 160 0541');
 
-        $this->post(route('clinic.payments.store', $bill), [
+        $this->actingAs($patientUser)
+            ->post(route('clinic.payments.store', $bill), [
+                'method' => 'cash',
+                'amount' => '1,800.00',
+                'applied_amount' => '1,800.00',
+            ])
+            ->assertForbidden();
+        $this->assertDatabaseCount('payments', 0);
+
+        $this->actingAs($staff)->post(route('clinic.payments.store', $bill), [
             'method' => 'cash',
             'amount' => '2,000.00',
             'applied_amount' => '1,800.00',
@@ -1262,8 +1275,25 @@ class ClinicWorkflowTest extends TestCase
         ]);
         $this->assertDatabaseHas('bills', ['id' => $bill->id, 'payment_status' => 'paid']);
         $this->assertDatabaseHas('appointments', ['id' => $appointment->id, 'status' => 'billed']);
+        $this->actingAs($patientUser)
+            ->get(route('patient.billing'))
+            ->assertSee('Bill Details')
+            ->assertSee('Dental Cleaning')
+            ->assertSee('Bill date')
+            ->assertSee('Total amount')
+            ->assertSee('₱1,800.00')
+            ->assertSee('Amount paid')
+            ->assertSee('Remaining balance')
+            ->assertSee('₱0.00')
+            ->assertSee('Paid')
+            ->assertSee('Payment history')
+            ->assertSee('Cash payment')
+            ->assertSee('Payment date')
+            ->assertSee('Preview Payment Receipt')
+            ->assertDontSee($bill->bill_number)
+            ->assertDontSee('Print / save PDF');
         $this->actingAs($staff)
-            ->get(route('appointments.index'))
+            ->get(route('clinic.appointment-records'))
             ->assertSee('Complete');
         $this->post(route('appointments.transition', [$appointment, 'complete']))
             ->assertSessionHasNoErrors();
@@ -1272,7 +1302,7 @@ class ClinicWorkflowTest extends TestCase
             ->post(route('appointments.transition', [$appointment, 'complete']))
             ->assertSessionHasErrors('status');
         $this->actingAs($admin)
-            ->get(route('appointments.index'))
+            ->get(route('clinic.appointment-records'))
             ->assertSee('View bill')
             ->assertSee(route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id, false);
         $otherBill = Bill::factory()->create();
@@ -1290,13 +1320,34 @@ class ClinicWorkflowTest extends TestCase
             DB::table('sms_logs')->where('type', 'payment')->value('message'),
         );
 
-        $this->actingAs($patientUser)->get(route('receipts.show', $receipt))->assertOk();
-        $this->get(route('receipts.show', $receipt))
-            ->assertSee('data-print-receipt', false)
+        $this->actingAs($patientUser)
+            ->get(route('patient.billing.receipts.preview', ['bill' => $bill, 'receipt' => $receipt]))
+            ->assertOk()
+            ->assertSee('Payment Receipt Preview')
+            ->assertSee('Payment date')
+            ->assertSee('Payment method:')
+            ->assertSee('Amount applied')
+            ->assertSee($receipt->receipt_number)
+            ->assertDontSee('data-print-receipt', false)
+            ->assertDontSee('Print / save PDF')
+            ->assertDontSee($bill->bill_number)
+            ->assertDontSee($receipt->payment->transaction_id)
             ->assertSee('Doc Brigs Dental Care')
+            ->assertSee(asset('images/landing/doc-brigs-logo.png'))
+            ->assertSee('ACKNOWLEDGEMENT RECEIPT (AR) ONLY')
+            ->assertSee('ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.')
             ->assertSee('Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107')
             ->assertSee('0917 160 0541')
             ->assertDontSee('onclick="window.print()"', false);
+        $this->actingAs($patientUser)
+            ->get(route('receipts.show', $receipt))
+            ->assertNotFound();
+        $this->actingAs($admin)
+            ->get(route('receipts.show', $receipt))
+            ->assertSee('data-print-receipt', false)
+            ->assertSee('Print / save PDF')
+            ->assertSee($receipt->payment->transaction_id)
+            ->assertSee($bill->bill_number);
         $otherPatient = User::factory()->create(['role' => 'patient']);
         $this->actingAs($otherPatient)->get(route('receipts.show', $receipt))->assertNotFound();
     }
@@ -1318,7 +1369,25 @@ class ClinicWorkflowTest extends TestCase
         ]);
         $unrelatedAppointment = Appointment::factory()->for($otherPatient)->for($unrelatedService)->create();
         DentalRecord::factory()->for($patient)->for($unrelatedAppointment)->create();
-        $bill = Bill::factory()->for($patient)->for($appointment)->create(['total' => 3850]);
+        $unrelatedBill = Bill::factory()->for($otherPatient)->for($unrelatedAppointment)->create([
+            'bill_number' => 'B-OTHER-PATIENT',
+        ]);
+        $unrelatedBill->items()->create([
+            'service_id' => $unrelatedService->id,
+            'service_name' => 'Other patient bill item',
+            'quantity' => 1,
+            'unit_price' => 900,
+            'subtotal' => 900,
+        ]);
+        $bill = Bill::factory()->for($patient)->for($appointment)->create([
+            'total' => 3850,
+            'payment_status' => 'partially_paid',
+        ]);
+        $payment = Payment::factory()->for($bill)->create([
+            'amount' => 1000,
+            'applied_amount' => 1000,
+        ]);
+        $receipt = Receipt::factory()->for($payment)->create();
         $bill->items()->createMany([
             [
                 'service_id' => $service->id,
@@ -1338,12 +1407,27 @@ class ClinicWorkflowTest extends TestCase
 
         $this->actingAs($patient->user)
             ->get(route('patient.billing'))
+            ->assertSee('ACKNOWLEDGEMENT RECEIPT (AR) ONLY')
+            ->assertSee('ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.')
             ->assertSee('Patient-specific cleaning')
             ->assertSee('Historical bill item')
             ->assertDontSee('Other patient procedure')
+            ->assertDontSee('Other patient bill item')
             ->assertSee('Patient-specific cleaning × 2')
             ->assertSee('(₱1,800.00 each)')
-            ->assertSee('₱3,600.00');
+            ->assertSee('₱3,600.00')
+            ->assertSee('Bill Details')
+            ->assertSee('Bill date')
+            ->assertSee('Total amount')
+            ->assertSee('Amount paid')
+            ->assertSee('Remaining balance')
+            ->assertSee('Partially Paid')
+            ->assertSee('₱1,000.00')
+            ->assertSee('₱2,850.00')
+            ->assertSee('Payment history')
+            ->assertSee('Preview Payment Receipt')
+            ->assertSee(route('patient.billing.receipts.preview', ['bill' => $bill, 'receipt' => $receipt]), false)
+            ->assertDontSee('B-2026-');
 
         $this->get(route('patient.records'))
             ->assertSee('Services Performed')
@@ -1642,21 +1726,21 @@ class ClinicWorkflowTest extends TestCase
             ->get(route('dashboard'))
             ->assertSee('href="'.route('appointments.index').'"', false);
 
-        $this->get(route('appointments.index'))
+        $this->get(route('clinic.appointment-records'))
             ->assertSee('value=""', false)
             ->assertSee('Sep 13, 2026')
             ->assertSee('Oct 1, 2026')
             ->assertSee('Oct 2, 2026')
             ->assertSee('Oct 3, 2026');
 
-        $this->get(route('appointments.index').'?date=')
+        $this->get(route('clinic.appointment-records').'?date=')
             ->assertSee('value=""', false)
             ->assertSee('Sep 13, 2026')
             ->assertSee('Oct 1, 2026')
             ->assertSee('Oct 2, 2026')
             ->assertSee('Oct 3, 2026');
 
-        $this->get(route('appointments.index', ['date' => '2026-10-01']))
+        $this->get(route('clinic.appointment-records', ['date' => '2026-10-01']))
             ->assertSee('Oct 1, 2026')
             ->assertDontSee('Sep 13, 2026')
             ->assertDontSee('Oct 2, 2026');
@@ -1718,7 +1802,7 @@ class ClinicWorkflowTest extends TestCase
                 'diagnosis' => 'Routine check',
                 'treatment' => 'No charge',
             ])
-            ->assertRedirect(route('appointments.index', [
+            ->assertRedirect(route('clinic.appointment-records', [
                 'date' => $appointment->starts_at->toDateString(),
                 'status' => 'in_consultation',
                 'appointment_id' => $appointment->id,

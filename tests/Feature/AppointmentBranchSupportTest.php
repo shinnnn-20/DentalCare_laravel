@@ -41,7 +41,7 @@ class AppointmentBranchSupportTest extends TestCase
         ]);
 
         $this->actingAs($user)
-            ->get(route('appointments.index', [
+            ->get(route('clinic.appointment-records', [
                 'branch_id' => $generalTrias->id,
                 'date' => '2026-10-26',
                 'status' => 'pending',
@@ -52,17 +52,83 @@ class AppointmentBranchSupportTest extends TestCase
             ->assertSee('data-label="Branch"', false)
             ->assertSee('General Trias Branch')
             ->assertViewHas('appointments', fn ($appointments): bool => $appointments->total() === 1
-                && $appointments->getCollection()->sole()->is($matching));
+                && $appointments->getCollection()->sole()->id === $matching->id);
 
         $this->actingAs($user)
-            ->get(route('appointments.index', ['branch_id' => 'unassigned']))
+            ->get(route('clinic.appointment-records', ['branch_id' => 'unassigned']))
             ->assertOk()
             ->assertViewHas('appointments', fn ($appointments): bool => $appointments->total() === 1
-                && $appointments->getCollection()->sole()->is($unassigned));
+                && $appointments->getCollection()->sole()->id === $unassigned->id);
 
         $this->actingAs($user)
-            ->get(route('appointments.index'))
+            ->get(route('clinic.appointment-records', ['search' => (string) $matching->id]))
+            ->assertViewHas('appointments', fn ($appointments): bool => $appointments->getCollection()
+                ->contains(fn (Appointment $appointment): bool => $appointment->id === $matching->id));
+
+        $this->actingAs($user)
+            ->get(route('clinic.appointment-records', ['search' => 'Branch Search Cleaning']))
             ->assertViewHas('appointments', fn ($appointments): bool => $appointments->total() === 3);
+
+        $this->actingAs($user)
+            ->get(route('clinic.appointment-records'))
+            ->assertViewHas('appointments', fn ($appointments): bool => $appointments->total() === 3);
+    }
+
+    public function test_staff_appointment_records_are_separated_and_ordered_by_workflow_status(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = Patient::factory()->for(User::factory()->create(['name' => 'Records Patient']))->create();
+        $service = Service::factory()->create(['name' => 'Records Cleaning']);
+        $ongoingAppointments = collect([
+            ['checked_in', '2026-10-20 10:00:00'],
+            ['waiting', '2026-10-20 10:30:00'],
+            ['in_consultation', '2026-10-20 11:00:00'],
+            ['billed', '2026-10-20 11:30:00'],
+        ])->map(fn (array $appointment): Appointment => Appointment::factory()
+            ->for($patient)
+            ->for($service)
+            ->create([
+                'status' => $appointment[0],
+                'starts_at' => $appointment[1],
+            ]));
+        $pending = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'pending',
+            'starts_at' => '2026-11-02 10:00:00',
+        ]);
+        $completed = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'completed',
+            'starts_at' => '2026-11-04 10:00:00',
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('appointments.index'))
+            ->assertSee('Appointment Records')
+            ->assertSee('Select Dental Treatment')
+            ->assertDontSee('Filter by Branch')
+            ->assertDontSee('id="appointment-'.$pending->id.'"', false);
+
+        $response = $this->get(route('clinic.appointment-records'));
+        $expectedOngoingRows = $ongoingAppointments
+            ->sortByDesc('starts_at')
+            ->map(fn (Appointment $appointment): string => 'id="appointment-'.$appointment->id.'"')
+            ->all();
+        $response->assertSeeInOrder([
+            'Ongoing Appointments',
+            ...$expectedOngoingRows,
+            'Pending Appointments',
+            'id="appointment-'.$pending->id.'"',
+            'Other Appointments',
+            'id="appointment-'.$completed->id.'"',
+        ], false)
+            ->assertSee('Approve')
+            ->assertSee('Reject')
+            ->assertSee('overflow-x-auto');
+
+        $this->assertDatabaseCount('appointments', 6);
+
+        $this->actingAs(User::factory()->create(['role' => 'doctor']))
+            ->get(route('clinic.appointment-records'))
+            ->assertForbidden();
     }
 
     public static function clinicStaffRoles(): array
@@ -203,8 +269,10 @@ class AppointmentBranchSupportTest extends TestCase
             ->assertSee('General Trias Branch')
             ->assertSee('Dasmariñas Branch')
             ->assertSee('Trece Branch')
-            ->assertSee('Not Assigned')
             ->assertSee('name="branch_id"', false);
+
+        $this->get(route('clinic.appointment-records'))
+            ->assertSee('Not Assigned');
     }
 
     public function test_booking_rejects_a_branch_that_does_not_exist(): void

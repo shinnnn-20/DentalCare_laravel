@@ -1,15 +1,15 @@
 @extends('layouts.app')
 
-@section('title', 'Appointments')
+@section('title', $isAppointmentRecordsPage ? 'Appointment Records' : 'Appointments')
 
 @section('content')
     <div class="mb-8">
         <p class="text-sm font-medium text-teal-700">{{ auth()->user()->role === 'patient' ? 'Patient portal' : 'Clinic operations' }}</p>
-        <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Appointments</h1>
-        <p class="mt-2 text-slate-500">{{ auth()->user()->role === 'patient' ? 'Request an appointment and track its approval status.' : 'Review online bookings, add walk-ins, and manage the clinic schedule.' }}</p>
+        <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">{{ $isAppointmentRecordsPage ? 'Appointment Records' : 'Appointments' }}</h1>
+        <p class="mt-2 text-slate-500">{{ $isAppointmentRecordsPage ? 'Review ongoing visits, pending requests, and appointment history.' : (auth()->user()->role === 'patient' ? 'Request an appointment and track its approval status.' : (auth()->user()->hasRole('admin', 'staff') ? 'Schedule appointments and register walk-ins. Manage existing records in Appointment Records.' : 'Review online bookings, add walk-ins, and manage the clinic schedule.')) }}</p>
     </div>
 
-    @if (auth()->user()->role === 'patient' || auth()->user()->hasRole('admin', 'staff'))
+    @if (! $isAppointmentRecordsPage && (auth()->user()->role === 'patient' || auth()->user()->hasRole('admin', 'staff')))
         <section class="mb-8 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div class="border-b border-slate-100 bg-gradient-to-r from-teal-50 via-white to-white px-5 py-5 sm:px-7">
                 <div class="flex items-start gap-3">
@@ -190,14 +190,15 @@
         </section>
     @endif
 
-    @if ($highlightedAppointmentId !== null)
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-            <p>This visit is highlighted. Open its dental record or create a bill from the appointment actions.</p>
-            <a class="font-semibold text-amber-900 underline underline-offset-2" href="{{ route('appointments.index', collect(request()->query())->except(['appointment_id', 'page'])->all()) }}">Dismiss highlight</a>
-        </div>
-    @endif
+    @if (! auth()->user()->hasRole('admin', 'staff') || $isAppointmentRecordsPage)
+        @if ($highlightedAppointmentId !== null)
+            <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                <p>This visit is highlighted. Open its dental record or create a bill from the appointment actions.</p>
+                <a class="font-semibold text-amber-900 underline underline-offset-2" href="{{ route($isAppointmentRecordsPage ? 'clinic.appointment-records' : 'appointments.index', collect(request()->query())->except(['appointment_id', 'page'])->all()) }}">Dismiss highlight</a>
+            </div>
+        @endif
     <section class="rounded-2xl border border-slate-200 bg-white">
-        <form method="GET" class="grid gap-3 border-b border-slate-100 bg-slate-50/60 p-4 sm:flex sm:flex-wrap sm:items-end sm:p-5">
+        <form method="GET" action="{{ route($isAppointmentRecordsPage ? 'clinic.appointment-records' : 'appointments.index') }}" class="grid gap-3 border-b border-slate-100 bg-slate-50/60 p-4 sm:flex sm:flex-wrap sm:items-end sm:p-5">
             <label class="form-label sm:min-w-48">Filter by Branch
                 <select class="form-input" name="branch_id">
                     <option value="">All Branches</option>
@@ -216,15 +217,21 @@
                 <input class="form-input" type="search" name="search" value="{{ request('search') }}" maxlength="100" placeholder="Patient, service, or ID">
             </label>
             <label class="form-label sm:min-w-48">Status
-                <select class="form-input" name="status"><option value="">All statuses</option>@foreach (['pending', 'approved', 'checked_in', 'waiting', 'in_consultation', 'billed', 'completed', 'cancelled', 'no_show'] as $status)<option value="{{ $status }}" @selected(request('status') === $status)>{{ str_replace('_', ' ', ucfirst($status)) }}</option>@endforeach</select>
+                <select class="form-input" name="status"><option value="">All statuses</option>@foreach (['pending', 'approved', 'rejected', 'checked_in', 'waiting', 'in_consultation', 'billed', 'completed', 'cancelled', 'no_show'] as $status)<option value="{{ $status }}" @selected(request('status') === $status)>{{ str_replace('_', ' ', ucfirst($status)) }}</option>@endforeach</select>
             </label>
             <button class="btn-secondary self-end">Filter</button>
         </form>
-        <div class="overflow-x-auto">
+        <div class="space-y-5 p-4 sm:p-5">
+        @foreach ($appointmentSections as $sectionTitle => $sectionAppointments)
+            @if ($isAppointmentRecordsPage)
+                <section>
+                    <h2 class="mb-3 text-lg font-semibold text-slate-900">{{ $sectionTitle }}</h2>
+            @endif
+            <div class="overflow-x-auto">
             <table class="data-table">
                 <thead><tr><th>Date & time</th>@if (auth()->user()->hasRole('admin', 'staff', 'doctor'))<th>Patient</th>@endif<th>Branch</th><th>Service</th><th>Type</th><th>Status</th><th>Queue</th><th>Actions</th></tr></thead>
                 <tbody>
-                @forelse ($appointments as $appointment)
+                @forelse ($sectionAppointments as $appointment)
                     <tr id="appointment-{{ $appointment->id }}" @class(['bg-amber-50 outline outline-2 outline-amber-400 outline-offset-[-2px]' => $highlightedAppointmentId === $appointment->id]) @if ($highlightedAppointmentId === $appointment->id) aria-current="true" @endif>
                         <td data-label="Date & time">
                             <span class="inline-flex flex-col gap-1 whitespace-nowrap">
@@ -334,13 +341,19 @@
                         </div></td>
                     </tr>
                 @empty
-                    <tr><td colspan="{{ auth()->user()->hasRole('admin', 'staff', 'doctor') ? 8 : 7 }}" class="py-10 text-center text-slate-500">No appointments match these filters.</td></tr>
+                    <tr><td colspan="{{ auth()->user()->hasRole('admin', 'staff', 'doctor') ? 8 : 7 }}" class="py-10 text-center text-slate-500">{{ $isAppointmentRecordsPage ? 'No appointments in this section match these filters.' : 'No appointments match these filters.' }}</td></tr>
                 @endforelse
                 </tbody>
             </table>
+            </div>
+            @if ($isAppointmentRecordsPage)
+                </section>
+            @endif
+        @endforeach
+            <div>{{ $appointments->links() }}</div>
         </div>
-        <div class="p-4">{{ $appointments->links() }}</div>
     </section>
+    @endif
     <script>
         document.querySelectorAll('[data-appointment-schedule-form]').forEach((form) => {
             const dateInput = form.querySelector('[data-appointment-date]');

@@ -1,6 +1,10 @@
 <a @class(['nav-link', 'nav-link-active' => request()->routeIs('dashboard')]) href="{{ route('dashboard') }}" @if (request()->routeIs('dashboard')) aria-current="page" @endif>Overview</a>
 <a @class(['nav-link', 'nav-link-active' => request()->routeIs('appointments.*', 'clinic.appointments.*')]) href="{{ route('appointments.index') }}" @if (request()->routeIs('appointments.*', 'clinic.appointments.*')) aria-current="page" @endif>Appointments</a>
+@if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
+    <a @class(['nav-link', 'nav-link-active' => request()->routeIs('clinic.availability.*')]) href="{{ route('clinic.availability.index') }}" @if (request()->routeIs('clinic.availability.*')) aria-current="page" @endif>Appointment availability</a>
+@endif
 @if (auth()->user()->hasRole('admin', 'staff'))
+    <a @class(['nav-link', 'nav-link-active' => request()->routeIs('clinic.appointment-records')]) href="{{ route('clinic.appointment-records') }}" @if (request()->routeIs('clinic.appointment-records')) aria-current="page" @endif>Appointment Records</a>
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('clinic.patients.*')]) href="{{ route('clinic.patients.index') }}" @if (request()->routeIs('clinic.patients.*')) aria-current="page" @endif>Patients</a>
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('clinic.queue.*')]) href="{{ route('clinic.queue.index') }}" @if (request()->routeIs('clinic.queue.*')) aria-current="page" @endif>Patient queue</a>
     <a @class(['nav-link', 'nav-link-active' => request()->routeIs('clinic.rfid.index')]) href="{{ route('clinic.rfid.index') }}" @if (request()->routeIs('clinic.rfid.index')) aria-current="page" @endif>RFID cards</a>

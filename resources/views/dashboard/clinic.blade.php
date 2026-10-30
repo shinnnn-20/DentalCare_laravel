@@ -9,27 +9,9 @@
             <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Clinic overview</h1>
             <p class="mt-2 text-slate-500">A quick view of today's clinic activity.</p>
         </div>
-        <a href="{{ route('appointments.index') }}" class="btn-primary">View appointments</a>
-    </div>
-
-    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        @foreach ($metrics as [$label, $value, $hint])
-        <article class="stat-card">
-                <p class="text-sm font-medium text-slate-500">{{ $label }}</p>
-                <p class="mt-3 text-3xl font-bold text-slate-900">{{ $value }}</p>
-                <p class="mt-2 text-xs text-slate-400">{{ $hint }}</p>
-            </article>
-        @endforeach
-    </div>
-
-    @if ($isAdmin)
-        <section class="mt-8" data-admin-statistics>
-            <div class="mb-4 flex flex-wrap items-end justify-between gap-4">
-                <div>
-                    <h2 class="text-xl font-bold text-slate-900">Clinic statistics</h2>
-                    <p class="mt-1 text-sm text-slate-500">Appointments and recorded payments · {{ $statistics['rangeLabel'] }}</p>
-                </div>
-                <form method="GET" action="{{ route('dashboard') }}" class="flex flex-wrap items-end gap-2">
+        <div class="flex flex-wrap items-end gap-3">
+            <form method="GET" action="{{ route('dashboard') }}" class="flex flex-wrap items-end gap-2">
+                @if ($isAdmin)
                     <label class="form-label">Statistics period
                         <select class="form-input min-w-40" name="statistics_period">
                             <option value="week" @selected($statistics['period'] === 'week')>Last 7 days</option>
@@ -37,8 +19,104 @@
                             <option value="year" @selected($statistics['period'] === 'year')>Last 12 months</option>
                         </select>
                     </label>
-                    <button class="btn-primary" type="submit">Update graphs</button>
-                </form>
+                @endif
+                <label class="form-label">Branch
+                    <select class="form-input min-w-48" name="branch_id">
+                        <option value="" @selected($selectedBranchId === null)>All branches</option>
+                        @foreach ($branches as $branch)
+                            <option value="{{ $branch->id }}" @selected((string) $selectedBranchId === (string) $branch->id)>{{ $branch->name }}</option>
+                        @endforeach
+                        <option value="unassigned" @selected($selectedBranchId === 'unassigned')>Unassigned appointments</option>
+                    </select>
+                </label>
+                <button class="btn-secondary" type="submit">Apply filters</button>
+            </form>
+            <a href="{{ route('appointments.index') }}" class="btn-primary">View appointments</a>
+        </div>
+    </div>
+
+    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        @foreach ($metrics as [$label, $value, $hint, $detailKey])
+            @if ($detailKey === null)
+                <article class="stat-card">
+                    <p class="text-sm font-medium text-slate-500">{{ $label }}</p>
+                    <p class="mt-3 text-3xl font-bold text-slate-900">{{ $value }}</p>
+                    <p class="mt-2 text-xs text-slate-400">{{ $hint }}</p>
+                </article>
+            @else
+                <article class="stat-card p-0 transition hover:border-teal-300 hover:shadow-md focus-within:ring-2 focus-within:ring-teal-200">
+                    <button class="block w-full rounded-2xl p-5 text-left focus:outline-none" type="button" data-dashboard-detail="{{ $detailKey }}" aria-haspopup="dialog">
+                        <span class="block text-sm font-medium text-slate-500">{{ $label }}</span>
+                        <span class="mt-3 block text-3xl font-bold text-slate-900">{{ $value }}</span>
+                        <span class="mt-2 block text-xs text-slate-400">{{ $hint }}</span>
+                        <span class="mt-3 block text-xs font-semibold text-teal-800">View Details</span>
+                    </button>
+                </article>
+            @endif
+        @endforeach
+    </div>
+
+    <dialog class="m-auto max-h-[90dvh] w-[min(72rem,calc(100vw-2rem))] overflow-hidden rounded-2xl p-0 shadow-2xl backdrop:bg-slate-950/50" data-dashboard-details data-url="{{ route('dashboard.details') }}" data-branch="{{ $selectedBranchId ?? '' }}" data-default-appointment-branch="{{ $selectedBranchId ?? 'all' }}" data-period="{{ $isAdmin ? $statistics['period'] : '' }}">
+        <section class="flex max-h-[90dvh] flex-col bg-white">
+            <header class="flex items-start justify-between gap-4 border-b border-slate-200 p-5 sm:p-6">
+                <div>
+                    <h2 class="text-xl font-bold text-slate-900" data-details-title>Statistics details</h2>
+                    <p class="mt-1 text-sm text-slate-500" data-details-count aria-live="polite"></p>
+                </div>
+                <button class="btn-secondary shrink-0" type="button" data-details-close>Close</button>
+            </header>
+            <div class="hidden grid gap-3 border-b border-slate-200 px-4 py-3 sm:grid-cols-2 sm:px-6" data-appointment-filters>
+                <label class="form-label">Filter by Status
+                    <select class="form-input" data-appointment-status>
+                        <option value="all">All Statuses</option>
+                        <option value="waiting">Waiting</option>
+                        <option value="approved">Approved</option>
+                        <option value="in_consultation">In Consultation</option>
+                        <option value="billed">Billed</option>
+                        <option value="completed">Completed</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="cancelled">Cancelled</option>
+                        <option value="no_show">No Show</option>
+                        <option value="pending">Pending</option>
+                        <option value="checked_in">Checked In</option>
+                    </select>
+                </label>
+                <label class="form-label">Filter by Branch
+                    <select class="form-input" data-appointment-branch>
+                        <option value="all">All Branches</option>
+                        @foreach ($branches as $branch)
+                            <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                        @endforeach
+                        <option value="unassigned">Unassigned appointments</option>
+                    </select>
+                </label>
+            </div>
+            <div class="min-h-32 overflow-auto p-4 sm:p-6">
+                <p class="hidden rounded-lg bg-rose-50 p-4 text-sm text-rose-800" role="alert" data-details-error></p>
+                <p class="py-8 text-center text-sm text-slate-500" data-details-loading>Loading records…</p>
+                <p class="hidden py-8 text-center text-sm text-slate-500" data-details-empty>No records found.</p>
+                <div class="hidden overflow-x-auto" data-details-table-wrap>
+                    <table class="data-table">
+                        <thead><tr data-details-head></tr></thead>
+                        <tbody data-details-body></tbody>
+                    </table>
+                </div>
+            </div>
+            <footer class="flex items-center justify-between gap-3 border-t border-slate-200 p-4">
+                <button class="btn-secondary" type="button" data-details-previous disabled>Previous</button>
+                <p class="text-sm text-slate-500" data-details-page></p>
+                <button class="btn-secondary" type="button" data-details-next disabled>Next</button>
+            </footer>
+        </section>
+    </dialog>
+
+    @if ($isAdmin)
+        <section class="mt-8" data-admin-statistics data-branch="{{ $selectedBranchName }}">
+            <div class="mb-4 flex flex-wrap items-end justify-between gap-4">
+                <div>
+                    <h2 class="text-xl font-bold text-slate-900">Clinic statistics</h2>
+                    <p class="mt-1 text-sm text-slate-500">Appointments and recorded payments · {{ $statistics['rangeLabel'] }} · {{ $selectedBranchName }}</p>
+                </div>
             </div>
             <div class="grid gap-4 xl:grid-cols-2">
                 <article class="rounded-2xl border border-slate-200 bg-white p-5" data-appointments-trend>
@@ -59,7 +137,7 @@
 
                 <article class="rounded-2xl border border-slate-200 bg-white p-5" data-revenue-trend>
                     <h3 class="font-semibold text-slate-900">Revenue collected</h3>
-                    <p class="mt-1 text-sm text-slate-500">Applied payment amounts recorded during the selected period.</p>
+                    <p class="mt-1 text-sm text-slate-500">Applied payment amounts recorded during the selected period at {{ $selectedBranchName }}.</p>
                     <div class="mt-5 flex h-44 items-end gap-2 overflow-x-auto border-b border-slate-100 pb-2" role="img" aria-label="Applied payments by date">
                         @foreach ($statistics['timeline'] as $point)
                             <div class="flex h-full min-w-9 flex-1 flex-col items-center justify-end gap-1">
@@ -117,4 +195,118 @@
             </table>
         </div>
     </section>
+    <script>
+        (() => {
+            const dialog = document.querySelector('[data-dashboard-details]');
+            const title = dialog.querySelector('[data-details-title]');
+            const count = dialog.querySelector('[data-details-count]');
+            const error = dialog.querySelector('[data-details-error]');
+            const loading = dialog.querySelector('[data-details-loading]');
+            const empty = dialog.querySelector('[data-details-empty]');
+            const tableWrap = dialog.querySelector('[data-details-table-wrap]');
+            const tableHead = dialog.querySelector('[data-details-head]');
+            const tableBody = dialog.querySelector('[data-details-body]');
+            const pageLabel = dialog.querySelector('[data-details-page]');
+            const previous = dialog.querySelector('[data-details-previous]');
+            const next = dialog.querySelector('[data-details-next]');
+            const close = dialog.querySelector('[data-details-close]');
+            const appointmentFilters = dialog.querySelector('[data-appointment-filters]');
+            const appointmentStatus = dialog.querySelector('[data-appointment-status]');
+            const appointmentBranch = dialog.querySelector('[data-appointment-branch]');
+            let selectedMetric = '';
+            let currentPage = 1;
+            let lastPage = 1;
+
+            const setVisible = (element, isVisible) => element.classList.toggle('hidden', !isVisible);
+            const setLoading = (isLoading) => {
+                setVisible(loading, isLoading);
+                setVisible(error, false);
+                setVisible(empty, false);
+                setVisible(tableWrap, false);
+            };
+            const renderDetails = (payload) => {
+                title.textContent = payload.title;
+                count.textContent = `${payload.total} ${payload.total === 1 ? 'record' : 'records'}`;
+                currentPage = payload.page;
+                lastPage = payload.last_page;
+                pageLabel.textContent = payload.total > 0 ? `Page ${currentPage} of ${lastPage}` : '';
+                previous.disabled = currentPage <= 1;
+                next.disabled = currentPage >= lastPage;
+                tableHead.replaceChildren();
+                tableBody.replaceChildren();
+
+                Object.entries(payload.columns).forEach(([key, label]) => {
+                    const heading = document.createElement('th');
+                    heading.scope = 'col';
+                    heading.textContent = label;
+                    tableHead.append(heading);
+                });
+                payload.records.forEach((record) => {
+                    const row = document.createElement('tr');
+                    Object.keys(payload.columns).forEach((key) => {
+                        const cell = document.createElement('td');
+                        cell.dataset.label = payload.columns[key];
+                        cell.textContent = record[key] ?? '—';
+                        row.append(cell);
+                    });
+                    tableBody.append(row);
+                });
+                setVisible(empty, payload.total === 0);
+                setVisible(tableWrap, payload.total > 0);
+            };
+            const loadPage = async (page) => {
+                setLoading(true);
+                const url = new URL(dialog.dataset.url, window.location.origin);
+                url.searchParams.set('metric', selectedMetric);
+                url.searchParams.set('page', String(page));
+                if (dialog.dataset.branch) {
+                    url.searchParams.set('branch_id', dialog.dataset.branch);
+                }
+                if (dialog.dataset.period) {
+                    url.searchParams.set('statistics_period', dialog.dataset.period);
+                }
+                if (selectedMetric === 'today_appointments') {
+                    url.searchParams.set('appointment_status', appointmentStatus.value);
+                    url.searchParams.set('appointment_branch_id', appointmentBranch.value);
+                }
+
+                try {
+                    const response = await fetch(url, {
+                        headers: { Accept: 'application/json' },
+                        credentials: 'same-origin',
+                    });
+                    if (!response.ok) {
+                        throw new Error('Could not load these dashboard records. Please close the popup and try again.');
+                    }
+                    renderDetails(await response.json());
+                } catch (requestError) {
+                    error.textContent = requestError instanceof Error
+                        ? requestError.message
+                        : 'Could not load these dashboard records. Please close the popup and try again.';
+                    setVisible(error, true);
+                } finally {
+                    setVisible(loading, false);
+                }
+            };
+
+            document.querySelectorAll('[data-dashboard-detail]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    selectedMetric = button.dataset.dashboardDetail;
+                    const isTodayAppointments = selectedMetric === 'today_appointments';
+                    appointmentFilters.classList.toggle('hidden', !isTodayAppointments);
+                    if (isTodayAppointments) {
+                        appointmentStatus.value = 'all';
+                        appointmentBranch.value = dialog.dataset.defaultAppointmentBranch || 'all';
+                    }
+                    dialog.showModal();
+                    loadPage(1);
+                });
+            });
+            appointmentStatus.addEventListener('change', () => loadPage(1));
+            appointmentBranch.addEventListener('change', () => loadPage(1));
+            close.addEventListener('click', () => dialog.close());
+            previous.addEventListener('click', () => loadPage(currentPage - 1));
+            next.addEventListener('click', () => loadPage(currentPage + 1));
+        })();
+    </script>
 @endsection

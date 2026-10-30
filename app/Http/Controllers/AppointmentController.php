@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Appointment;
+use App\Models\AppointmentAvailabilityBlock;
 use App\Models\Branch;
 use App\Models\Patient;
 use App\Models\QueueEntry;
@@ -24,8 +25,11 @@ class AppointmentController extends Controller
 {
     private const RELEASED_APPOINTMENT_STATUSES = ['cancelled', 'rejected', 'completed', 'no_show'];
 
+    private const ONGOING_APPOINTMENT_STATUSES = ['checked_in', 'waiting', 'in_consultation', 'billed'];
+
     public function index(Request $request): View
     {
+        $isAppointmentRecordsPage = $request->routeIs('clinic.appointment-records');
         $branches = Branch::query()->orderBy('id')->get();
         $filters = $request->validate([
             'date' => ['nullable', 'date'],
@@ -71,9 +75,25 @@ class AppointmentController extends Controller
                             ->where('name', 'like', '%'.$search.'%'));
                 });
             })
+            ->when(
+                $isAppointmentRecordsPage,
+                fn ($query) => $query->orderByRaw("CASE WHEN status IN ('checked_in', 'waiting', 'in_consultation', 'billed') THEN 0 WHEN status = 'pending' THEN 1 ELSE 2 END"),
+            )
             ->orderByDesc('starts_at')
             ->paginate(20)
             ->withQueryString();
+        $appointmentCollection = $appointments->getCollection();
+        $appointmentSections = $isAppointmentRecordsPage
+            ? [
+                'Ongoing Appointments' => $appointmentCollection->whereIn('status', self::ONGOING_APPOINTMENT_STATUSES),
+                'Pending Appointments' => $appointmentCollection->where('status', 'pending'),
+                'Other Appointments' => $appointmentCollection->reject(fn (Appointment $appointment): bool => in_array(
+                    $appointment->status,
+                    [...self::ONGOING_APPOINTMENT_STATUSES, 'pending'],
+                    true,
+                )),
+            ]
+            : ['Appointments' => $appointmentCollection];
         $clinicNow = now(config('clinic.timezone'));
         $canRescheduleOnAppointmentDate = $request->user()->hasRole('admin', 'staff');
         $reschedulableAppointmentIds = $appointments->getCollection()
@@ -109,6 +129,8 @@ class AppointmentController extends Controller
             'reschedulableAppointmentIds',
             'highlightedAppointmentId',
             'appointmentListFilters',
+            'appointmentSections',
+            'isAppointmentRecordsPage',
         ));
     }
 
@@ -159,6 +181,17 @@ class AppointmentController extends Controller
             ->when($excludedAppointmentId !== null, fn ($query) => $query->whereKeyNot($excludedAppointmentId))
             ->get(['id', 'starts_at', 'duration_minutes']);
 
+        $blockedIntervals = AppointmentAvailabilityBlock::query()
+            ->where('branch_id', $data['branch_id'])
+            ->where('is_active', true)
+            ->where('starts_at', '<', $monthEnd->copy()->endOfDay()->format('Y-m-d H:i:s'))
+            ->where('ends_at', '>', $monthStart->format('Y-m-d H:i:s'))
+            ->get(['starts_at', 'ends_at'])
+            ->map(fn (AppointmentAvailabilityBlock $block): array => [
+                $this->clinicDateTime($block->starts_at),
+                $this->clinicDateTime($block->ends_at),
+            ]);
+
         foreach ($appointments as $appointment) {
             foreach ($this->appointmentSlotKeys(
                 $this->clinicDateTime($appointment->starts_at),
@@ -179,11 +212,17 @@ class AppointmentController extends Controller
                 foreach ($this->appointmentTimeOptions() as $time) {
                     $startsAt = $date->copy()->setTimeFromTimeString($time);
                     $slotKeys = $this->appointmentSlotKeys($startsAt, $durationMinutes);
+                    $appointmentEndsAt = $startsAt->copy()->addMinutes($durationMinutes);
+                    $overlapsManualBlock = $blockedIntervals->contains(
+                        fn (array $blockedInterval): bool => $startsAt->lessThan($blockedInterval[1])
+                            && $appointmentEndsAt->greaterThan($blockedInterval[0]),
+                    );
 
                     if (
                         $startsAt->greaterThan($now)
                         && $this->withinClinicHours($startsAt, $durationMinutes)
                         && collect($slotKeys)->doesntContain(fn (string $slotKey): bool => $occupiedSlots->has($slotKey))
+                        && ! $overlapsManualBlock
                     ) {
                         $availableTimes[] = $time;
                     }
@@ -252,6 +291,7 @@ class AppointmentController extends Controller
 
         $appointment = DB::transaction(function () use ($isPatient, $patient, $services, $startsAt, $durationMinutes, $data, $request, $branchId): Appointment {
             $slotKeys = $this->appointmentSlotKeys($startsAt, $durationMinutes);
+            Branch::query()->whereKey($branchId)->lockForUpdate()->firstOrFail();
             $this->ensureAppointmentAvailability($startsAt, $durationMinutes, $branchId);
             $this->claimAppointmentSlots($slotKeys, $branchId);
             $appointment = Appointment::create([
@@ -287,12 +327,12 @@ class AppointmentController extends Controller
             $isPatient
                 ? "{$patientName} booked an appointment for {$appointmentTime}."
                 : "{$request->user()->name} added an appointment for {$patientName} on {$appointmentTime}.",
-            route('appointments.index', ['date' => $appointment->starts_at->toDateString()], false).'#appointment-'.$appointment->id,
+            route('clinic.appointment-records', ['date' => $appointment->starts_at->toDateString()], false).'#appointment-'.$appointment->id,
             'appointment',
             $appointment->id,
         );
 
-        return redirect()->route('appointments.index')->with('status', $isPatient
+        return redirect()->route($isPatient ? 'appointments.index' : 'clinic.appointment-records')->with('status', $isPatient
             ? 'Appointment request submitted for clinic approval.'
             : 'Walk-in appointment added to the queue.');
     }
@@ -430,6 +470,7 @@ class AppointmentController extends Controller
 
                 $startsAt = $this->clinicDateTime($lockedAppointment->starts_at);
                 $durationMinutes = (int) $lockedAppointment->duration_minutes;
+                Branch::query()->whereKey($lockedAppointment->branch_id)->lockForUpdate()->firstOrFail();
                 $this->ensureAppointmentAvailability(
                     $startsAt,
                     $durationMinutes,
@@ -481,7 +522,7 @@ class AppointmentController extends Controller
             $notificationDetails[0],
             $notificationDetails[1],
             $notificationDetails[2],
-            route('appointments.index', [
+            route('clinic.appointment-records', [
                 'date' => $appointment->starts_at->toDateString(),
                 'status' => $appointment->status,
             ], false).'#appointment-'.$appointment->id,
@@ -539,7 +580,7 @@ class AppointmentController extends Controller
             'appointment_id' => $appointment->id,
         ];
 
-        return redirect()->to(route('appointments.index', $query).'#appointment-'.$appointment->id)
+        return redirect()->to(route('clinic.appointment-records', $query).'#appointment-'.$appointment->id)
             ->with('status', $message);
     }
 
@@ -609,6 +650,7 @@ class AppointmentController extends Controller
             }
 
             $durationMinutes = (int) $lockedAppointment->duration_minutes;
+            Branch::query()->whereKey($branchId)->lockForUpdate()->firstOrFail();
             $this->ensureAppointmentAvailability($startsAt, $durationMinutes, $branchId, $lockedAppointment->id);
 
             $branchChanged = (int) ($previousBranchId ?? 0) !== $branchId;
@@ -656,7 +698,7 @@ class AppointmentController extends Controller
             "{$request->user()->name} rescheduled {$appointment->patient->user->name}'s appointment from "
                 .$previousStart->format('F j, Y \a\t g:i A').' to '
                 .$appointment->starts_at->format('F j, Y \a\t g:i A').'.',
-            route('appointments.index', [
+            route('clinic.appointment-records', [
                 'date' => $appointment->starts_at->toDateString(),
                 'status' => $appointment->status,
                 'branch_id' => $appointment->branch_id,
@@ -878,6 +920,19 @@ class AppointmentController extends Controller
         }
 
         $endsAt = $startsAt->copy()->addMinutes($durationMinutes);
+        $availabilityIsBlocked = AppointmentAvailabilityBlock::query()
+            ->where('branch_id', $branchId)
+            ->where('is_active', true)
+            ->where('starts_at', '<', $endsAt->format('Y-m-d H:i:s'))
+            ->where('ends_at', '>', $startsAt->format('Y-m-d H:i:s'))
+            ->exists();
+
+        if ($availabilityIsBlocked) {
+            throw ValidationException::withMessages([
+                'starts_at' => 'This time is blocked for the selected branch. Choose another available time.',
+            ]);
+        }
+
         $existingAppointments = Appointment::query()
             ->where('branch_id', $branchId)
             ->where('starts_at', '>', $startsAt->copy()->subMinutes(240)->format('Y-m-d H:i:s'))

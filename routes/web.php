@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\AdditionalServiceController;
+use App\Http\Controllers\AppointmentAvailabilityController;
 use App\Http\Controllers\AppointmentController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ClinicNotificationController;
@@ -70,6 +72,9 @@ Route::middleware('guest')->group(function (): void {
 Route::middleware(['auth', 'active'])->group(function (): void {
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
     Route::get('/dashboard', DashboardController::class)->name('dashboard');
+    Route::get('/dashboard/details', [DashboardController::class, 'details'])
+        ->middleware('role:admin,staff,doctor')
+        ->name('dashboard.details');
     Route::get('/appointments/availability', [AppointmentController::class, 'availability'])->name('appointments.availability');
     Route::get('/appointments', [AppointmentController::class, 'index'])->name('appointments.index');
     Route::post('/appointments', [AppointmentController::class, 'store'])->name('appointments.store');
@@ -84,6 +89,8 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::middleware('role:patient')->group(function (): void {
         Route::get('/my/dental-records', [ClinicWorkflowController::class, 'records'])->name('patient.records');
         Route::get('/my/billing', [ClinicWorkflowController::class, 'patientBilling'])->name('patient.billing');
+        Route::get('/my/billing/{bill}/receipts/{receipt}/preview', [PaymentController::class, 'showPatientReceiptPreview'])
+            ->name('patient.billing.receipts.preview');
         Route::get('/my/notifications', [ClinicWorkflowController::class, 'patientNotifications'])->name('patient.notifications');
     });
 
@@ -91,6 +98,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::get('/notifications', [ClinicNotificationController::class, 'index'])->name('notifications.index');
         Route::post('/notifications/read-all', [ClinicNotificationController::class, 'markAllAsRead'])->name('notifications.read-all');
         Route::post('/notifications/{notification}/open', [ClinicNotificationController::class, 'open'])->name('notifications.open');
+        Route::get('/appointment-records', [AppointmentController::class, 'index'])->name('appointment-records');
         Route::get('/patients/create', [PatientController::class, 'create'])->name('patients.create');
         Route::post('/patients', [PatientController::class, 'store'])->name('patients.store');
         Route::get('/patients', [PatientController::class, 'index'])->name('patients.index');
@@ -103,6 +111,10 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::get('/services', [ServiceController::class, 'index'])->name('services.index');
         Route::get('/queue', [ClinicWorkflowController::class, 'queue'])->name('queue.index');
         Route::get('/billing', [ClinicWorkflowController::class, 'billing'])->name('billing.index');
+        Route::get('/bills/{bill}/additional-services', [AdditionalServiceController::class, 'create'])
+            ->name('bills.additional-services.create');
+        Route::post('/bills/{bill}/additional-services', [AdditionalServiceController::class, 'store'])
+            ->name('bills.additional-services.store');
         Route::post('/bills/{bill}/payments', [PaymentController::class, 'store'])->name('payments.store');
         Route::post('/bills/{bill}/paymongo-checkout', [PayMongoBillCheckoutController::class, 'store'])
             ->middleware('throttle:5,1')
@@ -124,6 +136,18 @@ Route::middleware(['auth', 'active'])->group(function (): void {
             ->name('records.store');
         Route::get('/appointments/{appointment}/bill', [ClinicWorkflowController::class, 'createBill'])->name('bills.create');
         Route::post('/appointments/{appointment}/bill', [ClinicWorkflowController::class, 'storeBill'])->name('bills.store');
+    });
+
+    Route::prefix('clinic')->name('clinic.')->middleware('role:admin,staff,doctor')->group(function (): void {
+        Route::get('/appointment-availability', [AppointmentAvailabilityController::class, 'index'])
+            ->name('availability.index');
+        Route::post('/appointment-availability', [AppointmentAvailabilityController::class, 'store'])
+            ->name('availability.store');
+        Route::patch('/appointment-availability/{availabilityBlock}', [AppointmentAvailabilityController::class, 'update'])
+            ->name('availability.update');
+        Route::delete('/appointment-availability/{availabilityBlock}', [AppointmentAvailabilityController::class, 'destroy'])
+            ->middleware('role:admin,staff')
+            ->name('availability.destroy');
     });
 
     Route::prefix('admin')->name('admin.')->middleware('role:admin')->group(function (): void {

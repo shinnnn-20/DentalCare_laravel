@@ -4,14 +4,20 @@ namespace App\Http\Controllers;
 
 use App\Models\Appointment;
 use App\Models\Bill;
+use App\Models\Branch;
 use App\Models\Patient;
 use App\Models\Payment;
 use App\Models\QueueEntry;
 use App\Models\User;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 class DashboardController extends Controller
@@ -19,10 +25,6 @@ class DashboardController extends Controller
     public function __invoke(Request $request): View|RedirectResponse
     {
         $user = $request->user();
-
-        if ($user->role === 'doctor') {
-            return redirect()->route('appointments.index');
-        }
 
         if ($user->role === 'patient') {
             $patient = $user->patient()->firstOrFail();
@@ -43,44 +45,75 @@ class DashboardController extends Controller
 
         $today = today(config('clinic.timezone'));
         $isAdmin = $user->role === 'admin';
-        $hasTestPaymentsToday = Payment::query()
+        $branches = Branch::query()->orderBy('name')->get(['id', 'name']);
+        $filters = $request->validate([
+            'branch_id' => ['nullable', Rule::in([
+                'unassigned',
+                ...$branches->map(fn (Branch $branch): string => (string) $branch->id)->all(),
+            ])],
+            ...($isAdmin ? ['statistics_period' => ['nullable', 'in:week,month,year']] : []),
+        ]);
+        $branchId = $filters['branch_id'] ?? null;
+        $selectedBranchName = match ($branchId) {
+            'unassigned' => 'Unassigned appointments',
+            null => 'All branches',
+            default => $branches->firstWhere('id', (int) $branchId)?->name ?? 'All branches',
+        };
+        $appointmentsForBranch = fn (): Builder => $this->applyAppointmentBranchFilter(
+            Appointment::query(),
+            $branchId,
+        );
+        $patientsForBranch = Patient::query();
+        if ($branchId !== null) {
+            $patientsForBranch->whereHas('appointments', fn (Builder $query): Builder => $this->applyAppointmentBranchFilter(
+                $query,
+                $branchId,
+            ));
+        }
+        $paymentsForBranch = fn (): Builder => $this->applyPaymentBranchFilter(Payment::query(), $branchId);
+        $queueEntriesForBranch = fn (): Builder => QueueEntry::query()->whereHas(
+            'appointment',
+            fn (Builder $query): Builder => $this->applyAppointmentBranchFilter($query, $branchId),
+        );
+        $hasTestPaymentsToday = $paymentsForBranch()
             ->whereDate('created_at', $today)
             ->where('provider', 'paymongo')
             ->where('is_test', true)
             ->exists();
-        $appointments = Appointment::query()
+        $appointments = $appointmentsForBranch()
             ->with(['patient.user', 'service', 'services', 'queueEntry'])
             ->whereDate('starts_at', $today)
             ->orderBy('starts_at')
             ->limit(10)
             ->get();
 
-        $metrics = $isAdmin
-            ? [
-                ['Patients', number_format(Patient::count()), 'Registered patient accounts'],
-                ["Today's appointments", number_format(Appointment::whereDate('starts_at', $today)->count()), 'Online and walk-in'],
-                ['Pending approval', number_format(Appointment::where('status', 'pending')->count()), 'Online requests'],
-                ['Patients in queue', number_format(QueueEntry::whereDate('queue_date', $today)->whereIn('status', ['waiting', 'called'])->count()), 'Waiting or called today'],
-                ['Completed today', number_format(Appointment::whereDate('starts_at', $today)->where('status', 'completed')->count()), 'Appointments completed'],
-                ["Today's revenue", '₱'.number_format((float) Payment::whereDate('created_at', $today)->sum('applied_amount'), 2), $hasTestPaymentsToday ? 'Includes PayMongo TEST MODE payments' : 'Payments applied today'],
-                ['Unpaid bills', number_format(Bill::whereIn('payment_status', ['unpaid', 'partially_paid'])->count()), 'Including partial balances'],
-                ['Active staff', number_format(User::where('role', 'staff')->where('is_active', true)->count()), 'Clinic team members'],
-            ]
-            : [
-                ["Today's appointments", number_format(Appointment::whereDate('starts_at', $today)->count()), 'All scheduled visits'],
-                ['Waiting queue', number_format(QueueEntry::whereDate('queue_date', $today)->whereIn('status', ['waiting', 'called'])->count()), 'Waiting or called'],
-                ["Today's walk-ins", number_format(Appointment::where('type', 'walk_in')->whereDate('starts_at', $today)->count()), 'Registered at front desk'],
-                ['Checked in', number_format(Appointment::whereDate('starts_at', $today)->whereIn('status', ['checked_in', 'waiting', 'in_consultation'])->count()), 'Checked-in or in consultation'],
-                ['Pending billing', number_format(Appointment::where('status', 'completed')->whereDoesntHave('bill')->count()), 'Completed visits without a bill'],
-                ["Today's payments", number_format(Payment::whereDate('created_at', $today)->count()), 'Payments processed'],
-            ];
+        $activeStaff = User::query()
+            ->whereIn('role', ['staff', 'doctor'])
+            ->where('is_active', true);
+        $metrics = [];
+        if ($user->hasRole('admin', 'staff')) {
+            $metrics[] = ['Patients', number_format($patientsForBranch->count()), $branchId === null ? 'Registered patient accounts' : 'Patients seen at this branch', 'patients'];
+        }
+        $metrics = [
+            ...$metrics,
+            ["Today's appointments", number_format($appointmentsForBranch()->whereDate('starts_at', $today)->count()), 'Online and walk-in', 'today_appointments'],
+            ['Pending approval', number_format($appointmentsForBranch()->where('status', 'pending')->count()), 'Online requests', 'pending_approval'],
+            ['Patients in queue', number_format($queueEntriesForBranch()->whereDate('queue_date', $today)->whereIn('status', ['waiting', 'called'])->count()), 'Waiting or called today', 'queue'],
+            ['Completed today', number_format($appointmentsForBranch()->whereDate('starts_at', $today)->where('status', 'completed')->count()), 'Appointments completed', 'completed_today'],
+        ];
+        if ($isAdmin) {
+            $metrics[] = ["Today's revenue", '₱'.number_format((float) $paymentsForBranch()->whereDate('created_at', $today)->sum('applied_amount'), 2), $hasTestPaymentsToday ? 'Includes PayMongo TEST MODE payments' : 'Payments applied today', null];
+        }
+        if ($user->hasRole('admin', 'staff')) {
+            $metrics[] = ['Unpaid bills', number_format($this->outstandingBillsForBranch($branchId)->count()), 'Including partial balances', 'unpaid_bills'];
+        }
+        if ($isAdmin) {
+            $metrics[] = ['Active staff', number_format($activeStaff->count()), 'Clinic-wide staff and doctors', 'active_staff'];
+        }
 
         $statistics = [];
         if ($isAdmin) {
-            $filters = $request->validate([
-                'statistics_period' => ['nullable', 'in:week,month,year'],
-            ]);
-            $statistics = $this->dashboardStatistics($filters['statistics_period'] ?? 'week', $today);
+            $statistics = $this->dashboardStatistics($filters['statistics_period'] ?? 'week', $today, $branchId);
         }
 
         return view('dashboard.clinic', [
@@ -88,6 +121,326 @@ class DashboardController extends Controller
             'isAdmin' => $isAdmin,
             'appointments' => $appointments,
             'statistics' => $statistics,
+            'branches' => $branches,
+            'selectedBranchId' => $branchId,
+            'selectedBranchName' => $selectedBranchName,
+        ]);
+    }
+
+    public function details(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        abort_unless($user->hasRole('admin', 'staff', 'doctor'), 403);
+
+        $branches = Branch::query()->get(['id']);
+        $filters = $request->validate([
+            'metric' => ['required', Rule::in([
+                'patients',
+                'today_appointments',
+                'pending_approval',
+                'queue',
+                'completed_today',
+                'unpaid_bills',
+                'active_staff',
+            ])],
+            'branch_id' => ['nullable', Rule::in([
+                'unassigned',
+                ...$branches->map(fn (Branch $branch): string => (string) $branch->id)->all(),
+            ])],
+            'appointment_branch_id' => ['sometimes', 'nullable', Rule::in([
+                'all',
+                'unassigned',
+                ...$branches->map(fn (Branch $branch): string => (string) $branch->id)->all(),
+            ])],
+            'appointment_status' => ['sometimes', 'nullable', Rule::in([
+                'all',
+                'pending',
+                'waiting',
+                'approved',
+                'checked_in',
+                'in_consultation',
+                'billed',
+                'completed',
+                'rejected',
+                'cancelled',
+                'no_show',
+            ])],
+            ...($user->role === 'admin' ? ['statistics_period' => ['nullable', 'in:week,month,year']] : []),
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        if ($user->role === 'doctor' && in_array($filters['metric'], ['patients', 'unpaid_bills', 'active_staff'], true)) {
+            abort(403);
+        }
+        if ($user->role === 'staff' && $filters['metric'] === 'active_staff') {
+            abort(403);
+        }
+
+        $branchId = $filters['branch_id'] ?? null;
+        $today = today(config('clinic.timezone'));
+        $appointmentBranchId = array_key_exists('appointment_branch_id', $filters)
+            ? $filters['appointment_branch_id']
+            : $branchId;
+        $appointmentBranchId = $appointmentBranchId === 'all' ? null : $appointmentBranchId;
+        $appointmentStatus = $filters['appointment_status'] ?? 'all';
+        $todayAppointments = $this->applyAppointmentBranchFilter(Appointment::query(), $appointmentBranchId)
+            ->whereDate('starts_at', $today)
+            ->when(
+                $appointmentStatus !== 'all',
+                fn (Builder $query): Builder => $query->where('status', $appointmentStatus),
+            )
+            ->with(['patient.user', 'branch', 'service', 'services'])
+            ->orderBy('starts_at');
+
+        return match ($filters['metric']) {
+            'patients' => $this->patientDetails($branchId, $filters['page'] ?? 1),
+            'today_appointments' => $this->appointmentDetails(
+                'Today’s appointments',
+                $todayAppointments,
+                $filters['page'] ?? 1,
+            ),
+            'pending_approval' => $this->appointmentDetails(
+                'Pending approval',
+                $this->applyAppointmentBranchFilter(Appointment::query(), $branchId)
+                    ->where('status', 'pending')
+                    ->with(['patient.user', 'branch', 'service', 'services'])
+                    ->orderBy('starts_at'),
+                $filters['page'] ?? 1,
+            ),
+            'queue' => $this->queueDetails($branchId, $today, $filters['page'] ?? 1),
+            'completed_today' => $this->appointmentDetails(
+                'Completed today',
+                $this->applyAppointmentBranchFilter(Appointment::query(), $branchId)
+                    ->whereDate('starts_at', $today)
+                    ->where('status', 'completed')
+                    ->with(['patient.user', 'branch', 'service', 'services'])
+                    ->orderBy('starts_at'),
+                $filters['page'] ?? 1,
+                true,
+            ),
+            'unpaid_bills' => $this->billDetails($branchId, $filters['page'] ?? 1),
+            'active_staff' => $this->staffDetails($filters['page'] ?? 1),
+        };
+    }
+
+    private function patientDetails(?string $branchId, int $page): JsonResponse
+    {
+        $query = Patient::query()
+            ->when($branchId !== null, fn (Builder $query): Builder => $query->whereHas(
+                'appointments',
+                fn (Builder $appointmentsQuery): Builder => $this->applyAppointmentBranchFilter($appointmentsQuery, $branchId),
+            ))
+            ->with([
+                'user',
+                'appointments' => function (HasMany $query) use ($branchId): void {
+                    $query->with('branch');
+                    if ($branchId === 'unassigned') {
+                        $query->whereNull('branch_id');
+                    } elseif ($branchId !== null) {
+                        $query->where('branch_id', $branchId);
+                    }
+                },
+            ])
+            ->orderBy('id');
+        $paginator = $query->paginate(20, ['*'], 'page', $page);
+
+        return $this->detailsResponse(
+            'Patients',
+            [
+                'name' => 'Patient name',
+                'patient_id' => 'Patient ID',
+                'email' => 'Email',
+                'phone' => 'Contact number',
+                'registered_at' => 'Registration date',
+                'branches' => 'Registered branch',
+            ],
+            $paginator,
+            static fn (Patient $patient): array => [
+                'name' => $patient->user->name,
+                'patient_id' => $patient->patient_number,
+                'email' => $patient->user->email,
+                'phone' => $patient->user->phone ?: '—',
+                'registered_at' => $patient->created_at->format('M j, Y'),
+                'branches' => $patient->appointments->pluck('branch.name')->filter()->unique()->join(', ') ?: '—',
+            ],
+        );
+    }
+
+    private function appointmentDetails(string $title, Builder $query, int $page, bool $includeDoctor = false): JsonResponse
+    {
+        $columns = [
+            'name' => 'Patient name',
+            'patient_id' => 'Patient ID',
+            'date_time' => 'Appointment date and time',
+            'branch' => 'Branch',
+            'services' => 'Services / treatments',
+            'type' => 'Appointment type',
+        ];
+        if ($includeDoctor) {
+            $columns['doctor'] = 'Assigned doctor';
+        }
+        $columns['status'] = $includeDoctor ? 'Completion status' : 'Status';
+        $paginator = $query->paginate(20, ['*'], 'page', $page);
+
+        return $this->detailsResponse(
+            $title,
+            $columns,
+            $paginator,
+            static function (Appointment $appointment) use ($includeDoctor): array {
+                $record = [
+                    'name' => $appointment->patient->user->name,
+                    'patient_id' => $appointment->patient->patient_number,
+                    'date_time' => $appointment->starts_at->format('M j, Y · g:i A'),
+                    'branch' => $appointment->branch?->name ?? 'Unassigned',
+                    'services' => $appointment->treatmentNames(),
+                    'type' => $appointment->type === 'walk_in' ? 'Walk-in' : 'Online',
+                ];
+                if ($includeDoctor) {
+                    $record['doctor'] = 'Not recorded';
+                }
+                $record['status'] = self::appointmentStatusLabel($appointment->status);
+
+                return $record;
+            },
+        );
+    }
+
+    private static function appointmentStatusLabel(string $status): string
+    {
+        return match ($status) {
+            'pending' => 'Pending',
+            'waiting' => 'Waiting',
+            'approved' => 'Approved',
+            'checked_in' => 'Checked In',
+            'in_consultation' => 'In Consultation',
+            'billed' => 'Billed',
+            'completed' => 'Completed',
+            'rejected' => 'Rejected',
+            'cancelled' => 'Cancelled',
+            'no_show' => 'No Show',
+            default => str_replace('_', ' ', ucfirst($status)),
+        };
+    }
+
+    private function queueDetails(?string $branchId, Carbon $today, int $page): JsonResponse
+    {
+        $query = QueueEntry::query()
+            ->whereDate('queue_date', $today)
+            ->whereIn('status', ['waiting', 'called'])
+            ->whereHas('appointment', fn (Builder $appointmentQuery): Builder => $this->applyAppointmentBranchFilter(
+                $appointmentQuery,
+                $branchId,
+            ))
+            ->with(['appointment.patient.user', 'appointment.branch'])
+            ->orderBy('queue_number');
+        $paginator = $query->paginate(20, ['*'], 'page', $page);
+
+        return $this->detailsResponse(
+            'Patients in queue',
+            [
+                'queue_number' => 'Queue number',
+                'name' => 'Patient name',
+                'patient_id' => 'Patient ID',
+                'appointment_time' => 'Appointment time',
+                'branch' => 'Branch',
+                'type' => 'Appointment type',
+                'status' => 'Queue status',
+            ],
+            $paginator,
+            static fn (QueueEntry $entry): array => [
+                'queue_number' => $entry->queue_number,
+                'name' => $entry->appointment->patient->user->name,
+                'patient_id' => $entry->appointment->patient->patient_number,
+                'appointment_time' => $entry->appointment->starts_at->format('g:i A'),
+                'branch' => $entry->appointment->branch?->name ?? 'Unassigned',
+                'type' => $entry->appointment->type === 'walk_in' ? 'Walk-in' : 'Online',
+                'status' => ucfirst($entry->status),
+            ],
+        );
+    }
+
+    private function billDetails(?string $branchId, int $page): JsonResponse
+    {
+        $query = $this->outstandingBillsForBranch($branchId)
+            ->with(['patient.user', 'appointment.branch'])
+            ->withSum('payments as amount_paid', 'applied_amount')
+            ->orderBy('id');
+        $paginator = $query->paginate(20, ['*'], 'page', $page);
+
+        return $this->detailsResponse(
+            'Unpaid bills',
+            [
+                'name' => 'Patient name',
+                'patient_id' => 'Patient ID',
+                'bill_number' => 'Bill number',
+                'branch' => 'Branch',
+                'bill_date' => 'Bill date',
+                'total' => 'Total amount',
+                'paid' => 'Amount paid',
+                'balance' => 'Remaining balance',
+                'status' => 'Payment status',
+            ],
+            $paginator,
+            static function (Bill $bill): array {
+                $total = (float) $bill->total;
+                $paid = (float) ($bill->amount_paid ?? 0);
+
+                return [
+                    'name' => $bill->patient->user->name,
+                    'patient_id' => $bill->patient->patient_number,
+                    'bill_number' => $bill->bill_number,
+                    'branch' => $bill->appointment?->branch?->name ?? 'Unassigned',
+                    'bill_date' => $bill->created_at->format('M j, Y'),
+                    'total' => number_format($total, 2),
+                    'paid' => number_format($paid, 2),
+                    'balance' => number_format(max(0, $total - $paid), 2),
+                    'status' => $paid <= 0 ? 'Unpaid' : 'Partially paid',
+                ];
+            },
+        );
+    }
+
+    private function staffDetails(int $page): JsonResponse
+    {
+        $paginator = User::query()
+            ->whereIn('role', ['staff', 'doctor'])
+            ->where('is_active', true)
+            ->orderBy('role')
+            ->orderBy('name')
+            ->paginate(20, ['*'], 'page', $page);
+
+        return $this->detailsResponse(
+            'Active staff',
+            [
+                'name' => 'Name',
+                'role' => 'Account role',
+                'email' => 'Email',
+                'branches' => 'Assigned branch(es)',
+                'status' => 'Account status',
+            ],
+            $paginator,
+            static fn (User $staff): array => [
+                'name' => $staff->name,
+                'role' => ucfirst($staff->role),
+                'email' => $staff->email,
+                'branches' => 'No branch assignment',
+                'status' => $staff->is_active ? 'Active' : 'Inactive',
+            ],
+        );
+    }
+
+    /**
+     * @param  array<string, string>  $columns
+     * @param  callable(Model): array<string, string>  $mapRecord
+     */
+    private function detailsResponse(string $title, array $columns, LengthAwarePaginator $paginator, callable $mapRecord): JsonResponse
+    {
+        return response()->json([
+            'title' => $title,
+            'total' => $paginator->total(),
+            'page' => $paginator->currentPage(),
+            'last_page' => $paginator->lastPage(),
+            'columns' => $columns,
+            'records' => $paginator->getCollection()->map($mapRecord)->values()->all(),
         ]);
     }
 
@@ -101,7 +454,7 @@ class DashboardController extends Controller
      *     revenueMaximum:float
      * }
      */
-    private function dashboardStatistics(string $period, Carbon $today): array
+    private function dashboardStatistics(string $period, Carbon $today, ?string $branchId): array
     {
         $usesMonths = $period === 'year';
         $rangeStart = $usesMonths
@@ -123,7 +476,7 @@ class DashboardController extends Controller
             $usesMonths ? $cursor->addMonth() : $cursor->addDay();
         }
 
-        $appointmentRows = Appointment::query()
+        $appointmentRows = $this->applyAppointmentBranchFilter(Appointment::query(), $branchId)
             ->selectRaw('DATE(starts_at) as activity_date, COUNT(*) as total')
             ->whereBetween('starts_at', [$rangeStart, $rangeEnd])
             ->groupBy('activity_date')
@@ -136,7 +489,7 @@ class DashboardController extends Controller
             }
         }
 
-        $revenueRows = DB::table('payments')
+        $revenueRows = $this->applyPaymentBranchFilter(Payment::query(), $branchId)
             ->selectRaw('DATE(created_at) as activity_date, SUM(applied_amount) as total')
             ->whereBetween('created_at', [$rangeStart, $rangeEnd])
             ->groupBy('activity_date')
@@ -149,7 +502,7 @@ class DashboardController extends Controller
             }
         }
 
-        $statusCounts = Appointment::query()
+        $statusCounts = $this->applyAppointmentBranchFilter(Appointment::query(), $branchId)
             ->selectRaw('status, COUNT(*) as total')
             ->whereBetween('starts_at', [$rangeStart, $rangeEnd])
             ->groupBy('status')
@@ -175,5 +528,47 @@ class DashboardController extends Controller
             'appointmentMaximum' => max(1, ...array_column($timeline, 'appointments')),
             'revenueMaximum' => max(1.0, ...array_column($timeline, 'revenue')),
         ];
+    }
+
+    private function applyAppointmentBranchFilter(Builder $query, ?string $branchId): Builder
+    {
+        return match ($branchId) {
+            'unassigned' => $query->whereNull('branch_id'),
+            null => $query,
+            default => $query->where('branch_id', $branchId),
+        };
+    }
+
+    private function applyPaymentBranchFilter(Builder $query, ?string $branchId): Builder
+    {
+        if ($branchId !== null) {
+            $query->whereHas('bill.appointment', fn (Builder $appointmentQuery): Builder => $this->applyAppointmentBranchFilter(
+                $appointmentQuery,
+                $branchId,
+            ));
+        }
+
+        return $query;
+    }
+
+    private function billsForBranch(?string $branchId): Builder
+    {
+        $query = Bill::query();
+        if ($branchId !== null) {
+            $query->whereHas('appointment', fn (Builder $appointmentQuery): Builder => $this->applyAppointmentBranchFilter(
+                $appointmentQuery,
+                $branchId,
+            ));
+        }
+
+        return $query;
+    }
+
+    private function outstandingBillsForBranch(?string $branchId): Builder
+    {
+        return $this->billsForBranch($branchId)
+            ->whereRaw(
+                'bills.total > (SELECT COALESCE(SUM(payments.applied_amount), 0) FROM payments WHERE payments.bill_id = bills.id)',
+            );
     }
 }

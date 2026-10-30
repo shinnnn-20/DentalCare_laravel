@@ -7,6 +7,7 @@ use App\Models\Branch;
 use App\Models\DentalRecord;
 use App\Models\Patient;
 use App\Models\RfidCard;
+use App\Models\RfidLog;
 use App\Models\Service;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -93,6 +94,144 @@ class RfidCheckInTest extends TestCase
             ->assertViewHas('appointments', fn ($appointments): bool => $appointments->pluck('id')->all() === [$upcomingAppointment->id, $pastAppointment->id]);
     }
 
+    public function test_scan_rejects_rfid_cards_outside_their_validity_period_or_disabled(): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-28 10:00:00', config('clinic.timezone')));
+        $staff = User::factory()->create(['role' => 'staff']);
+        $notYetValidPatient = $this->createPatient('P-2026-00051', 'Not Yet Valid Patient', '09170000051');
+        $expiredPatient = $this->createPatient('P-2026-00052', 'Expired Patient', '09170000052');
+        $disabledPatient = $this->createPatient('P-2026-00053', 'Disabled Patient', '09170000053');
+        $validPatient = $this->createPatient('P-2026-00054', 'Currently Valid Patient', '09170000054');
+        RfidCard::factory()->for($notYetValidPatient)->create([
+            'uid' => 'NOT-YET-VALID',
+            'valid_from' => now(config('clinic.timezone'))->addHour(),
+        ]);
+        RfidCard::factory()->for($expiredPatient)->create([
+            'uid' => 'EXPIRED',
+            'valid_until' => now(config('clinic.timezone')),
+        ]);
+        RfidCard::factory()->for($disabledPatient)->create([
+            'uid' => 'DISABLED',
+            'is_active' => false,
+        ]);
+        RfidCard::factory()->for($validPatient)->create([
+            'uid' => 'CURRENTLY-VALID',
+            'valid_from' => now(config('clinic.timezone'))->subHour(),
+            'valid_until' => now(config('clinic.timezone'))->addHour(),
+        ]);
+
+        $this->actingAs($staff)
+            ->post(route('clinic.rfid.scan.submit'), ['uid' => 'NOT-YET-VALID'])
+            ->assertOk()
+            ->assertSee('This RFID card is not yet valid.')
+            ->assertDontSee('Not Yet Valid Patient')
+            ->assertViewHas('patient', null);
+        $this->post(route('clinic.rfid.scan.submit'), ['uid' => 'EXPIRED'])
+            ->assertOk()
+            ->assertSee('This RFID card has expired.')
+            ->assertDontSee('Expired Patient')
+            ->assertViewHas('patient', null);
+        $this->post(route('clinic.rfid.scan.submit'), ['uid' => 'DISABLED'])
+            ->assertOk()
+            ->assertSee('This RFID card has been disabled.')
+            ->assertDontSee('Disabled Patient')
+            ->assertViewHas('patient', null);
+        $this->post(route('clinic.rfid.scan.submit'), ['uid' => 'CURRENTLY-VALID'])
+            ->assertOk()
+            ->assertSee('Currently Valid Patient')
+            ->assertViewHas('patient', $validPatient);
+        $this->post(route('clinic.rfid.scan.submit'), ['uid' => 'NOT-REGISTERED'])
+            ->assertOk()
+            ->assertSee('No registered RFID card matches this UID.')
+            ->assertViewHas('patient', null);
+
+        $this->assertDatabaseHas('rfid_logs', ['uid' => 'NOT-YET-VALID', 'result' => 'not_yet_valid']);
+        $this->assertDatabaseHas('rfid_logs', ['uid' => 'EXPIRED', 'result' => 'expired']);
+        $this->assertDatabaseHas('rfid_logs', ['uid' => 'DISABLED', 'result' => 'disabled']);
+        $this->assertDatabaseHas('rfid_logs', ['uid' => 'CURRENTLY-VALID', 'result' => 'identified']);
+        $this->assertDatabaseHas('rfid_logs', ['uid' => 'NOT-REGISTERED', 'result' => 'unknown']);
+    }
+
+    public function test_staff_can_update_rfid_validity_and_disable_a_card_without_deleting_it(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00055', 'RFID Settings Patient', '09170000055');
+        $card = RfidCard::factory()->for($patient)->create(['uid' => 'ORIGINAL-UID']);
+        $historicalLog = RfidLog::factory()->for($patient)->for($card, 'card')->create([
+            'uid' => 'ORIGINAL-UID',
+        ]);
+
+        $this->actingAs($staff)
+            ->post(route('clinic.rfid.assign', $patient), [
+                'uid' => 'UPDATED-UID',
+                'valid_from' => '2026-10-29T10:00',
+                'valid_until' => '2026-10-30T10:00',
+                'is_active' => '0',
+            ])
+            ->assertSessionHas('status', 'RFID card assigned.');
+
+        $this->assertDatabaseHas('rfid_cards', [
+            'id' => $card->id,
+            'patient_id' => $patient->id,
+            'uid' => 'UPDATED-UID',
+            'is_active' => false,
+            'valid_from' => '2026-10-29 10:00:00',
+            'valid_until' => '2026-10-30 10:00:00',
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $staff->id,
+            'action' => 'rfid_card_updated',
+            'record_id' => (string) $card->id,
+        ]);
+        $this->assertModelExists($historicalLog);
+        $this->get(route('clinic.rfid.index'))
+            ->assertSee('Oct 29, 2026 10:00 AM')
+            ->assertSee('Oct 30, 2026 10:00 AM')
+            ->assertSee('disabled');
+    }
+
+    public function test_rfid_validity_fields_render_custom_calendar_and_thirty_minute_time_picker(): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-30 21:00:00', config('clinic.timezone')));
+        $staff = User::factory()->create(['role' => 'staff']);
+        $this->createPatient('P-2026-00057', 'RFID Picker Patient', '09170000057');
+
+        $this->actingAs($staff)
+            ->get(route('clinic.rfid.index'))
+            ->assertSee('data-rfid-validity-picker', false)
+            ->assertSee('data-clinic-today="2026-10-30"', false)
+            ->assertSee('Validity time')
+            ->assertSee('Choose validity time')
+            ->assertSee('minutes += 30', false)
+            ->assertSee('minutes < 24 * 60', false)
+            ->assertSee('Validity times in 30-minute intervals')
+            ->assertSee('interval.textContent = \'30 min\'', false)
+            ->assertSee('const displayHour = hour % 12 || 12;', false)
+            ->assertSee('Clear limit')
+            ->assertSee('Today')
+            ->assertSee('Done')
+            ->assertSee('rfid-validity-day-selected')
+            ->assertSee('name="valid_from"', false)
+            ->assertSee('name="valid_until"', false);
+    }
+
+    public function test_rfid_valid_until_must_follow_valid_from(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00056', 'Invalid RFID Period Patient', '09170000056');
+
+        $this->actingAs($staff)
+            ->post(route('clinic.rfid.assign', $patient), [
+                'uid' => 'INVALID-PERIOD',
+                'valid_from' => '2026-10-30T10:00',
+                'valid_until' => '2026-10-29T10:00',
+                'is_active' => '1',
+            ])
+            ->assertSessionHasErrors('valid_until');
+
+        $this->assertDatabaseCount('rfid_cards', 0);
+    }
+
     public function test_new_scan_replaces_the_displayed_patient_and_unknown_card_clears_it(): void
     {
         $staff = User::factory()->create(['role' => 'staff']);
@@ -113,7 +252,7 @@ class RfidCheckInTest extends TestCase
 
         $unknownResponse = $this->post(route('clinic.rfid.scan.submit'), ['uid' => 'UNKNOWN-SCAN']);
         $unknownResponse->assertOk()
-            ->assertSee('No active patient card matches UID')
+            ->assertSee('No registered RFID card matches this UID.')
             ->assertSee('UNKNOWN-SCAN')
             ->assertDontSee('First Scan Patient')
             ->assertDontSee('Second Scan Patient')

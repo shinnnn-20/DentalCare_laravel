@@ -15,6 +15,8 @@ class GuestRouteProtectionTest extends TestCase
             'dashboard',
             'appointments.index',
             'appointments.availability',
+            'clinic.appointment-records',
+            'clinic.availability.index',
             'patient.billing',
             'clinic.patients.index',
             'clinic.billing.index',

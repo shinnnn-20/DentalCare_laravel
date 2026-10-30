@@ -145,10 +145,10 @@ class PayMongoBillPaymentReconciler
 
             $receipt = Receipt::query()->create([
                 'payment_id' => $payment->id,
-                'receipt_number' => 'OR-PENDING-'.Str::uuid(),
+                'receipt_number' => 'AR-PENDING-'.Str::uuid(),
             ]);
             $receipt->update([
-                'receipt_number' => sprintf('OR-%s-%06d', $paidAt->format('Y'), $receipt->id),
+                'receipt_number' => sprintf('AR-%s-%06d', $paidAt->format('Y'), $receipt->id),
             ]);
 
             $bill->update(['payment_status' => 'paid']);

@@ -23,6 +23,7 @@ class BillItemFactory extends Factory
             'bill_id' => Bill::factory(),
             'service_id' => Service::factory(),
             'service_name' => fake()->words(2, true),
+            'is_add_on' => false,
             'quantity' => 1,
             'unit_price' => 1000,
             'subtotal' => 1000,

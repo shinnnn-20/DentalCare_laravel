@@ -39,8 +39,17 @@ class PatientController extends Controller
         return view('patients.index', compact('patients'));
     }
 
-    public function show(Patient $patient): View
+    public function show(Request $request, Patient $patient): View
     {
+        $filters = $request->validate([
+            'record' => ['nullable', 'integer'],
+        ]);
+        $highlightedDentalRecordId = isset($filters['record']) ? (int) $filters['record'] : null;
+
+        if ($highlightedDentalRecordId !== null) {
+            abort_unless($patient->dentalRecords()->whereKey($highlightedDentalRecordId)->exists(), 404);
+        }
+
         $patient->load([
             'user',
             'rfidCard',
@@ -48,7 +57,7 @@ class PatientController extends Controller
             'dentalRecords' => fn ($query) => $query->with(['creator', 'appointment.service', 'appointment.services'])->latest(),
         ]);
 
-        return view('patients.show', compact('patient'));
+        return view('patients.show', compact('patient', 'highlightedDentalRecordId'));
     }
 
     public function resetPassword(Request $request, Patient $patient, AuditTrail $auditTrail): RedirectResponse

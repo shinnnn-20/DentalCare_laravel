@@ -8,15 +8,18 @@ use App\Models\Bill;
 use App\Models\Branch;
 use App\Models\DentalRecord;
 use App\Models\Patient;
+use App\Models\Payment;
 use App\Models\QueueEntry;
 use App\Models\SmsLog;
 use App\Services\AuditTrail;
 use App\Services\ClinicNotificationService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
@@ -127,7 +130,7 @@ class ClinicWorkflowController extends Controller
             'appointment_id' => $appointment->id,
         ];
 
-        return redirect()->to(route('appointments.index', $query).'#appointment-'.$appointment->id)
+        return redirect()->to(route('clinic.appointment-records', $query).'#appointment-'.$appointment->id)
             ->with('status', $message);
     }
 
@@ -358,12 +361,23 @@ class ClinicWorkflowController extends Controller
 
     public function reports(Request $request): View
     {
+        $branches = Branch::query()->orderBy('name')->get(['id', 'name']);
         $filters = $request->validate([
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
+            'branch_id' => ['nullable', Rule::in([
+                'unassigned',
+                ...$branches->map(fn (Branch $branch): string => (string) $branch->id)->all(),
+            ])],
         ]);
         $from = $filters['from'] ?? today()->toDateString();
         $to = $filters['to'] ?? today()->toDateString();
+        $branchId = $filters['branch_id'] ?? null;
+        $selectedBranchName = match ($branchId) {
+            'unassigned' => 'Unassigned appointments',
+            null => 'All branches',
+            default => $branches->firstWhere('id', (int) $branchId)?->name ?? 'All branches',
+        };
         $rangeStart = Carbon::parse($from, config('clinic.timezone'))->startOfDay();
         $rangeEnd = Carbon::parse($to, config('clinic.timezone'))->endOfDay();
         $rangeDays = $rangeStart->diffInDays($rangeEnd) + 1;
@@ -398,7 +412,11 @@ class ClinicWorkflowController extends Controller
             };
         }
 
-        $appointmentRows = Appointment::query()
+        $appointmentsForBranch = fn (): Builder => $this->applyReportBranchFilter(
+            Appointment::query(),
+            $branchId,
+        );
+        $appointmentRows = $appointmentsForBranch()
             ->selectRaw('DATE(starts_at) as activity_date, COUNT(*) as total')
             ->whereBetween('starts_at', [$rangeStart, $rangeEnd])
             ->groupBy('activity_date')
@@ -410,7 +428,7 @@ class ClinicWorkflowController extends Controller
             }
         }
 
-        $revenueRows = DB::table('payments')
+        $revenueRows = $this->applyReportPaymentBranchFilter(Payment::query(), $branchId)
             ->selectRaw('DATE(created_at) as activity_date, SUM(applied_amount) as total')
             ->whereBetween('created_at', [$rangeStart, $rangeEnd])
             ->groupBy('activity_date')
@@ -422,7 +440,7 @@ class ClinicWorkflowController extends Controller
             }
         }
 
-        $statusCounts = Appointment::query()
+        $statusCounts = $appointmentsForBranch()
             ->selectRaw('status, COUNT(*) as total')
             ->whereBetween('starts_at', [$rangeStart, $rangeEnd])
             ->groupBy('status')
@@ -438,20 +456,54 @@ class ClinicWorkflowController extends Controller
         $appointmentMaximum = max(1, ...array_column($timeline, 'appointments'));
         $revenueMaximum = max(1.0, ...array_column($timeline, 'revenue'));
 
+        $newPatientsQuery = Patient::query()->whereBetween('created_at', [$rangeStart, $rangeEnd]);
+        if ($branchId !== null) {
+            $newPatientsQuery->whereHas('appointments', fn (Builder $query): Builder => $this->applyReportBranchFilter(
+                $query,
+                $branchId,
+            ));
+        }
+
         return view('reports.index', [
             'from' => $from,
             'to' => $to,
-            'appointments' => Appointment::whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
-            'walkIns' => Appointment::where('type', 'walk_in')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
-            'completed' => Appointment::where('status', 'completed')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
-            'cancelled' => Appointment::where('status', 'cancelled')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
-            'revenue' => DB::table('payments')->whereBetween('created_at', [$rangeStart, $rangeEnd])->sum('applied_amount'),
-            'newPatients' => Patient::whereBetween('created_at', [$rangeStart, $rangeEnd])->count(),
+            'appointments' => $appointmentsForBranch()->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
+            'walkIns' => $appointmentsForBranch()->where('type', 'walk_in')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
+            'completed' => $appointmentsForBranch()->where('status', 'completed')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
+            'cancelled' => $appointmentsForBranch()->where('status', 'cancelled')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
+            'revenue' => $this->applyReportPaymentBranchFilter(Payment::query(), $branchId)
+                ->whereBetween('created_at', [$rangeStart, $rangeEnd])
+                ->sum('applied_amount'),
+            'newPatients' => $newPatientsQuery->count(),
             'timeline' => $timeline,
             'statuses' => $statuses,
             'appointmentMaximum' => $appointmentMaximum,
             'revenueMaximum' => $revenueMaximum,
+            'branches' => $branches,
+            'selectedBranchId' => $branchId,
+            'selectedBranchName' => $selectedBranchName,
         ]);
+    }
+
+    private function applyReportBranchFilter(Builder $query, ?string $branchId): Builder
+    {
+        return match ($branchId) {
+            'unassigned' => $query->whereNull('branch_id'),
+            null => $query,
+            default => $query->where('branch_id', $branchId),
+        };
+    }
+
+    private function applyReportPaymentBranchFilter(Builder $query, ?string $branchId): Builder
+    {
+        if ($branchId !== null) {
+            $query->whereHas('bill.appointment', fn (Builder $appointmentQuery): Builder => $this->applyReportBranchFilter(
+                $appointmentQuery,
+                $branchId,
+            ));
+        }
+
+        return $query;
     }
 
     public function auditLogs(Request $request): View

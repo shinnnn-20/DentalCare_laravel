@@ -76,8 +76,11 @@
         <h2 class="border-b border-slate-100 px-5 py-4 font-semibold">Dental history</h2>
         <div class="divide-y divide-slate-100">
             @forelse ($patient->dentalRecords as $record)
-                <article class="grid gap-2 px-5 py-4 sm:grid-cols-[150px_1fr]">
-                    <p class="text-sm text-slate-500">{{ $record->created_at->format('M j, Y') }}</p>
+            <article id="dental-record-{{ $record->id }}" @class([
+                'grid gap-2 px-5 py-4 sm:grid-cols-[150px_1fr]',
+                'bg-amber-50 outline outline-2 outline-amber-400 outline-offset-[-2px]' => $highlightedDentalRecordId === $record->id,
+            ]) @if ($highlightedDentalRecordId === $record->id) aria-current="true" @endif>
+                <p class="text-sm text-slate-500">{{ $record->created_at->format('M j, Y') }}</p>
                     <div>
                         <h3 class="font-semibold">{{ $record->treatment }}</h3>
                         <p class="mt-1 text-sm"><span class="font-medium">Diagnosis:</span> {{ $record->diagnosis }}</p>

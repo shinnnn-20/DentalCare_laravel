@@ -7,31 +7,53 @@
         <div class="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert">{{ $errors->first('checkout') }}</div>
     @endif
     <div class="mb-8 flex flex-wrap items-end justify-between gap-4 print-hidden">
-        <div><p class="text-sm font-medium text-teal-700">Clinic operations</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Billing & payments</h1><p class="mt-2 text-slate-500">Record transactions and issue a receipt for each payment.</p></div>
+        <div><p class="text-sm font-medium text-teal-700">Clinic operations</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Billing & payments</h1><p class="mt-2 text-slate-500">Record transactions and issue an acknowledgement receipt for each payment.</p></div>
         <button class="btn-secondary gap-2" type="button" data-print-all-bills>
             🖨 Print All
         </button>
     </div>
+    <p class="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950 print-hidden">
+        <strong class="block">ACKNOWLEDGEMENT RECEIPT (AR) ONLY</strong>
+        ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.
+    </p>
     <section class="rounded-2xl border border-slate-200 bg-white">
         <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Bill</th><th>Patient</th><th>Services</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Action</th><th>Record payment</th></tr></thead><tbody>
             @forelse ($bills as $bill)
                 @php($paid = (float) $bill->payments->sum('applied_amount'))
                 @php($balance = max(0, (float) $bill->total - $paid))
+                @php($originalItems = $bill->items->where('is_add_on', false))
+                @php($addOnItems = $bill->items->where('is_add_on', true))
                 @php($unreconciledPaymongoCheckout = $bill->payMongoBillCheckouts->contains(fn ($checkout) => $checkout->status === 'paid' && (! $checkout->paid_payment_id || ! $bill->payments->contains(fn ($payment) => $payment->provider === 'paymongo' && $payment->is_test && $payment->provider_transaction_id === $checkout->paid_payment_id))))
                 <tr id="bill-{{ $bill->id }}" @class(['selected-bill' => $selectedBillId === $bill->id])>
                     <td data-label="Bill" class="font-semibold">{{ $bill->bill_number }}<div class="text-xs font-normal text-slate-400">{{ $bill->created_at->format('M j, Y') }}</div></td>
                     <td data-label="Patient">{{ $bill->patient->user->name }}<div class="text-xs text-slate-400">{{ $bill->patient->patient_number }}</div></td>
                     <td data-label="Services" class="min-w-56">
-                        @forelse ($bill->items as $item)
-                            <p class="text-sm font-medium">{{ $item->service_name }}</p>
-                            <p class="mb-2 text-xs text-slate-500">{{ $item->quantity }} × ₱{{ number_format((float) $item->unit_price, 2) }} = ₱{{ number_format((float) $item->subtotal, 2) }}</p>
-                        @empty
+                        @if ($originalItems->isNotEmpty())
+                            <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Original Services</p>
+                            @foreach ($originalItems as $item)
+                                <p class="text-sm font-medium">{{ $item->service_name }}</p>
+                                <p class="mb-2 text-xs text-slate-500">{{ $item->quantity }} × ₱{{ number_format((float) $item->unit_price, 2) }} = ₱{{ number_format((float) $item->subtotal, 2) }}</p>
+                            @endforeach
+                        @endif
+                        @if ($addOnItems->isNotEmpty())
+                            <p class="mb-1 mt-2 text-xs font-semibold uppercase tracking-wide text-teal-800">Add-on Services</p>
+                            @foreach ($addOnItems as $item)
+                                <p class="text-sm font-medium"><span class="mr-1 inline-flex rounded-full bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-800">Add-on Service</span>{{ $item->service_name }}</p>
+                                <p class="mb-2 text-xs text-slate-500">{{ $item->quantity }} × ₱{{ number_format((float) $item->unit_price, 2) }} = ₱{{ number_format((float) $item->subtotal, 2) }}</p>
+                            @endforeach
+                        @endif
+                        @if ($bill->items->isEmpty())
                             <span class="text-sm text-slate-500">No services recorded for this bill.</span>
-                        @endforelse
+                        @endif
                     </td>
                     <td data-label="Total">₱{{ number_format((float) $bill->total, 2) }}</td><td data-label="Paid">₱{{ number_format($paid, 2) }}</td><td data-label="Balance">₱{{ number_format($balance, 2) }}</td>
                     <td data-label="Status"><span class="status-badge capitalize">{{ str_replace('_', ' ', $bill->payment_status) }}</span></td>
-                    <td data-label="Action"><button class="btn-small whitespace-nowrap" type="button" data-print-bill="bill-print-{{ $bill->id }}">🖨 Print Bill</button></td>
+                    <td data-label="Action">
+                        <button class="btn-small whitespace-nowrap" type="button" data-print-bill="bill-print-{{ $bill->id }}">🖨 Print Bill</button>
+                        @if ($bill->appointment && in_array($bill->appointment->status, ['billed', 'completed'], true))
+                            <a class="btn-small mt-2 whitespace-nowrap" href="{{ route('clinic.bills.additional-services.create', $bill) }}">Add services</a>
+                        @endif
+                    </td>
                     <td data-label="Record payment" class="min-w-80">
                         @if ($bill->payMongoBillCheckouts->contains('status', 'review'))
                             <p class="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
@@ -136,7 +158,7 @@
                     <th>Remaining Balance</th>
                     <th>Payment Status</th>
                     <th>Payment Details</th>
-                    <th>OR / Receipt Number</th>
+                    <th>AR / Receipt Number</th>
                 </tr>
             </thead>
             <tbody>
@@ -183,6 +205,8 @@
     @foreach ($bills as $bill)
         @php($paid = (float) $bill->payments->sum('applied_amount'))
         @php($balance = max(0, (float) $bill->total - $paid))
+        @php($originalItems = $bill->items->where('is_add_on', false))
+        @php($addOnItems = $bill->items->where('is_add_on', true))
         <article class="billing-print-paper" id="bill-print-{{ $bill->id }}">
             <header class="bill-print-header">
                 <img class="bill-print-logo" src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="Doc Brigs Dental Care logo">
@@ -194,9 +218,10 @@
                     @if (config('clinic.phone') !== 'Clinic contact not configured')
                         <p>{{ config('clinic.phone') }}</p>
                     @endif
-                    <h2>Bill / Payment Receipt</h2>
+                    <h2>ACKNOWLEDGEMENT RECEIPT (AR) ONLY</h2>
                 </div>
             </header>
+            <p class="bill-print-disclaimer">ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.</p>
 
             <section class="bill-print-details">
                 <div><span>Bill No</span><strong>{{ $bill->bill_number }}</strong></div>
@@ -208,19 +233,38 @@
             @if ($bill->items->isNotEmpty())
                 <section class="bill-print-items">
                     <h3>Services / Items</h3>
-                    <table>
-                        <thead><tr><th>Service / Item</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
-                        <tbody>
-                            @foreach ($bill->items as $item)
-                                <tr>
-                                    <td>{{ $item->service_name }}</td>
-                                    <td>{{ $item->quantity }}</td>
-                                    <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->unit_price, 2) }}</td>
-                                    <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->subtotal, 2) }}</td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
+                    @if ($originalItems->isNotEmpty())
+                        <h4>Original Services</h4>
+                        <table>
+                            <thead><tr><th>Service / Item</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
+                            <tbody>
+                                @foreach ($originalItems as $item)
+                                    <tr>
+                                        <td>{{ $item->service_name }}</td>
+                                        <td>{{ $item->quantity }}</td>
+                                        <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->unit_price, 2) }}</td>
+                                        <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->subtotal, 2) }}</td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    @endif
+                    @if ($addOnItems->isNotEmpty())
+                        <h4>Add-on Services</h4>
+                        <table>
+                            <thead><tr><th>Service / Item</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
+                            <tbody>
+                                @foreach ($addOnItems as $item)
+                                    <tr>
+                                        <td><strong>Add-on Service</strong><br>{{ $item->service_name }}</td>
+                                        <td>{{ $item->quantity }}</td>
+                                        <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->unit_price, 2) }}</td>
+                                        <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->subtotal, 2) }}</td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    @endif
                 </section>
             @endif
 
@@ -230,7 +274,7 @@
                 <div><span>Remaining Balance</span><strong>₱{{ number_format($balance, 2) }}</strong></div>
                 <div><span>Status</span><strong>{{ strtoupper(str_replace('_', ' ', $bill->payment_status)) }}</strong></div>
                 <div>
-                    <span>OR / Receipt Number</span>
+                    <span>AR / Receipt Number</span>
                     <strong>{{ $bill->payments->map(fn ($payment) => $payment->receipt?->receipt_number ? $payment->receipt->receipt_number.($payment->is_test ? ' (TEST MODE)' : '') : null)->filter()->implode(', ') ?: '—' }}</strong>
                 </div>
             </section>
@@ -239,7 +283,7 @@
                 <section class="bill-print-payments">
                     <h3>Payment details</h3>
                     <table>
-                        <thead><tr><th>Date</th><th>Payment method / provider</th><th>Amount applied</th><th>Provider reference</th><th>OR / Receipt No</th></tr></thead>
+                        <thead><tr><th>Date</th><th>Payment method / provider</th><th>Amount applied</th><th>Provider reference</th><th>AR / Receipt No</th></tr></thead>
                         <tbody>
                             @foreach ($bill->payments as $payment)
                                 <tr>

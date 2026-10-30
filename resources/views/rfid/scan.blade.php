@@ -50,7 +50,13 @@
                     <a class="mt-4 inline-flex text-sm font-semibold text-teal-800 hover:underline" href="{{ route('clinic.patients.show', $patient) }}">Open patient profile →</a>
                 </div>
             @else
-                <div class="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">No active patient card matches UID <strong>{{ $uid }}</strong>. Verify the UID or assign the card to a patient.</div>
+                <div class="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900" role="alert">
+                    <p class="font-semibold">{{ $scanMessage }}</p>
+                    <p class="mt-1">UID: <strong>{{ $uid }}</strong></p>
+                    @if ($cardStatus === 'not_registered')
+                        <p class="mt-1">Verify the UID or assign the card to a patient.</p>
+                    @endif
+                </div>
             @endif
         @endisset
     </section>
