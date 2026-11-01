@@ -34,7 +34,7 @@ class LandingPageTest extends TestCase
             ->assertSee('Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107')
             ->assertSee('where1=14.313687869546%2C%20120.91615498066')
             ->assertSee('target="_blank" rel="noopener noreferrer"', false)
-            ->assertSee('images/landing/doc-brigs-logo.png')
+            ->assertSee('images/landing/doc-brigs-dental-care-logo.jpg')
             ->assertSee('images/landing/clinic-exterior.png')
             ->assertSee('images/landing/clinic-services.png')
             ->assertSee('images/landing/clinic-interior.png')
@@ -48,9 +48,13 @@ class LandingPageTest extends TestCase
         $this->actingAs($user)
             ->get(route('home'))
             ->assertOk()
-            ->assertSee('Doc Brigs Dental Care');
+            ->assertSee('Doc Brigs Dental Care')
+            ->assertSee(asset('images/landing/doc-brigs-dental-care-logo.jpg'), false);
 
-        $this->get(route('dashboard'))->assertOk();
+        $this->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee(asset('images/landing/doc-brigs-dental-care-logo.jpg'), false)
+            ->assertSee('alt="Doc Brigs Dental Care logo"', false);
         $this->get(route('appointments.index'))->assertOk();
     }
 }

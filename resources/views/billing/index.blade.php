@@ -25,7 +25,7 @@
                 @php($addOnItems = $bill->items->where('is_add_on', true))
                 @php($unreconciledPaymongoCheckout = $bill->payMongoBillCheckouts->contains(fn ($checkout) => $checkout->status === 'paid' && (! $checkout->paid_payment_id || ! $bill->payments->contains(fn ($payment) => $payment->provider === 'paymongo' && $payment->is_test && $payment->provider_transaction_id === $checkout->paid_payment_id))))
                 <tr id="bill-{{ $bill->id }}" @class(['selected-bill' => $selectedBillId === $bill->id])>
-                    <td data-label="Bill" class="font-semibold">{{ $bill->bill_number }}<div class="text-xs font-normal text-slate-400">{{ $bill->created_at->format('M j, Y') }}</div></td>
+                    <td data-label="Bill" class="font-semibold">{{ $bill->bill_number }}<div class="text-xs font-normal text-slate-400">{{ $bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y') }}</div></td>
                     <td data-label="Patient">{{ $bill->patient->user->name }}<div class="text-xs text-slate-400">{{ $bill->patient->patient_number }}</div></td>
                     <td data-label="Services" class="min-w-56">
                         @if ($originalItems->isNotEmpty())
@@ -46,7 +46,7 @@
                             <span class="text-sm text-slate-500">No services recorded for this bill.</span>
                         @endif
                     </td>
-                    <td data-label="Total">₱{{ number_format((float) $bill->total, 2) }}</td><td data-label="Paid">₱{{ number_format($paid, 2) }}</td><td data-label="Balance">₱{{ number_format($balance, 2) }}</td>
+                    <td data-label="Total">₱{{ number_format((float) $bill->total, 2) }}<span class="mt-1 block text-xs text-slate-500">{{ $bill->discountLabel() }}: ₱{{ number_format((float) $bill->discount, 2) }}</span></td><td data-label="Paid">₱{{ number_format($paid, 2) }}</td><td data-label="Balance">₱{{ number_format($balance, 2) }}</td>
                     <td data-label="Status"><span class="status-badge capitalize">{{ str_replace('_', ' ', $bill->payment_status) }}</span></td>
                     <td data-label="Action">
                         <button class="btn-small whitespace-nowrap" type="button" data-print-bill="bill-print-{{ $bill->id }}">🖨 Print Bill</button>
@@ -101,7 +101,7 @@
                                                 <span class="text-amber-700">· PayMongo TEST MODE</span>
                                             @endif
                                         </p>
-                                        <p class="mt-1 text-slate-500">{{ ($payment->paid_at ?? $payment->created_at)->format('M j, Y g:i A') }}</p>
+                                        <p class="mt-1 text-slate-500">{{ ($payment->paid_at ?? $payment->created_at)->timezone(config('clinic.timezone'))->format('M j, Y g:i A') }}</p>
                                         @if ($payment->provider_transaction_id)
                                             <p class="mt-1 break-all text-slate-500">PayMongo payment: {{ $payment->provider_transaction_id }}</p>
                                             <p class="break-all text-slate-500">Checkout session: {{ $payment->provider_checkout_session_id }}</p>
@@ -131,7 +131,7 @@
                 <p>{{ config('clinic.address') }}</p>
                 <p>{{ config('clinic.phone') }}</p>
                 <h1>Billing &amp; Payments</h1>
-                <p>Generated {{ now()->format('F j, Y g:i A') }}</p>
+                <p>Generated {{ now(config('clinic.timezone'))->format('F j, Y g:i A') }}</p>
             </div>
         </header>
         <table class="billing-print-table">
@@ -168,7 +168,7 @@
                     @php($receiptNumbers = $bill->payments->map(fn ($payment) => $payment->receipt?->receipt_number ? $payment->receipt->receipt_number.($payment->is_test ? ' (TEST MODE)' : '') : null)->filter()->implode(', '))
                     <tr>
                         <td>{{ $bill->bill_number }}</td>
-                        <td>{{ $bill->created_at->format('M j, Y') }}</td>
+                        <td>{{ $bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y') }}</td>
                         <td>{{ $bill->patient->user->name }}</td>
                         <td>{{ $bill->patient->patient_number }}</td>
                         <td>₱{{ number_format((float) $bill->total, 2) }}</td>
@@ -225,7 +225,7 @@
 
             <section class="bill-print-details">
                 <div><span>Bill No</span><strong>{{ $bill->bill_number }}</strong></div>
-                <div><span>Date</span><strong>{{ $bill->created_at->format('M j, Y') }}</strong></div>
+                <div><span>Date</span><strong>{{ $bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y') }}</strong></div>
                 <div><span>Patient</span><strong>{{ $bill->patient->user->name }}</strong></div>
                 <div><span>Patient ID</span><strong>{{ $bill->patient->patient_number }}</strong></div>
             </section>
@@ -269,6 +269,7 @@
             @endif
 
             <section class="bill-print-summary">
+                <div><span>{{ $bill->discountLabel() }}</span><strong>₱{{ number_format((float) $bill->discount, 2) }}</strong></div>
                 <div><span>Total Amount</span><strong>₱{{ number_format((float) $bill->total, 2) }}</strong></div>
                 <div><span>Amount Paid</span><strong>₱{{ number_format($paid, 2) }}</strong></div>
                 <div><span>Remaining Balance</span><strong>₱{{ number_format($balance, 2) }}</strong></div>
@@ -287,7 +288,7 @@
                         <tbody>
                             @foreach ($bill->payments as $payment)
                                 <tr>
-                                    <td>{{ ($payment->paid_at ?? $payment->created_at)->format('M j, Y g:i A') }}</td>
+                                    <td>{{ ($payment->paid_at ?? $payment->created_at)->timezone(config('clinic.timezone'))->format('M j, Y g:i A') }}</td>
                                     <td>
                                         {{ strtoupper($payment->method) }}
                                         @if ($payment->provider === 'paymongo' && $payment->is_test)

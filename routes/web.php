@@ -79,7 +79,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::get('/appointments', [AppointmentController::class, 'index'])->name('appointments.index');
     Route::post('/appointments', [AppointmentController::class, 'store'])->name('appointments.store');
     Route::post('/appointments/{appointment}/action/{action}', [AppointmentController::class, 'transition'])
-        ->whereIn('action', ['approve', 'reject', 'cancel', 'call', 'consult', 'complete', 'no-show'])
+        ->whereIn('action', ['approve', 'reject', 'cancel', 'call', 'consult', 'no-show'])
         ->name('appointments.transition');
     Route::patch('/clinic/appointments/{appointment}/reschedule', [AppointmentController::class, 'reschedule'])
         ->middleware('role:admin,staff,doctor')
@@ -153,11 +153,13 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::prefix('admin')->name('admin.')->middleware('role:admin')->group(function (): void {
         Route::get('/staff', [StaffController::class, 'index'])->name('staff.index');
         Route::post('/staff', [StaffController::class, 'store'])->name('staff.store');
+        Route::patch('/staff/{staff}/branch', [StaffController::class, 'updateBranch'])->name('staff.branch.update');
         Route::patch('/staff/{staff}/toggle', [StaffController::class, 'toggle'])->name('staff.toggle');
         Route::put('/staff/{staff}/password', [StaffController::class, 'resetPassword'])->name('staff.password');
         Route::post('/services', [ServiceController::class, 'store'])->name('services.store');
         Route::put('/services/{service}', [ServiceController::class, 'update'])->name('services.update');
         Route::get('/reports', [ClinicWorkflowController::class, 'reports'])->name('reports');
+        Route::get('/reports/details', [ClinicWorkflowController::class, 'reportDetails'])->name('reports.details');
         Route::get('/audit-logs', [ClinicWorkflowController::class, 'auditLogs'])->name('audit-logs');
         Route::get('/sms-logs', [ClinicWorkflowController::class, 'smsLogs'])->name('sms-logs');
     });

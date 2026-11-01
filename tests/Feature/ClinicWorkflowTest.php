@@ -14,6 +14,7 @@ use App\Models\Receipt;
 use App\Models\RfidCard;
 use App\Models\Service;
 use App\Models\User;
+use Carbon\Constants\UnitValue;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Config;
@@ -69,6 +70,8 @@ class ClinicWorkflowTest extends TestCase
         $this->get(route('login'))
             ->assertOk()
             ->assertSee('Doc Brigs Dental Care')
+            ->assertSee(asset('images/landing/doc-brigs-dental-care-logo.jpg'), false)
+            ->assertSee('alt="Doc Brigs Dental Care logo"', false)
             ->assertSee('data-password-toggle', false)
             ->assertSee('Show password', false)
             ->assertSee('type="password"', false);
@@ -471,7 +474,7 @@ class ClinicWorkflowTest extends TestCase
             'address' => 'Other address',
         ]);
         $service = Service::create(['name' => 'Consultation', 'price' => 500, 'is_active' => true]);
-        $bookingStart = now()->next(Carbon::MONDAY)->setTime(10, 0);
+        $bookingStart = now()->next(UnitValue::MONDAY)->setTime(10, 0);
 
         $this->actingAs($patientUser)
             ->post(route('appointments.store'), [
@@ -879,6 +882,7 @@ class ClinicWorkflowTest extends TestCase
                 'email' => 'doctor@example.test',
                 'phone' => '09170000000',
                 'role' => 'doctor',
+                'branch_id' => $this->generalTriasBranchId(),
                 'password' => 'temporary-doctor-password',
                 'password_confirmation' => 'temporary-doctor-password',
             ])
@@ -896,7 +900,8 @@ class ClinicWorkflowTest extends TestCase
         $this->get(route('admin.staff.index'))
             ->assertSee('Staff and doctor accounts')
             ->assertSee('Clinic Doctor')
-            ->assertSee('Doctor');
+            ->assertSee('Doctor')
+            ->assertSee('General Trias Branch');
 
         $this->patch(route('admin.staff.toggle', $doctor))
             ->assertSessionHas('status', 'Doctor account status updated.');
@@ -994,6 +999,7 @@ class ClinicWorkflowTest extends TestCase
     #[DataProvider('clinicStaffRoles')]
     public function test_admin_and_staff_can_print_the_billing_page_and_an_individual_bill(string $role): void
     {
+        $this->travelTo(Carbon::parse('2026-10-21 12:00:00', config('clinic.timezone')));
         $actor = User::factory()->create(['role' => $role]);
         $bill = Bill::factory()->create([
             'bill_number' => 'B-2026-PRINT01',
@@ -1021,6 +1027,7 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('🖨 Print Bill')
             ->assertSee('data-billing-print-report', false)
             ->assertSee('data-print-all-page', false)
+            ->assertSee('Generated October 21, 2026 12:00 PM')
             ->assertSee('class="billing-print-logo"', false)
             ->assertSee('class="bill-print-logo"', false)
             ->assertSee(asset('images/landing/doc-brigs-logo.png'))
@@ -1076,28 +1083,28 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('name="confirm_final_price"', false);
 
         $this->post(route('clinic.bills.store', $appointment), [
-            'discount' => '0.00',
+            'discount_value' => '0',
         ])->assertSessionHasErrors(['final_price', 'confirm_final_price']);
         $this->assertDatabaseCount('bills', 0);
         $this->assertSame('in_consultation', $appointment->fresh()->status);
 
         $this->post(route('clinic.bills.store', $appointment), [
             'final_price' => '1200.00',
-            'discount' => '100.00',
+            'discount_value' => '8.33',
         ])->assertSessionHasErrors('confirm_final_price');
         $this->assertDatabaseCount('bills', 0);
 
         $this->post(route('clinic.bills.store', $appointment), [
             'final_price' => '1200.00',
             'confirm_final_price' => '1',
-            'discount' => '1200.01',
-        ])->assertSessionHasErrors('discount');
+            'discount_value' => '100.01',
+        ])->assertSessionHasErrors('discount_value');
         $this->assertDatabaseCount('bills', 0);
 
         $this->post(route('clinic.bills.store', $appointment), [
             'final_price' => '1,200.50',
             'confirm_final_price' => '1',
-            'discount' => '100.50',
+            'discount_value' => '8.33',
         ])->assertRedirectToRoute('clinic.billing.index');
 
         $bill = Bill::firstOrFail();
@@ -1105,8 +1112,10 @@ class ClinicWorkflowTest extends TestCase
             'id' => $bill->id,
             'created_by' => $staff->id,
             'subtotal' => '1200.50',
-            'discount' => '100.50',
-            'total' => '1100.00',
+            'discount_type' => 'percentage',
+            'discount_value' => '8.33',
+            'discount' => '100.00',
+            'total' => '1100.50',
         ]);
         $this->assertDatabaseHas('bill_items', [
             'bill_id' => $bill->id,
@@ -1116,6 +1125,134 @@ class ClinicWorkflowTest extends TestCase
             'subtotal' => '1200.50',
         ]);
         $this->assertSame('billed', $appointment->fresh()->status);
+    }
+
+    public function test_percentage_discount_calculates_new_bill_amount_and_preserves_existing_fixed_bill(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00121');
+        $service = Service::factory()->create([
+            'name' => 'Comprehensive Treatment',
+            'price' => 12000,
+        ]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'in_consultation',
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create();
+        $historicalBill = Bill::factory()->for($patient)->create([
+            'subtotal' => '1000.00',
+            'discount' => '125.00',
+            'total' => '875.00',
+            'payment_status' => 'partially_paid',
+        ]);
+        $historicalPayment = Payment::factory()->for($historicalBill)->create([
+            'amount' => '200.00',
+            'applied_amount' => '200.00',
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('clinic.bills.create', $appointment))
+            ->assertOk()
+            ->assertSee('Discount (%)')
+            ->assertSee('data-discounted-total', false)
+            ->assertSee('data-discount-amount', false);
+
+        $this->post(route('clinic.bills.store', $appointment), [
+            'discount_value' => '10',
+        ])->assertRedirectToRoute('clinic.billing.index');
+
+        $newBill = Bill::query()->where('appointment_id', $appointment->id)->firstOrFail();
+        $this->assertDatabaseHas('bills', [
+            'id' => $newBill->id,
+            'subtotal' => '12000.00',
+            'discount_type' => 'percentage',
+            'discount_value' => '10.00',
+            'discount' => '1200.00',
+            'total' => '10800.00',
+        ]);
+        $this->assertDatabaseHas('bills', [
+            'id' => $historicalBill->id,
+            'discount_type' => 'fixed',
+            'discount_value' => '0.00',
+            'discount' => '125.00',
+            'total' => '875.00',
+            'payment_status' => 'partially_paid',
+        ]);
+        $this->assertDatabaseHas('payments', [
+            'id' => $historicalPayment->id,
+            'bill_id' => $historicalBill->id,
+            'applied_amount' => '200.00',
+        ]);
+
+        $newBillPayment = Payment::factory()->for($newBill)->create([
+            'amount' => '100.00',
+            'applied_amount' => '100.00',
+        ]);
+        $receipt = Receipt::factory()->for($newBillPayment)->create();
+
+        $this->actingAs($staff)
+            ->get(route('clinic.billing.index'))
+            ->assertSee('Discount (10%)')
+            ->assertSee('Discount: ₱125.00')
+            ->assertSee('₱1,200.00');
+
+        $this->actingAs($patient->user)
+            ->get(route('patient.billing'))
+            ->assertSee('Discount (10%)')
+            ->assertSee('₱1,200.00')
+            ->assertSee('₱125.00');
+
+        $this->actingAs($staff)
+            ->get(route('receipts.show', $receipt))
+            ->assertSee('Discount (10%)')
+            ->assertSee('₱1,200.00');
+    }
+
+    public function test_new_bill_rejects_discount_percentages_outside_zero_to_one_hundred(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00122');
+        $service = Service::factory()->create(['price' => 12000]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'in_consultation',
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create();
+
+        foreach (['-0.01', '100.01'] as $percentage) {
+            $this->actingAs($staff)
+                ->post(route('clinic.bills.store', $appointment), [
+                    'discount_value' => $percentage,
+                ])
+                ->assertSessionHasErrors('discount_value');
+        }
+
+        $this->assertDatabaseCount('bills', 0);
+    }
+
+    public function test_new_bill_accepts_a_full_hundred_percent_discount(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00123');
+        $service = Service::factory()->create(['price' => 1000]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'in_consultation',
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create();
+
+        $this->actingAs($staff)
+            ->post(route('clinic.bills.store', $appointment), [
+                'discount_value' => '100',
+            ])
+            ->assertRedirectToRoute('clinic.billing.index');
+
+        $this->assertDatabaseHas('bills', [
+            'appointment_id' => $appointment->id,
+            'discount_type' => 'percentage',
+            'discount_value' => '100.00',
+            'discount' => '1000.00',
+            'total' => '0.00',
+            'payment_status' => 'paid',
+        ]);
     }
 
     public function test_opening_bill_creation_for_an_already_billed_appointment_redirects_to_its_bill(): void
@@ -1148,7 +1285,7 @@ class ClinicWorkflowTest extends TestCase
         $billingUrl = route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id;
 
         $this->actingAs($staff)
-            ->post(route('clinic.bills.store', $appointment), ['discount' => '0.00'])
+            ->post(route('clinic.bills.store', $appointment), ['discount_value' => '0'])
             ->assertRedirect($billingUrl)
             ->assertSessionHas('status', 'A bill already exists for this appointment.');
 
@@ -1176,7 +1313,7 @@ class ClinicWorkflowTest extends TestCase
             ->post(route('clinic.bills.store', $appointment), [
                 'final_price' => '1.00',
                 'confirm_final_price' => '1',
-                'discount' => '0.00',
+                'discount_value' => '0',
             ])
             ->assertSessionHasErrors('final_price');
 
@@ -1226,17 +1363,14 @@ class ClinicWorkflowTest extends TestCase
                 'appointment_id' => $appointment->id,
             ]).'#appointment-'.$appointment->id);
 
-        $this->post(route('clinic.bills.store', $appointment), ['discount' => '0.00'])
+        $this->post(route('clinic.bills.store', $appointment), ['discount_value' => '0'])
             ->assertRedirectToRoute('clinic.billing.index');
 
         $bill = Bill::firstOrFail();
         $this->assertDatabaseHas('appointments', ['id' => $appointment->id, 'status' => 'billed']);
         $this->actingAs($admin)
             ->post(route('appointments.transition', [$appointment, 'complete']))
-            ->assertSessionHasErrors('status');
-        $this->actingAs($staff)
-            ->post(route('appointments.transition', [$appointment, 'complete']))
-            ->assertSessionHasErrors('status');
+            ->assertNotFound();
 
         $this->post(route('clinic.payments.store', $bill), [
             'method' => 'cash',
@@ -1274,7 +1408,7 @@ class ClinicWorkflowTest extends TestCase
             'change_amount' => '200.00',
         ]);
         $this->assertDatabaseHas('bills', ['id' => $bill->id, 'payment_status' => 'paid']);
-        $this->assertDatabaseHas('appointments', ['id' => $appointment->id, 'status' => 'billed']);
+        $this->assertDatabaseHas('appointments', ['id' => $appointment->id, 'status' => 'completed']);
         $this->actingAs($patientUser)
             ->get(route('patient.billing'))
             ->assertSee('Bill Details')
@@ -1294,13 +1428,8 @@ class ClinicWorkflowTest extends TestCase
             ->assertDontSee('Print / save PDF');
         $this->actingAs($staff)
             ->get(route('clinic.appointment-records'))
-            ->assertSee('Complete');
-        $this->post(route('appointments.transition', [$appointment, 'complete']))
-            ->assertSessionHasNoErrors();
-        $this->assertDatabaseHas('appointments', ['id' => $appointment->id, 'status' => 'completed']);
-        $this->actingAs($admin)
-            ->post(route('appointments.transition', [$appointment, 'complete']))
-            ->assertSessionHasErrors('status');
+            ->assertDontSee('>Complete</button>', false)
+            ->assertSee('completed');
         $this->actingAs($admin)
             ->get(route('clinic.appointment-records'))
             ->assertSee('View bill')
@@ -1345,7 +1474,7 @@ class ClinicWorkflowTest extends TestCase
         $this->actingAs($admin)
             ->get(route('receipts.show', $receipt))
             ->assertSee('data-print-receipt', false)
-            ->assertSee('Print / save PDF')
+            ->assertSee('Print')
             ->assertSee($receipt->payment->transaction_id)
             ->assertSee($bill->bill_number);
         $otherPatient = User::factory()->create(['role' => 'patient']);
@@ -1501,7 +1630,7 @@ class ClinicWorkflowTest extends TestCase
             'address' => 'Test address',
         ]);
         $service = Service::create(['name' => 'Checkup', 'price' => 500, 'is_active' => true]);
-        $invalidStart = now()->next(Carbon::MONDAY)->setTime(10, 15);
+        $invalidStart = now()->next(UnitValue::MONDAY)->setTime(10, 15);
 
         $this->actingAs($patientUser)->get(route('appointments.index'))
             ->assertOk()
@@ -1752,7 +1881,7 @@ class ClinicWorkflowTest extends TestCase
         ]);
     }
 
-    public function test_only_a_finalized_paid_bill_allows_admin_to_complete_an_appointment(): void
+    public function test_manual_appointment_completion_action_is_no_longer_available(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $patient = $this->createPatient('P-2026-00012');
@@ -1771,7 +1900,7 @@ class ClinicWorkflowTest extends TestCase
 
         $this->actingAs($admin)
             ->post(route('appointments.transition', [$appointment, 'complete']))
-            ->assertSessionHasErrors('status');
+            ->assertNotFound();
         $this->assertSame('billed', $appointment->fresh()->status);
 
         $bill->items()->create([
@@ -1782,11 +1911,11 @@ class ClinicWorkflowTest extends TestCase
             'subtotal' => 500,
         ]);
         $this->post(route('appointments.transition', [$appointment, 'complete']))
-            ->assertSessionHasErrors('status');
+            ->assertNotFound();
         $this->assertSame('billed', $appointment->fresh()->status);
     }
 
-    public function test_zero_balance_bill_is_paid_and_can_be_completed(): void
+    public function test_zero_balance_bill_completes_automatically_after_treatment_is_recorded(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
         $patient = $this->createPatient('P-2026-00014');
@@ -1807,14 +1936,12 @@ class ClinicWorkflowTest extends TestCase
                 'status' => 'in_consultation',
                 'appointment_id' => $appointment->id,
             ]).'#appointment-'.$appointment->id);
-        $this->post(route('clinic.bills.store', $appointment), ['discount' => '0.00'])
+        $this->post(route('clinic.bills.store', $appointment), ['discount_value' => '0'])
             ->assertRedirectToRoute('clinic.billing.index');
 
         $bill = Bill::firstOrFail();
         $this->assertSame('paid', $bill->payment_status);
         $this->assertSame('0.00', $bill->total);
-        $this->post(route('appointments.transition', [$appointment, 'complete']))
-            ->assertSessionHasNoErrors();
         $this->assertSame('completed', $appointment->fresh()->status);
     }
 
@@ -2170,6 +2297,149 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('₱100.00')
             ->assertSee('Completed appointments')
             ->assertSee('Cancelled appointments');
+    }
+
+    public function test_report_cards_open_paginated_details_matching_selected_dates_and_branch(): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-21 12:00:00', config('clinic.timezone')));
+        $admin = User::factory()->create(['role' => 'admin']);
+        $generalTrias = Branch::query()->where('slug', 'general-trias')->firstOrFail();
+        $dasmarinas = Branch::query()->where('slug', 'dasmarinas')->firstOrFail();
+        $service = Service::factory()->create(['name' => 'Report Details Cleaning']);
+        $generalPatient = $this->createPatient('P-REPORT-DETAIL-001');
+        $generalPatient->forceFill([
+            'created_at' => '2026-10-21 02:00:00',
+            'updated_at' => '2026-10-21 02:00:00',
+        ])->save();
+        $otherPatient = $this->createPatient('P-REPORT-DETAIL-002');
+        $otherPatient->forceFill([
+            'created_at' => '2026-10-21 03:00:00',
+            'updated_at' => '2026-10-21 03:00:00',
+        ])->save();
+        $completedWalkIn = Appointment::factory()
+            ->for($generalPatient)
+            ->for($generalTrias)
+            ->for($service)
+            ->create([
+                'starts_at' => '2026-10-21 10:00:00',
+                'status' => 'completed',
+                'type' => 'walk_in',
+            ]);
+        Appointment::factory()
+            ->for($generalPatient)
+            ->for($generalTrias)
+            ->for($service)
+            ->create([
+                'starts_at' => '2026-10-21 11:00:00',
+                'status' => 'cancelled',
+                'type' => 'online',
+            ]);
+        $otherBranchAppointment = Appointment::factory()
+            ->for($otherPatient)
+            ->for($dasmarinas)
+            ->for($service)
+            ->create([
+                'starts_at' => '2026-10-21 12:00:00',
+                'status' => 'completed',
+                'type' => 'online',
+            ]);
+        $generalBill = Bill::factory()->for($generalPatient)->for($completedWalkIn)->create([
+            'bill_number' => 'B-REPORT-DETAIL-001',
+            'total' => '300.00',
+        ]);
+        $otherBill = Bill::factory()->for($otherPatient)->for($otherBranchAppointment)->create([
+            'bill_number' => 'B-REPORT-DETAIL-002',
+            'total' => '500.00',
+        ]);
+        Payment::factory()->for($generalBill)->create([
+            'applied_amount' => '120.00',
+            'created_at' => '2026-10-21 02:30:00',
+            'updated_at' => '2026-10-21 02:30:00',
+        ]);
+        Payment::factory()->for($generalBill)->create([
+            'applied_amount' => '80.00',
+            'created_at' => '2026-10-20 15:59:59',
+            'updated_at' => '2026-10-20 15:59:59',
+        ]);
+        Payment::factory()->for($otherBill)->create([
+            'applied_amount' => '500.00',
+            'created_at' => '2026-10-21 03:00:00',
+            'updated_at' => '2026-10-21 03:00:00',
+        ]);
+
+        $reportPage = $this->actingAs($admin)
+            ->get(route('admin.reports', [
+                'from' => '2026-10-21',
+                'to' => '2026-10-21',
+                'branch_id' => $generalTrias->id,
+            ]));
+        $reportPage->assertOk()
+            ->assertSee('print-hidden', false)
+            ->assertSee('>Print</button>', false)
+            ->assertSee('Generated October 21, 2026 · 12:00 PM')
+            ->assertSee('data-report-detail="appointments"', false)
+            ->assertSee('data-report-detail="walk_ins"', false)
+            ->assertSee('data-report-detail="completed"', false)
+            ->assertSee('data-report-detail="cancelled"', false)
+            ->assertSee('data-report-detail="new_patients"', false)
+            ->assertSee('data-report-detail="revenue"', false);
+        $this->assertSame(2, $reportPage->viewData('appointments'));
+        $this->assertSame(1, $reportPage->viewData('walkIns'));
+        $this->assertSame(1, $reportPage->viewData('completed'));
+        $this->assertSame(1, $reportPage->viewData('cancelled'));
+        $this->assertSame(1, $reportPage->viewData('newPatients'));
+        $this->assertSame(120.0, (float) $reportPage->viewData('revenue'));
+
+        $detailsUrl = route('admin.reports.details');
+        $filters = [
+            'from' => '2026-10-21',
+            'to' => '2026-10-21',
+            'branch_id' => $generalTrias->id,
+        ];
+        $this->get($detailsUrl.'?'.http_build_query(['metric' => 'appointments', ...$filters]))
+            ->assertOk()
+            ->assertJsonPath('title', 'Appointments')
+            ->assertJsonPath('total', 2)
+            ->assertJsonPath('records.0.name', $generalPatient->user->name)
+            ->assertJsonPath('records.0.branch', 'General Trias Branch')
+            ->assertJsonPath('records.0.services', 'Report Details Cleaning');
+
+        $this->get($detailsUrl.'?'.http_build_query(['metric' => 'walk_ins', ...$filters]))
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('records.0.type', 'Walk-in');
+        $this->get($detailsUrl.'?'.http_build_query(['metric' => 'completed', ...$filters]))
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('records.0.status', 'Completed');
+        $this->get($detailsUrl.'?'.http_build_query(['metric' => 'cancelled', ...$filters]))
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('records.0.status', 'Cancelled');
+        $this->get($detailsUrl.'?'.http_build_query(['metric' => 'new_patients', ...$filters]))
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('records.0.patient_id', 'P-REPORT-DETAIL-001');
+        $this->get($detailsUrl.'?'.http_build_query(['metric' => 'revenue', ...$filters]))
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('records.0.bill_number', 'B-REPORT-DETAIL-001')
+            ->assertJsonPath('records.0.amount', '₱120.00');
+
+        $this->actingAs(User::factory()->create(['role' => 'staff']))
+            ->get(route('admin.reports.details', [
+                'metric' => 'appointments',
+                ...$filters,
+            ]))
+            ->assertForbidden();
+
+        $this->actingAs($admin)
+            ->getJson(route('admin.reports.details', [
+                'metric' => 'unknown_metric',
+                ...$filters,
+            ]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('metric');
     }
 
     private function createPatient(string $patientNumber): Patient

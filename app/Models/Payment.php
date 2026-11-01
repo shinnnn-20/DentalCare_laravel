@@ -8,7 +8,18 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property int $id
+ * @property int $bill_id
+ * @property string $method
+ * @property string|null $provider
+ * @property bool $is_test
+ * @property string $applied_amount
+ * @property Carbon $created_at
+ * @property Carbon|null $paid_at
+ */
 #[Fillable([
     'bill_id',
     'transaction_id',

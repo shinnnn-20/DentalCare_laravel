@@ -5,7 +5,7 @@
 @section('content')
     <section class="mx-auto max-w-lg rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
         <div class="mb-8">
-            <div class="grid h-12 w-12 place-items-center rounded-2xl bg-teal-700 text-xl font-bold text-white">D</div>
+            <img class="h-20 w-14 object-contain" src="{{ asset('images/landing/doc-brigs-dental-care-logo.jpg') }}" alt="Doc Brigs Dental Care logo">
             <p class="mt-6 text-sm font-semibold uppercase tracking-widest text-teal-700">{{ config('clinic.name') }}</p>
             <h1 class="mt-2 text-3xl font-bold tracking-tight text-slate-900">Welcome back</h1>
             <p class="mt-2 text-slate-500">Sign in to continue to your clinic account.</p>

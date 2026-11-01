@@ -12,6 +12,7 @@ use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
@@ -34,7 +35,7 @@ class PayMongoBillCheckoutTest extends TestCase
                 ],
             ]),
         ]);
-        [, $bill] = $this->createPatientBill(total: '100.05', paymentStatus: 'partially_paid');
+        $bill = $this->createPatientBill(total: '100.05', paymentStatus: 'partially_paid')[1];
         Payment::factory()->for($bill)->create([
             'amount' => 25.02,
             'applied_amount' => 25.02,
@@ -77,7 +78,7 @@ class PayMongoBillCheckoutTest extends TestCase
     {
         $this->configurePayMongo();
         $patient = User::factory()->create(['role' => 'patient']);
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
 
         $this->post(route('clinic.billing.paymongo.store', $bill))
             ->assertRedirectToRoute('login');
@@ -103,7 +104,7 @@ class PayMongoBillCheckoutTest extends TestCase
     {
         Http::preventStrayRequests();
         Http::fake();
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
         $staff = User::factory()->create(['role' => 'staff']);
 
         Config::set('services.paymongo.secret', 'sk_test_example');
@@ -165,7 +166,7 @@ class PayMongoBillCheckoutTest extends TestCase
         $this->configurePayMongo();
         Http::preventStrayRequests();
         $staff = User::factory()->create(['role' => 'staff']);
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
         $checkout = $bill->payMongoBillCheckouts()->create([
             'reference_number' => 'DENTALCARE-BILL-TEST-production',
             'checkout_session_id' => 'cs_bill_test_production',
@@ -191,8 +192,8 @@ class PayMongoBillCheckoutTest extends TestCase
         $this->configurePayMongo();
         Http::preventStrayRequests();
         Http::fake();
-        [, $zeroBill] = $this->createPatientBill(total: 0);
-        [, $settledBill] = $this->createPatientBill(total: 100);
+        $zeroBill = $this->createPatientBill(total: 0)[1];
+        $settledBill = $this->createPatientBill(total: 100)[1];
         $staff = User::factory()->create(['role' => 'staff']);
         Payment::factory()->for($settledBill)->create([
             'amount' => 100,
@@ -219,7 +220,7 @@ class PayMongoBillCheckoutTest extends TestCase
         $this->configurePayMongo();
         Http::preventStrayRequests();
         Http::fake();
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
         $staff = User::factory()->create(['role' => 'staff']);
         $checkout = $bill->payMongoBillCheckouts()->create([
             'reference_number' => 'DENTALCARE-BILL-TEST-pending',
@@ -250,7 +251,7 @@ class PayMongoBillCheckoutTest extends TestCase
                 ],
             ]),
         ]);
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
         $checkout = $bill->payMongoBillCheckouts()->create([
             'reference_number' => 'DENTALCARE-BILL-TEST-stale-pending',
             'checkout_session_id' => 'cs_bill_test_stale_pending',
@@ -448,7 +449,7 @@ class PayMongoBillCheckoutTest extends TestCase
                 'errors' => [['detail' => 'private upstream error']],
             ], 503),
         ]);
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
         $staff = User::factory()->create(['role' => 'staff']);
 
         $this->from(route('clinic.billing.index'))
@@ -473,7 +474,7 @@ class PayMongoBillCheckoutTest extends TestCase
     public function test_signed_matching_gcash_webhook_records_a_test_payment_and_receipt_in_the_bill_ledger(): void
     {
         $this->configurePayMongo();
-        [, $bill] = $this->createPatientBill(total: 100, paymentStatus: 'partially_paid');
+        $bill = $this->createPatientBill(total: 100, paymentStatus: 'partially_paid')[1];
         $payment = Payment::factory()->for($bill)->create([
             'amount' => 25,
             'applied_amount' => 25,
@@ -497,7 +498,11 @@ class PayMongoBillCheckoutTest extends TestCase
             'status' => 'paid',
             'paid_payment_id' => 'pay_bill_test_123',
         ]);
-        $this->assertNotNull($checkout->fresh()->paid_at);
+        $this->assertNotNull(
+            DB::table('paymongo_bill_checkouts')
+                ->where('id', $checkout->id)
+                ->value('paid_at'),
+        );
         $this->assertDatabaseCount('payments', 2);
         $this->assertSame(
             $paidAtTimestamp,
@@ -576,7 +581,7 @@ class PayMongoBillCheckoutTest extends TestCase
     public function test_replayed_bill_webhook_is_idempotent(): void
     {
         $this->configurePayMongo();
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
         $checkout = $bill->payMongoBillCheckouts()->create([
             'reference_number' => 'DENTALCARE-BILL-TEST-replay',
             'checkout_session_id' => 'cs_bill_test_replay',
@@ -610,7 +615,7 @@ class PayMongoBillCheckoutTest extends TestCase
     public function test_confirmed_test_payment_is_flagged_for_review_when_the_bill_balance_changes(): void
     {
         $this->configurePayMongo();
-        [, $bill] = $this->createPatientBill(total: 100, paymentStatus: 'partially_paid');
+        $bill = $this->createPatientBill(total: 100, paymentStatus: 'partially_paid')[1];
         $checkout = $bill->payMongoBillCheckouts()->create([
             'reference_number' => 'DENTALCARE-BILL-TEST-balance-changed',
             'checkout_session_id' => 'cs_bill_test_balance_changed',
@@ -655,8 +660,8 @@ class PayMongoBillCheckoutTest extends TestCase
     public function test_a_paymongo_payment_id_cannot_be_applied_to_two_bills(): void
     {
         $this->configurePayMongo();
-        [, $firstBill] = $this->createPatientBill();
-        [, $secondBill] = $this->createPatientBill();
+        $firstBill = $this->createPatientBill()[1];
+        $secondBill = $this->createPatientBill()[1];
         $firstCheckout = $firstBill->payMongoBillCheckouts()->create([
             'reference_number' => 'DENTALCARE-BILL-TEST-first-bill',
             'checkout_session_id' => 'cs_bill_test_first_bill',
@@ -697,7 +702,7 @@ class PayMongoBillCheckoutTest extends TestCase
         $this->configurePayMongo();
         Http::preventStrayRequests();
         Http::fake();
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
         $admin = User::factory()->create(['role' => 'admin']);
         $checkout = $bill->payMongoBillCheckouts()->create([
             'reference_number' => 'DENTALCARE-BILL-TEST-admin',
@@ -719,7 +724,7 @@ class PayMongoBillCheckoutTest extends TestCase
         $this->configurePayMongo();
         Http::preventStrayRequests();
         Http::fake();
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
         $staff = User::factory()->create(['role' => 'staff']);
         $bill->payMongoBillCheckouts()->create([
             'reference_number' => 'DENTALCARE-BILL-TEST-unreconciled',
@@ -744,10 +749,52 @@ class PayMongoBillCheckoutTest extends TestCase
         $this->assertDatabaseCount('paymongo_bill_checkouts', 1);
     }
 
+    public function test_checkout_return_page_distinguishes_pending_verification_from_cancelled_checkout(): void
+    {
+        $patient = User::factory()->create(['role' => 'patient']);
+        $this->actingAs($patient)->get(route('paymongo.bill.result', 'success'))
+            ->assertOk()
+            ->assertSee('Payment returned · verification pending')
+            ->assertSee('We’re verifying your payment')
+            ->assertSee('signed confirmation or a staff verification is recorded')
+            ->assertSee('Returning to this page alone never marks a bill as paid')
+            ->assertSee(route('patient.billing'), false)
+            ->assertDontSee('Payment successful');
+
+        $this->actingAs($patient)->get(route('paymongo.bill.result', 'cancelled'))
+            ->assertOk()
+            ->assertSee('Checkout not completed')
+            ->assertSee('check your bill for its latest verified status')
+            ->assertSee('Return to My Billing')
+            ->assertSee('do not transfer real money');
+    }
+
+    public function test_staff_and_admin_checkout_results_return_to_appointment_records_without_confirming_payment(): void
+    {
+        [, $bill] = $this->createPatientBill();
+
+        foreach (['staff', 'admin'] as $role) {
+            $user = User::factory()->create(['role' => $role]);
+
+            $this->actingAs($user)
+                ->get(route('paymongo.bill.result', 'success'))
+                ->assertOk()
+                ->assertSee('Return to Appointment Records')
+                ->assertSee(route('clinic.appointment-records'), false)
+                ->assertDontSee(route('patient.billing'), false);
+        }
+
+        $this->assertDatabaseHas('bills', [
+            'id' => $bill->id,
+            'payment_status' => 'unpaid',
+        ]);
+        $this->assertDatabaseCount('payments', 0);
+    }
+
     public function test_bill_webhook_rejects_a_mismatched_amount_without_changing_billing(): void
     {
         $this->configurePayMongo();
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
         $checkout = $bill->payMongoBillCheckouts()->create([
             'reference_number' => 'DENTALCARE-BILL-TEST-mismatch',
             'checkout_session_id' => 'cs_bill_test_mismatch',
@@ -774,7 +821,7 @@ class PayMongoBillCheckoutTest extends TestCase
     public function test_bill_webhook_rejects_mismatched_session_or_non_gcash_and_live_payments(): void
     {
         $this->configurePayMongo();
-        [, $bill] = $this->createPatientBill();
+        $bill = $this->createPatientBill()[1];
         $checkout = $bill->payMongoBillCheckouts()->create([
             'reference_number' => 'DENTALCARE-BILL-TEST-invalid',
             'checkout_session_id' => 'cs_bill_test_invalid',

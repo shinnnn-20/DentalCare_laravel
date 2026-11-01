@@ -11,31 +11,43 @@ use App\Models\Patient;
 use App\Models\Payment;
 use App\Models\QueueEntry;
 use App\Models\SmsLog;
+use App\Services\AppointmentCompletionService;
 use App\Services\AuditTrail;
 use App\Services\ClinicNotificationService;
+use App\Services\ClinicRevenueReport;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class ClinicWorkflowController extends Controller
 {
-    public function queue(): View
+    public function queue(Request $request): View
     {
+        $user = $request->user();
+        $hasAssignedBranch = $user->hasRole('staff', 'doctor') && $user->branch_id !== null;
+
         return view('queue.index', [
             'queueEntries' => QueueEntry::query()
                 ->with(['appointment.patient.user', 'appointment.service', 'appointment.services'])
+                ->when($hasAssignedBranch, fn (Builder $query): Builder => $query->whereHas(
+                    'appointment',
+                    fn (Builder $appointmentQuery): Builder => $appointmentQuery->where('branch_id', $user->branch_id),
+                ))
                 ->whereDate('queue_date', today(config('clinic.timezone')))
                 ->whereIn('status', ['waiting', 'called', 'in_consultation'])
                 ->orderBy('id')
                 ->get(),
             'checkInAppointments' => Appointment::query()
                 ->with(['patient.user', 'service', 'services'])
+                ->when($hasAssignedBranch, fn (Builder $query): Builder => $query->where('branch_id', $user->branch_id))
                 ->whereDate('starts_at', '>=', today(config('clinic.timezone')))
                 ->where('status', 'approved')
                 ->whereDoesntHave('queueEntry')
@@ -46,6 +58,8 @@ class ClinicWorkflowController extends Controller
 
     public function createRecord(Request $request, Appointment $appointment): View|RedirectResponse
     {
+        $this->authorizeAssignedBranch($request, $appointment);
+
         if ($appointment->dentalRecord()->exists()) {
             return $this->redirectToAppointment($request, $appointment, 'A dental record already exists for this appointment.');
         }
@@ -64,6 +78,8 @@ class ClinicWorkflowController extends Controller
         AuditTrail $auditTrail,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
+        $this->authorizeAssignedBranch($request, $appointment);
+
         if ($appointment->dentalRecord()->exists()) {
             return $this->redirectToAppointment($request, $appointment, 'A dental record already exists for this appointment.');
         }
@@ -134,8 +150,10 @@ class ClinicWorkflowController extends Controller
             ->with('status', $message);
     }
 
-    public function createBill(Appointment $appointment): View|RedirectResponse
+    public function createBill(Request $request, Appointment $appointment): View|RedirectResponse
     {
+        $this->authorizeAssignedBranch($request, $appointment);
+
         $existingBill = $appointment->bill()->first();
 
         if ($existingBill !== null) {
@@ -154,9 +172,12 @@ class ClinicWorkflowController extends Controller
     public function storeBill(
         Request $request,
         Appointment $appointment,
+        AppointmentCompletionService $appointmentCompletion,
         AuditTrail $auditTrail,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
+        $this->authorizeAssignedBranch($request, $appointment);
+
         $existingBill = $appointment->bill()->first();
 
         if ($existingBill !== null) {
@@ -173,13 +194,10 @@ class ClinicWorkflowController extends Controller
 
         abort_if($services->isEmpty(), 422, 'This appointment has no treatments associated with it.');
 
-        foreach (['discount', 'final_price'] as $field) {
-            $value = $request->input($field);
-
-            if (is_string($value)
-                && preg_match('/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/', $value) === 1) {
-                $request->merge([$field => str_replace(',', '', $value)]);
-            }
+        $finalPrice = $request->input('final_price');
+        if (is_string($finalPrice)
+            && preg_match('/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/', $finalPrice) === 1) {
+            $request->merge(['final_price' => str_replace(',', '', $finalPrice)]);
         }
 
         $itemsInput = $request->input('items');
@@ -194,7 +212,7 @@ class ClinicWorkflowController extends Controller
         }
 
         $rules = [
-            'discount' => ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:1000000'],
+            'discount_value' => ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:100'],
         ];
 
         if ($services->count() === 1) {
@@ -241,13 +259,10 @@ class ClinicWorkflowController extends Controller
             ];
         }
 
-        $discountCents = (int) round((float) $data['discount'] * 100);
+        $discountBasisPoints = (int) round((float) $data['discount_value'] * 100);
+        $discountCents = intdiv($subtotalCents * $discountBasisPoints + 5000, 10000);
 
-        if ($discountCents > $subtotalCents) {
-            throw ValidationException::withMessages(['discount' => 'Discount cannot exceed the subtotal.']);
-        }
-
-        $bill = DB::transaction(function () use ($appointment, $request, $subtotalCents, $discountCents, $itemRows): Bill {
+        $bill = DB::transaction(function () use ($appointment, $request, $subtotalCents, $discountBasisPoints, $discountCents, $itemRows, $appointmentCompletion): Bill {
             $totalCents = $subtotalCents - $discountCents;
             $bill = Bill::create([
                 'bill_number' => 'B-PENDING-'.Str::uuid(),
@@ -255,6 +270,8 @@ class ClinicWorkflowController extends Controller
                 'appointment_id' => $appointment->id,
                 'created_by' => $request->user()->id,
                 'subtotal' => number_format($subtotalCents / 100, 2, '.', ''),
+                'discount_type' => 'percentage',
+                'discount_value' => number_format($discountBasisPoints / 100, 2, '.', ''),
                 'discount' => number_format($discountCents / 100, 2, '.', ''),
                 'total' => number_format($totalCents / 100, 2, '.', ''),
                 'payment_status' => $totalCents === 0 ? 'paid' : 'unpaid',
@@ -266,6 +283,7 @@ class ClinicWorkflowController extends Controller
             }
 
             $appointment->update(['status' => 'billed']);
+            $appointmentCompletion->sync($bill);
 
             return $bill;
         });
@@ -300,6 +318,13 @@ class ClinicWorkflowController extends Controller
         return view('billing.index', [
             'bills' => Bill::query()
                 ->with(['patient.user', 'appointment', 'items', 'payments.receipt', 'payMongoBillCheckouts'])
+                ->when(
+                    $request->user()->hasRole('staff', 'doctor') && $request->user()->branch_id !== null,
+                    fn (Builder $query): Builder => $query->whereHas(
+                        'appointment',
+                        fn (Builder $appointmentsQuery): Builder => $appointmentsQuery->where('branch_id', $request->user()->branch_id),
+                    ),
+                )
                 ->when(
                     $filters['bill'] ?? null,
                     fn ($query, $billId) => $query->orderByRaw('CASE WHEN bills.id = ? THEN 0 ELSE 1 END', [$billId]),
@@ -350,6 +375,17 @@ class ClinicWorkflowController extends Controller
             && $webhookSecret !== '';
     }
 
+    private function authorizeAssignedBranch(Request $request, Appointment $appointment): void
+    {
+        $user = $request->user();
+
+        if ($user->hasRole('admin') || $user->branch_id === null) {
+            return;
+        }
+
+        abort_unless((int) $appointment->branch_id === (int) $user->branch_id, 404);
+    }
+
     public function patientNotifications(Request $request): View
     {
         $patient = $request->user()->patient()->firstOrFail();
@@ -359,19 +395,19 @@ class ClinicWorkflowController extends Controller
         ]);
     }
 
-    public function reports(Request $request): View
+    public function reports(Request $request, ClinicRevenueReport $revenueReport): View
     {
-        $branches = Branch::query()->orderBy('name')->get(['id', 'name']);
+        $branches = Branch::query()->orderBy('name')->get();
         $filters = $request->validate([
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
             'branch_id' => ['nullable', Rule::in([
                 'unassigned',
-                ...$branches->map(fn (Branch $branch): string => (string) $branch->id)->all(),
+                ...$branches->map(fn (object $branch): string => (string) $branch->id)->all(),
             ])],
         ]);
-        $from = $filters['from'] ?? today()->toDateString();
-        $to = $filters['to'] ?? today()->toDateString();
+        $from = $filters['from'] ?? today(config('clinic.timezone'))->toDateString();
+        $to = $filters['to'] ?? today(config('clinic.timezone'))->toDateString();
         $branchId = $filters['branch_id'] ?? null;
         $selectedBranchName = match ($branchId) {
             'unassigned' => 'Unassigned appointments',
@@ -380,7 +416,8 @@ class ClinicWorkflowController extends Controller
         };
         $rangeStart = Carbon::parse($from, config('clinic.timezone'))->startOfDay();
         $rangeEnd = Carbon::parse($to, config('clinic.timezone'))->endOfDay();
-        $rangeDays = $rangeStart->diffInDays($rangeEnd) + 1;
+        [$rangeStartUtc, $rangeEndUtc] = $revenueReport->utcRange($rangeStart, $rangeEnd);
+        $rangeDays = $rangeStart->copy()->startOfDay()->diffInDays($rangeEnd->copy()->startOfDay()) + 1;
         $granularity = $rangeDays <= 31 ? 'day' : ($rangeDays <= 180 ? 'week' : 'month');
         $bucketKey = static function (Carbon $date) use ($granularity): string {
             return match ($granularity) {
@@ -390,10 +427,27 @@ class ClinicWorkflowController extends Controller
             };
         };
         $timeline = [];
+        $revenueBuckets = [];
         $cursor = $rangeStart->copy();
 
         while ($cursor->lessThanOrEqualTo($rangeEnd)) {
             $key = $bucketKey($cursor);
+            $bucketStart = match ($granularity) {
+                'week' => $cursor->copy()->startOfWeek(),
+                'month' => $cursor->copy()->startOfMonth(),
+                default => $cursor->copy()->startOfDay(),
+            };
+            $bucketEnd = match ($granularity) {
+                'week' => $cursor->copy()->endOfWeek(),
+                'month' => $cursor->copy()->endOfMonth(),
+                default => $cursor->copy()->endOfDay(),
+            };
+            if ($bucketStart->lessThan($rangeStart)) {
+                $bucketStart = $rangeStart->copy();
+            }
+            if ($bucketEnd->greaterThan($rangeEnd)) {
+                $bucketEnd = $rangeEnd->copy();
+            }
             if (! isset($timeline[$key])) {
                 $timeline[$key] = [
                     'label' => match ($granularity) {
@@ -404,12 +458,12 @@ class ClinicWorkflowController extends Controller
                     'appointments' => 0,
                     'revenue' => 0.0,
                 ];
+                $revenueBuckets[$key] = [
+                    'start' => $bucketStart,
+                    'end' => $bucketEnd,
+                ];
             }
-            match ($granularity) {
-                'week' => $cursor->addWeek(),
-                'month' => $cursor->addMonth(),
-                default => $cursor->addDay(),
-            };
+            $cursor = $bucketEnd->copy()->addSecond();
         }
 
         $appointmentsForBranch = fn (): Builder => $this->applyReportBranchFilter(
@@ -420,23 +474,30 @@ class ClinicWorkflowController extends Controller
             ->selectRaw('DATE(starts_at) as activity_date, COUNT(*) as total')
             ->whereBetween('starts_at', [$rangeStart, $rangeEnd])
             ->groupBy('activity_date')
-            ->get();
+            ->get()
+            ->map(static function (object $row): array {
+                /** @var Model $appointment */
+                $appointment = $row;
+
+                return [
+                    'activity_date' => (string) $appointment->getAttribute('activity_date'),
+                    'total' => (int) $appointment->getAttribute('total'),
+                ];
+            });
         foreach ($appointmentRows as $row) {
-            $key = $bucketKey(Carbon::parse($row->activity_date, config('clinic.timezone')));
+            $key = $bucketKey(Carbon::parse($row['activity_date'], config('clinic.timezone')));
             if (isset($timeline[$key])) {
-                $timeline[$key]['appointments'] += (int) $row->total;
+                $timeline[$key]['appointments'] += $row['total'];
             }
         }
 
-        $revenueRows = $this->applyReportPaymentBranchFilter(Payment::query(), $branchId)
-            ->selectRaw('DATE(created_at) as activity_date, SUM(applied_amount) as total')
-            ->whereBetween('created_at', [$rangeStart, $rangeEnd])
-            ->groupBy('activity_date')
-            ->get();
-        foreach ($revenueRows as $row) {
-            $key = $bucketKey(Carbon::parse($row->activity_date, config('clinic.timezone')));
+        $revenueByBucket = $revenueReport->totalsByClinicBuckets(
+            $this->applyReportPaymentBranchFilter(Payment::query(), $branchId),
+            $revenueBuckets,
+        );
+        foreach ($revenueByBucket as $key => $total) {
             if (isset($timeline[$key])) {
-                $timeline[$key]['revenue'] += (float) $row->total;
+                $timeline[$key]['revenue'] = $total;
             }
         }
 
@@ -456,7 +517,7 @@ class ClinicWorkflowController extends Controller
         $appointmentMaximum = max(1, ...array_column($timeline, 'appointments'));
         $revenueMaximum = max(1.0, ...array_column($timeline, 'revenue'));
 
-        $newPatientsQuery = Patient::query()->whereBetween('created_at', [$rangeStart, $rangeEnd]);
+        $newPatientsQuery = Patient::query()->whereBetween('created_at', [$rangeStartUtc, $rangeEndUtc]);
         if ($branchId !== null) {
             $newPatientsQuery->whereHas('appointments', fn (Builder $query): Builder => $this->applyReportBranchFilter(
                 $query,
@@ -472,7 +533,7 @@ class ClinicWorkflowController extends Controller
             'completed' => $appointmentsForBranch()->where('status', 'completed')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
             'cancelled' => $appointmentsForBranch()->where('status', 'cancelled')->whereBetween('starts_at', [$rangeStart, $rangeEnd])->count(),
             'revenue' => $this->applyReportPaymentBranchFilter(Payment::query(), $branchId)
-                ->whereBetween('created_at', [$rangeStart, $rangeEnd])
+                ->whereBetween('created_at', [$rangeStartUtc, $rangeEndUtc])
                 ->sum('applied_amount'),
             'newPatients' => $newPatientsQuery->count(),
             'timeline' => $timeline,
@@ -485,6 +546,161 @@ class ClinicWorkflowController extends Controller
         ]);
     }
 
+    public function reportDetails(Request $request, ClinicRevenueReport $revenueReport): JsonResponse
+    {
+        $branches = Branch::query()->get();
+        $filters = $request->validate([
+            'metric' => ['required', Rule::in([
+                'appointments',
+                'walk_ins',
+                'completed',
+                'cancelled',
+                'new_patients',
+                'revenue',
+            ])],
+            'from' => ['required', 'date'],
+            'to' => ['required', 'date', 'after_or_equal:from'],
+            'branch_id' => ['nullable', Rule::in([
+                'unassigned',
+                ...$branches->map(fn (object $branch): string => (string) $branch->id)->all(),
+            ])],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $rangeStart = Carbon::parse($filters['from'], config('clinic.timezone'))->startOfDay();
+        $rangeEnd = Carbon::parse($filters['to'], config('clinic.timezone'))->endOfDay();
+        [$rangeStartUtc, $rangeEndUtc] = $revenueReport->utcRange($rangeStart, $rangeEnd);
+        $branchId = $filters['branch_id'] ?? null;
+        $page = $filters['page'] ?? 1;
+
+        if ($filters['metric'] === 'new_patients') {
+            $query = Patient::query()
+                ->whereBetween('created_at', [$rangeStartUtc, $rangeEndUtc])
+                ->when($branchId !== null, fn (Builder $query): Builder => $query->whereHas(
+                    'appointments',
+                    fn (Builder $appointmentsQuery): Builder => $this->applyReportBranchFilter($appointmentsQuery, $branchId),
+                ))
+                ->with('user')
+                ->orderBy('id');
+            $paginator = $query->paginate(20, ['*'], 'page', $page);
+
+            return $this->reportDetailsResponse(
+                'New patient registrations',
+                [
+                    'name' => 'Patient name',
+                    'patient_id' => 'Patient ID',
+                    'email' => 'Email',
+                    'phone' => 'Contact number',
+                    'registered_at' => 'Registration date',
+                ],
+                $paginator,
+                static fn (Patient $patient): array => [
+                    'name' => $patient->user->name,
+                    'patient_id' => $patient->patient_number,
+                    'email' => $patient->user->email,
+                    'phone' => $patient->user->phone ?: '—',
+                    'registered_at' => $patient->created_at->timezone(config('clinic.timezone'))->format('M j, Y'),
+                ],
+            );
+        }
+
+        if ($filters['metric'] === 'revenue') {
+            $query = $this->applyReportPaymentBranchFilter(Payment::query(), $branchId)
+                ->whereBetween('created_at', [$rangeStartUtc, $rangeEndUtc])
+                ->with(['bill.patient.user', 'bill.appointment.branch'])
+                ->orderBy('created_at')
+                ->orderBy('id');
+            $paginator = $query->paginate(20, ['*'], 'page', $page);
+
+            return $this->reportDetailsResponse(
+                'Revenue collected',
+                [
+                    'date_time' => 'Recorded date and time',
+                    'name' => 'Patient name',
+                    'patient_id' => 'Patient ID',
+                    'bill_number' => 'Bill number',
+                    'branch' => 'Branch',
+                    'method' => 'Payment method',
+                    'amount' => 'Applied amount',
+                ],
+                $paginator,
+                static fn (Payment $payment): array => [
+                    'date_time' => $payment->created_at->timezone(config('clinic.timezone'))->format('M j, Y · g:i A'),
+                    'name' => $payment->bill->patient->user->name,
+                    'patient_id' => $payment->bill->patient->patient_number,
+                    'bill_number' => $payment->bill->bill_number,
+                    'branch' => $payment->bill->appointment?->branch?->name ?? 'Unassigned',
+                    'method' => strtoupper($payment->method).($payment->provider === 'paymongo' && $payment->is_test ? ' · PayMongo TEST MODE' : ''),
+                    'amount' => '₱'.number_format((float) $payment->applied_amount, 2),
+                ],
+            );
+        }
+
+        $query = $this->applyReportBranchFilter(Appointment::query(), $branchId)
+            ->whereBetween('starts_at', [$rangeStart, $rangeEnd])
+            ->when($filters['metric'] === 'walk_ins', fn (Builder $query): Builder => $query->where('type', 'walk_in'))
+            ->when($filters['metric'] === 'completed', fn (Builder $query): Builder => $query->where('status', 'completed'))
+            ->when($filters['metric'] === 'cancelled', fn (Builder $query): Builder => $query->where('status', 'cancelled'))
+            ->with(['patient.user', 'branch', 'service', 'services'])
+            ->orderBy('starts_at')
+            ->orderBy('id');
+        $paginator = $query->paginate(20, ['*'], 'page', $page);
+        $title = match ($filters['metric']) {
+            'walk_ins' => 'Walk-in appointments',
+            'completed' => 'Completed appointments',
+            'cancelled' => 'Cancelled appointments',
+            default => 'Appointments',
+        };
+
+        return $this->reportDetailsResponse(
+            $title,
+            [
+                'name' => 'Patient name',
+                'patient_id' => 'Patient ID',
+                'date_time' => 'Appointment date and time',
+                'branch' => 'Branch',
+                'services' => 'Services / treatments',
+                'type' => 'Appointment type',
+                'status' => 'Status',
+            ],
+            $paginator,
+            static fn (Appointment $appointment): array => [
+                'name' => $appointment->patient->user->name,
+                'patient_id' => $appointment->patient->patient_number,
+                'date_time' => $appointment->starts_at->format('M j, Y · g:i A'),
+                'branch' => $appointment->branch?->name ?? 'Unassigned',
+                'services' => $appointment->treatmentNames(),
+                'type' => $appointment->type === 'walk_in' ? 'Walk-in' : 'Online',
+                'status' => str_replace('_', ' ', ucfirst($appointment->status)),
+            ],
+        );
+    }
+
+    /**
+     * @param  array<string, string>  $columns
+     * @param  callable(Model): array<string, string>  $mapRecord
+     */
+    private function reportDetailsResponse(
+        string $title,
+        array $columns,
+        LengthAwarePaginator $paginator,
+        callable $mapRecord,
+    ): JsonResponse {
+        return response()->json([
+            'title' => $title,
+            'total' => $paginator->total(),
+            'page' => $paginator->currentPage(),
+            'last_page' => $paginator->lastPage(),
+            'columns' => $columns,
+            'records' => $paginator->getCollection()->map($mapRecord)->values()->all(),
+        ]);
+    }
+
+    /**
+     * @template TModel of Model
+     *
+     * @param  Builder<TModel>  $query
+     * @return Builder<TModel>
+     */
     private function applyReportBranchFilter(Builder $query, ?string $branchId): Builder
     {
         return match ($branchId) {
@@ -494,6 +710,10 @@ class ClinicWorkflowController extends Controller
         };
     }
 
+    /**
+     * @param  Builder<Payment>  $query
+     * @return Builder<Payment>
+     */
     private function applyReportPaymentBranchFilter(Builder $query, ?string $branchId): Builder
     {
         if ($branchId !== null) {

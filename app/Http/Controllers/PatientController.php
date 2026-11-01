@@ -75,7 +75,7 @@ class PatientController extends Controller
 
     public function destroy(Request $request, Patient $patient, AuditTrail $auditTrail): RedirectResponse
     {
-        $data = $request->validate([
+        $request->validate([
             'confirmation' => ['required', 'string', Rule::in([$patient->patient_number])],
         ], [
             'confirmation.in' => 'Enter the patient number exactly to confirm account removal.',

@@ -9,6 +9,13 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * @property int $id
+ * @property string $name
+ * @property int $duration_minutes
+ * @property string $price
+ * @property bool $is_active
+ */
 #[Fillable(['name', 'category', 'description', 'price', 'price_display', 'requires_price_confirmation', 'duration_minutes', 'is_active'])]
 class Service extends Model
 {

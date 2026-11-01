@@ -6,7 +6,7 @@
     <div class="clinic-report-page">
         <div class="mb-8 flex flex-wrap items-end justify-between gap-4 print-hidden">
             <div><p class="text-sm font-medium text-teal-700">Administration</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Clinic reports</h1><p class="mt-2 text-slate-500">Summary for {{ $from }} through {{ $to }} · {{ $selectedBranchName }}.</p></div>
-            <button class="btn-secondary" onclick="window.print()">Print / save PDF</button>
+            <button class="btn-secondary" onclick="window.print()">Print</button>
         </div>
         <form method="GET" class="mb-6 flex flex-wrap items-end gap-4 rounded-2xl border border-slate-200 bg-white p-5 print-hidden">
             <label class="form-label">From<input class="form-input" type="date" name="from" value="{{ $from }}" required></label>
@@ -23,24 +23,59 @@
             <button class="btn-primary">Apply range</button>
         </form>
         <header class="report-print-header" data-report-branch="{{ $selectedBranchName }}">
+            <img class="report-print-logo" src="{{ asset('images/landing/doc-brigs-dental-care-logo.jpg') }}" alt="Doc Brigs Dental Care logo">
             <p class="text-sm font-semibold uppercase tracking-[0.16em] text-teal-800">{{ config('clinic.name') }}</p>
             <h1 class="mt-2 text-2xl font-bold">Clinic Activity Report</h1>
             <p class="mt-2 text-sm">Reporting period: <strong>{{ \Illuminate\Support\Carbon::parse($from)->format('F j, Y') }}</strong> through <strong>{{ \Illuminate\Support\Carbon::parse($to)->format('F j, Y') }}</strong></p>
             <p class="mt-1 text-sm">Branch: <strong>{{ $selectedBranchName }}</strong></p>
             <p class="mt-1 text-xs text-slate-500">{{ config('clinic.address') }} · {{ config('clinic.phone') }}</p>
         </header>
-        <div class="report-cards grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div class="report-cards grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-report-details-url="{{ route('admin.reports.details') }}" data-report-from="{{ $from }}" data-report-to="{{ $to }}" data-report-branch="{{ $selectedBranchId ?? '' }}">
         @foreach ([
-            ['Appointments', $appointments],
-            ['Walk-in appointments', $walkIns],
-            ['Completed appointments', $completed],
-            ['Cancelled appointments', $cancelled],
-            ['New patient registrations', $newPatients],
-            ['Revenue collected', '₱'.number_format((float) $revenue, 2)],
-        ] as [$label, $value])
-            <article class="stat-card"><p class="text-sm font-medium text-slate-500">{{ $label }}</p><p class="mt-3 text-3xl font-bold">{{ $value }}</p></article>
+            ['Appointments', $appointments, 'appointments'],
+            ['Walk-in appointments', $walkIns, 'walk_ins'],
+            ['Completed appointments', $completed, 'completed'],
+            ['Cancelled appointments', $cancelled, 'cancelled'],
+            ['New patient registrations', $newPatients, 'new_patients'],
+            ['Revenue collected', '₱'.number_format((float) $revenue, 2), 'revenue'],
+        ] as [$label, $value, $metric])
+            <article class="stat-card flex flex-col items-start">
+                <p class="text-sm font-medium text-slate-500">{{ $label }}</p>
+                <p class="mt-3 text-3xl font-bold text-slate-900">{{ $value }}</p>
+                <button class="mt-3 text-sm font-semibold text-teal-800 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 print-hidden"
+                    type="button" data-report-detail="{{ $metric }}" aria-haspopup="dialog">
+                    View Details
+                </button>
+            </article>
         @endforeach
         </div>
+        <dialog class="m-auto max-h-[90dvh] w-[min(72rem,calc(100vw-2rem))] overflow-hidden rounded-2xl p-0 shadow-2xl backdrop:bg-slate-950/50 print-hidden" data-report-details>
+            <section class="flex max-h-[90dvh] flex-col bg-white">
+                <header class="flex items-start justify-between gap-4 border-b border-slate-200 p-5 sm:p-6">
+                    <div>
+                        <h2 class="text-xl font-bold text-slate-900" data-report-detail-title>Report details</h2>
+                        <p class="mt-1 text-sm text-slate-500" data-report-detail-count aria-live="polite"></p>
+                    </div>
+                    <button class="btn-secondary shrink-0" type="button" data-report-detail-close>Close</button>
+                </header>
+                <div class="min-h-32 overflow-auto p-4 sm:p-6">
+                    <p class="hidden rounded-lg bg-rose-50 p-4 text-sm text-rose-800" role="alert" data-report-detail-error></p>
+                    <p class="py-8 text-center text-sm text-slate-500" data-report-detail-loading>Loading records…</p>
+                    <p class="hidden py-8 text-center text-sm text-slate-500" data-report-detail-empty>No records found for this report selection.</p>
+                    <div class="hidden overflow-x-auto" data-report-detail-table-wrap>
+                        <table class="data-table">
+                            <thead><tr data-report-detail-head></tr></thead>
+                            <tbody data-report-detail-body></tbody>
+                        </table>
+                    </div>
+                </div>
+                <footer class="flex items-center justify-between gap-3 border-t border-slate-200 p-4">
+                    <button class="btn-secondary" type="button" data-report-detail-previous disabled>Previous</button>
+                    <p class="text-sm text-slate-500" data-report-detail-page></p>
+                    <button class="btn-secondary" type="button" data-report-detail-next disabled>Next</button>
+                </footer>
+            </section>
+        </dialog>
         <section class="print-hidden mt-8 grid gap-4 xl:grid-cols-2" data-report-statistics>
             <article class="rounded-2xl border border-slate-200 bg-white p-5" data-report-appointments>
                 <h2 class="font-semibold text-slate-900">Appointments over time</h2>
@@ -104,6 +139,105 @@
             </table>
         </div>
         <p class="report-note mt-5 text-sm text-slate-500">Revenue uses applied payment amounts; partial payments are included only for their paid portion. Revenue includes PayMongo TEST MODE payments when present; they simulate payment and do not transfer real money.</p>
-        <footer class="report-print-footer">Generated {{ now()->format('F j, Y · g:i A') }} · {{ config('clinic.name') }}</footer>
+        <footer class="report-print-footer">Generated {{ now(config('clinic.timezone'))->format('F j, Y · g:i A') }} · {{ config('clinic.name') }}</footer>
     </div>
+    <script>
+        (() => {
+            const cards = document.querySelector('[data-report-details-url]');
+            const dialog = document.querySelector('[data-report-details]');
+            const title = dialog.querySelector('[data-report-detail-title]');
+            const count = dialog.querySelector('[data-report-detail-count]');
+            const error = dialog.querySelector('[data-report-detail-error]');
+            const loading = dialog.querySelector('[data-report-detail-loading]');
+            const empty = dialog.querySelector('[data-report-detail-empty]');
+            const tableWrap = dialog.querySelector('[data-report-detail-table-wrap]');
+            const tableHead = dialog.querySelector('[data-report-detail-head]');
+            const tableBody = dialog.querySelector('[data-report-detail-body]');
+            const pageLabel = dialog.querySelector('[data-report-detail-page]');
+            const previous = dialog.querySelector('[data-report-detail-previous]');
+            const next = dialog.querySelector('[data-report-detail-next]');
+            const close = dialog.querySelector('[data-report-detail-close]');
+            let selectedMetric = '';
+            let currentPage = 1;
+            let lastPage = 1;
+
+            const setVisible = (element, isVisible) => element.classList.toggle('hidden', !isVisible);
+            const setLoading = (isLoading) => {
+                setVisible(loading, isLoading);
+                setVisible(error, false);
+                setVisible(empty, false);
+                setVisible(tableWrap, false);
+            };
+            const renderDetails = (payload) => {
+                title.textContent = payload.title;
+                count.textContent = `${payload.total} ${payload.total === 1 ? 'record' : 'records'}`;
+                currentPage = payload.page;
+                lastPage = payload.last_page;
+                pageLabel.textContent = payload.total > 0 ? `Page ${currentPage} of ${lastPage}` : '';
+                previous.disabled = currentPage <= 1;
+                next.disabled = currentPage >= lastPage;
+                tableHead.replaceChildren();
+                tableBody.replaceChildren();
+
+                Object.entries(payload.columns).forEach(([key, label]) => {
+                    const heading = document.createElement('th');
+                    heading.scope = 'col';
+                    heading.textContent = label;
+                    tableHead.append(heading);
+                });
+                payload.records.forEach((record) => {
+                    const row = document.createElement('tr');
+                    Object.keys(payload.columns).forEach((key) => {
+                        const cell = document.createElement('td');
+                        cell.dataset.label = payload.columns[key];
+                        cell.textContent = record[key] ?? '—';
+                        row.append(cell);
+                    });
+                    tableBody.append(row);
+                });
+                setVisible(empty, payload.total === 0);
+                setVisible(tableWrap, payload.total > 0);
+            };
+            const loadPage = async (page) => {
+                setLoading(true);
+                const url = new URL(cards.dataset.reportDetailsUrl, window.location.origin);
+                url.searchParams.set('metric', selectedMetric);
+                url.searchParams.set('from', cards.dataset.reportFrom);
+                url.searchParams.set('to', cards.dataset.reportTo);
+                url.searchParams.set('page', String(page));
+                if (cards.dataset.reportBranch) {
+                    url.searchParams.set('branch_id', cards.dataset.reportBranch);
+                }
+
+                try {
+                    const response = await fetch(url, {
+                        headers: { Accept: 'application/json' },
+                        credentials: 'same-origin',
+                    });
+                    if (!response.ok) {
+                        throw new Error('Could not load these report records. Please close the popup and try again.');
+                    }
+                    renderDetails(await response.json());
+                } catch (requestError) {
+                    error.textContent = requestError instanceof Error
+                        ? requestError.message
+                        : 'Could not load these report records. Please close the popup and try again.';
+                    setVisible(error, true);
+                } finally {
+                    setVisible(loading, false);
+                }
+            };
+
+            document.querySelectorAll('[data-report-detail]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    selectedMetric = button.dataset.reportDetail;
+                    dialog.showModal();
+                    loadPage(1);
+                });
+            });
+            close.addEventListener('click', () => dialog.close());
+            previous.addEventListener('click', () => loadPage(currentPage - 1));
+            next.addEventListener('click', () => loadPage(currentPage + 1));
+        })();
+    </script>
 @endsection

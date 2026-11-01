@@ -60,10 +60,14 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->assertOk()
             ->assertSee('Original Cleaning')
             ->assertSee('Additional X-ray')
-            ->assertSee('name="service_ids[]"', false);
+            ->assertSee('name="service_ids[]"', false)
+            ->assertSee('data-addon-summary-items', false)
+            ->assertSee('Total additional amount')
+            ->assertSee('name="confirm_add_ons"', false);
 
         $this->post(route('clinic.bills.additional-services.store', $bill), [
             'service_ids' => [$additionalService->id, $anotherService->id],
+            'confirm_add_ons' => '1',
         ])->assertRedirect(route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id)
             ->assertSessionHas('status', 'Additional services added to the bill.');
 
@@ -95,7 +99,7 @@ class AdditionalAppointmentServicesTest extends TestCase
             'bill_id' => $bill->id,
             'applied_amount' => '900.00',
         ]);
-        $this->assertSame('completed', $appointment->fresh()->status);
+        $this->assertSame('billed', $appointment->fresh()->status);
         $this->assertDatabaseHas('audit_logs', [
             'user_id' => $actor->id,
             'action' => 'additional_services_added',
@@ -107,6 +111,51 @@ class AdditionalAppointmentServicesTest extends TestCase
         $audit = AuditLog::query()->where('action', 'additional_services_added')->firstOrFail();
         $this->assertStringContainsString('Additional X-ray (#'.$additionalService->id.') at ₱250.50', $audit->description);
         $this->assertStringContainsString('Additional Fluoride (#'.$anotherService->id.') at ₱150.00', $audit->description);
+    }
+
+    public function test_add_on_service_recalculates_percentage_discount_without_changing_payment_history(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = Patient::factory()->create();
+        $service = Service::factory()->create(['name' => 'Original Cleaning', 'price' => 1000]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'completed',
+        ]);
+        $bill = Bill::factory()->for($patient)->for($appointment)->create([
+            'subtotal' => '1000.00',
+            'discount_type' => 'percentage',
+            'discount_value' => '10.00',
+            'discount' => '100.00',
+            'total' => '900.00',
+            'payment_status' => 'partially_paid',
+        ]);
+        $payment = Payment::factory()->for($bill)->create([
+            'amount' => '400.00',
+            'applied_amount' => '400.00',
+        ]);
+        $addOn = Service::factory()->create(['name' => 'Additional X-ray', 'price' => 250.50]);
+
+        $this->actingAs($staff)
+            ->post(route('clinic.bills.additional-services.store', $bill), [
+                'service_ids' => [$addOn->id],
+                'confirm_add_ons' => '1',
+            ])
+            ->assertRedirect(route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id);
+
+        $this->assertDatabaseHas('bills', [
+            'id' => $bill->id,
+            'subtotal' => '1250.50',
+            'discount_type' => 'percentage',
+            'discount_value' => '10.00',
+            'discount' => '125.05',
+            'total' => '1125.45',
+            'payment_status' => 'partially_paid',
+        ]);
+        $this->assertDatabaseHas('payments', [
+            'id' => $payment->id,
+            'bill_id' => $bill->id,
+            'applied_amount' => '400.00',
+        ]);
     }
 
     public function test_add_on_services_are_identified_in_staff_patient_and_receipt_views(): void
@@ -129,6 +178,7 @@ class AdditionalAppointmentServicesTest extends TestCase
         $payment = Payment::factory()->for($bill)->create([
             'amount' => 400,
             'applied_amount' => 400,
+            'paid_at' => '2026-11-01 12:19:00',
         ]);
         $receipt = Receipt::factory()->for($payment)->create([
             'receipt_number' => 'AR-ADDON-0001',
@@ -141,6 +191,7 @@ class AdditionalAppointmentServicesTest extends TestCase
         $this->actingAs($admin)
             ->post(route('clinic.bills.additional-services.store', $bill), [
                 'service_ids' => [$additionalService->id],
+                'confirm_add_ons' => '1',
             ])
             ->assertRedirect(route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id);
 
@@ -150,6 +201,7 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->assertSee('Add-on Services')
             ->assertSee('Add-on Service')
             ->assertSee('Additional X-ray')
+            ->assertSee('Nov 1, 2026 8:19 PM')
             ->assertSee('250.50')
             ->assertSee('1,250.50')
             ->assertSee('400.00')
@@ -161,6 +213,7 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->assertSee('Add-on Services')
             ->assertSee('Add-on Service')
             ->assertSee('Additional X-ray')
+            ->assertSee('November 1, 2026 · 8:19 PM')
             ->assertSee('250.50')
             ->assertSee('1,250.50')
             ->assertSee('400.00')
@@ -176,7 +229,8 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->assertSee('250.50')
             ->assertSee('1,250.50')
             ->assertSee('400.00')
-            ->assertSee('850.50');
+            ->assertSee('850.50')
+            ->assertSee('Nov 1, 2026 8:19 PM');
 
         $this->get(route('patient.billing.receipts.preview', ['bill' => $bill, 'receipt' => $receipt]))
             ->assertOk()
@@ -184,6 +238,7 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->assertSee('Add-on Services')
             ->assertSee('Add-on Service')
             ->assertSee('Additional X-ray')
+            ->assertSee('November 1, 2026 · 8:19 PM')
             ->assertSee('250.50')
             ->assertSee('1,250.50')
             ->assertSee('400.00')
@@ -196,6 +251,55 @@ class AdditionalAppointmentServicesTest extends TestCase
             'applied_amount' => '400.00',
         ]);
         $this->assertSame('1250.50', $bill->fresh()->total);
+    }
+
+    public function test_appointment_records_show_flagged_add_ons_and_a_clear_empty_state(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $patient = Patient::factory()->create();
+        $bookedService = Service::factory()->create(['name' => 'Booked Cleaning']);
+        $appointmentWithAddOns = Appointment::factory()
+            ->for($patient)
+            ->for($bookedService)
+            ->create(['status' => 'completed']);
+        $billWithAddOns = Bill::factory()->for($patient)->for($appointmentWithAddOns)->create();
+        BillItem::factory()->for($billWithAddOns)->for($bookedService)->create([
+            'service_name' => 'Booked Cleaning',
+            'is_add_on' => false,
+        ]);
+        BillItem::factory()->for($billWithAddOns)->create([
+            'service_name' => 'Add-on X-ray',
+            'is_add_on' => true,
+        ]);
+        BillItem::factory()->for($billWithAddOns)->create([
+            'service_name' => 'Add-on Fluoride',
+            'is_add_on' => true,
+        ]);
+        $appointmentWithoutAddOns = Appointment::factory()
+            ->for($patient)
+            ->for(Service::factory()->create(['name' => 'Booked Checkup']))
+            ->create(['status' => 'completed']);
+        $billWithoutAddOns = Bill::factory()->for($patient)->for($appointmentWithoutAddOns)->create();
+        BillItem::factory()->for($billWithoutAddOns)->create([
+            'service_name' => 'Booked Checkup',
+            'is_add_on' => false,
+        ]);
+
+        $this->actingAs($admin)
+            ->get(route('clinic.appointment-records', ['appointment_id' => $appointmentWithAddOns->id]))
+            ->assertOk()
+            ->assertSee('Original booked services')
+            ->assertSee('Booked Cleaning')
+            ->assertSee('Add-on Services')
+            ->assertSee('Add-on X-ray')
+            ->assertSee('Add-on Fluoride')
+            ->assertDontSee('No add-on services.');
+
+        $this->get(route('clinic.appointment-records', ['appointment_id' => $appointmentWithoutAddOns->id]))
+            ->assertOk()
+            ->assertSee('Booked Checkup')
+            ->assertSee('Add-on Services')
+            ->assertSee('No add-on services.');
     }
 
     public function test_adding_a_service_already_on_the_bill_is_rejected_without_changing_the_bill(): void
@@ -215,6 +319,7 @@ class AdditionalAppointmentServicesTest extends TestCase
         $this->actingAs($staff)
             ->post(route('clinic.bills.additional-services.store', $bill), [
                 'service_ids' => [$service->id, $snapshotService->id],
+                'confirm_add_ons' => '1',
             ])
             ->assertSessionHasErrors('service_ids');
 
@@ -235,6 +340,7 @@ class AdditionalAppointmentServicesTest extends TestCase
         $this->actingAs($staff)
             ->post(route('clinic.bills.additional-services.store', $bill), [
                 'service_ids' => [$service->id],
+                'confirm_add_ons' => '1',
                 'items' => [
                     $service->id => [
                         'final_price' => '1.00',
@@ -247,6 +353,7 @@ class AdditionalAppointmentServicesTest extends TestCase
 
         $this->post(route('clinic.bills.additional-services.store', $bill), [
             'service_ids' => [$service->id],
+            'confirm_add_ons' => '1',
         ])->assertSessionHasErrors('service_ids');
 
         $this->assertSame(1, $bill->items()->count());
@@ -266,7 +373,7 @@ class AdditionalAppointmentServicesTest extends TestCase
         BillItem::factory()->for($bill)->create();
         $service = Service::create([
             'name' => 'Variable Add-on',
-            'category' => 'Other Services',
+            'category' => 'Cosmetic Treatments',
             'price' => 0,
             'price_display' => '₱500–₱800',
             'requires_price_confirmation' => true,
@@ -277,10 +384,13 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->get(route('clinic.bills.additional-services.create', $bill))
             ->assertOk()
             ->assertSee('₱500–₱800')
+            ->assertSee('data-addon-category="Cosmetic Treatments"', false)
+            ->assertSee('data-addon-price-panel="'.$service->id.'"', false)
             ->assertSee('name="items['.$service->id.'][final_price]"', false);
 
         $this->post(route('clinic.bills.additional-services.store', $bill), [
             'service_ids' => [$service->id],
+            'confirm_add_ons' => '1',
         ])->assertSessionHasErrors([
             'items.'.$service->id.'.final_price',
             'items.'.$service->id.'.confirm_final_price',
@@ -288,6 +398,7 @@ class AdditionalAppointmentServicesTest extends TestCase
 
         $this->post(route('clinic.bills.additional-services.store', $bill), [
             'service_ids' => [$service->id],
+            'confirm_add_ons' => '1',
             'items' => [
                 $service->id => [
                     'final_price' => '650.25',
@@ -303,6 +414,28 @@ class AdditionalAppointmentServicesTest extends TestCase
             'subtotal' => '650.25',
         ]);
         $this->assertSame('1650.25', $bill->fresh()->total);
+    }
+
+    public function test_add_on_services_require_confirmation_before_updating_the_existing_bill(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = Patient::factory()->create();
+        $appointment = Appointment::factory()->for($patient)->create(['status' => 'billed']);
+        $bill = Bill::factory()->for($patient)->for($appointment)->create([
+            'subtotal' => '1000.00',
+            'total' => '1000.00',
+        ]);
+        BillItem::factory()->for($bill)->create();
+        $service = Service::factory()->create(['price' => 250]);
+
+        $this->actingAs($staff)
+            ->post(route('clinic.bills.additional-services.store', $bill), [
+                'service_ids' => [$service->id],
+            ])
+            ->assertSessionHasErrors('confirm_add_ons');
+
+        $this->assertSame(1, $bill->items()->count());
+        $this->assertSame('1000.00', $bill->fresh()->total);
     }
 
     public function test_only_staff_and_admin_can_add_services_and_cancelled_appointments_are_not_eligible(): void
@@ -324,6 +457,7 @@ class AdditionalAppointmentServicesTest extends TestCase
 
         $this->post(route('clinic.bills.additional-services.store', $bill), [
             'service_ids' => [Service::factory()->create()->id],
+            'confirm_add_ons' => '1',
         ])->assertStatus(422);
 
         $this->assertSame('cancelled', $appointment->fresh()->status);

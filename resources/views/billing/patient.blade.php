@@ -20,7 +20,7 @@
             <article class="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
                 <div class="flex flex-wrap items-start justify-between gap-4">
                     <div class="min-w-0">
-                        <p class="text-sm text-slate-500">Bill date · {{ $bill->created_at->format('M j, Y') }}</p>
+                        <p class="text-sm text-slate-500">Bill date · {{ $bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y') }}</p>
                         <h2 class="mt-1 text-lg font-semibold">Bill Details</h2>
                         <p class="mt-1 text-slate-700">{{ $bill->appointment?->treatmentNames() ?? 'Dental services' }}</p>
                     </div>
@@ -52,6 +52,11 @@
                     @endif
                 </section>
                 <dl class="mt-5 grid gap-3 text-sm sm:grid-cols-3">
+                    <div><dt class="text-slate-500">Subtotal</dt><dd class="mt-1 font-semibold">{{ config('clinic.currency_symbol') }}{{ number_format((float) $bill->subtotal, 2) }}</dd></div>
+                    <div>
+                        <dt class="text-slate-500">{{ $bill->discountLabel() }}</dt>
+                        <dd class="mt-1 font-semibold">{{ config('clinic.currency_symbol') }}{{ number_format((float) $bill->discount, 2) }}</dd>
+                    </div>
                     <div><dt class="text-slate-500">Total amount</dt><dd class="mt-1 font-semibold">{{ config('clinic.currency_symbol') }}{{ number_format((float) $bill->total, 2) }}</dd></div>
                     <div><dt class="text-slate-500">Amount paid</dt><dd class="mt-1 font-semibold">{{ config('clinic.currency_symbol') }}{{ number_format($paid, 2) }}</dd></div>
                     <div><dt class="text-slate-500">Remaining balance</dt><dd class="mt-1 font-semibold">{{ config('clinic.currency_symbol') }}{{ number_format($balance, 2) }}</dd></div>
@@ -64,7 +69,7 @@
                                 <div class="rounded-xl bg-slate-50 p-3 text-sm">
                                     <p class="font-semibold">{{ ucfirst($payment->method) }} payment</p>
                                     <p class="mt-1 text-slate-600">Payment amount · {{ config('clinic.currency_symbol') }}{{ number_format((float) $payment->applied_amount, 2) }}</p>
-                                    <p class="mt-1 text-xs text-slate-500">Payment date · {{ ($payment->paid_at ?? $payment->created_at)->format('M j, Y g:i A') }}</p>
+                                    <p class="mt-1 text-xs text-slate-500">Payment date · {{ ($payment->paid_at ?? $payment->created_at)->timezone(config('clinic.timezone'))->format('M j, Y g:i A') }}</p>
                                     @if ($payment->provider === 'paymongo' && $payment->is_test)
                                         <p class="mt-2 text-xs font-medium text-amber-700">PayMongo test mode — no real money transferred</p>
                                     @endif

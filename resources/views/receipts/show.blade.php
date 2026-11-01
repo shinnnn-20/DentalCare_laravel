@@ -6,7 +6,7 @@
     <div class="mx-auto max-w-3xl">
         <div class="mb-4 flex justify-end gap-2 print:hidden">
             @if (auth()->user()->role !== 'patient')
-                <button class="btn-primary" type="button" data-print-receipt>Print / save PDF</button>
+                <button class="btn-primary" type="button" data-print-receipt>Print</button>
             @endif
             <a class="btn-secondary" href="{{ auth()->user()->role === 'patient' ? route('patient.billing') : route('clinic.billing.index') }}">Back to billing</a>
         </div>
@@ -32,7 +32,7 @@
                 @if (auth()->user()->role === 'patient')
                     <div>
                         <p class="text-slate-500">Payment date</p>
-                        <p class="mt-1 font-semibold">{{ ($receipt->payment->paid_at ?? $receipt->created_at)->format('F j, Y · g:i A') }}</p>
+                        <p class="mt-1 font-semibold">{{ ($receipt->payment->paid_at ?? $receipt->created_at)->timezone(config('clinic.timezone'))->format('F j, Y · g:i A') }}</p>
                     </div>
                     <div>
                         <p class="text-slate-500">Patient</p>
@@ -51,7 +51,7 @@
                         <div><p class="text-slate-400">Checkout session ID</p><p class="mt-1 break-all font-semibold">{{ $receipt->payment->provider_checkout_session_id }}</p></div>
                     @endif
                     <div><p class="text-slate-400">Patient</p><p class="mt-1 font-semibold">{{ $receipt->payment->bill->patient->user->name }} · {{ $receipt->payment->bill->patient->patient_number }}</p></div>
-                    <div><p class="text-slate-400">Date & time</p><p class="mt-1 font-semibold">{{ ($receipt->payment->paid_at ?? $receipt->created_at)->format('F j, Y · g:i A') }}</p></div>
+                    <div><p class="text-slate-400">Date & time</p><p class="mt-1 font-semibold">{{ ($receipt->payment->paid_at ?? $receipt->created_at)->timezone(config('clinic.timezone'))->format('F j, Y · g:i A') }}</p></div>
                 @endif
             </div>
             @php($originalItems = $receipt->payment->bill->items->where('is_add_on', false))
@@ -85,7 +85,7 @@
             </section>
             <div class="ml-auto grid max-w-sm gap-2 border-t border-slate-200 pt-5 text-sm">
                 <div class="flex justify-between"><span class="text-slate-500">Subtotal</span><span>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->bill->subtotal, 2) }}</span></div>
-                <div class="flex justify-between"><span class="text-slate-500">Discount</span><span>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->bill->discount, 2) }}</span></div>
+                <div class="flex justify-between"><span class="text-slate-500">{{ $receipt->payment->bill->discountLabel() }}</span><span>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->bill->discount, 2) }}</span></div>
                 <div class="flex justify-between text-base font-bold"><span>Total</span><span>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->bill->total, 2) }}</span></div>
                 <div class="flex justify-between"><span class="text-slate-500">Amount paid to date</span><span>{{ config('clinic.currency_symbol') }}{{ number_format($billAmountPaid, 2) }}</span></div>
                 <div class="flex justify-between"><span class="text-slate-500">Remaining balance</span><span>{{ config('clinic.currency_symbol') }}{{ number_format($billBalance, 2) }}</span></div>

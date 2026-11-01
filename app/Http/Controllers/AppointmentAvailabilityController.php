@@ -28,19 +28,35 @@ class AppointmentAvailabilityController extends Controller
 
     public function index(Request $request): View
     {
-        $branches = Branch::query()->orderBy('id')->get();
+        $user = $request->user();
+        $hasAssignedBranch = $user->hasRole('staff', 'doctor') && $user->branch_id !== null;
+        $branches = Branch::query()
+            ->when($hasAssignedBranch, fn ($query) => $query->whereKey($user->branch_id))
+            ->orderBy('id')
+            ->get();
         $clinicNow = now(config('clinic.timezone'));
         $filters = $request->validate([
             'branch_id' => ['nullable', 'integer', Rule::exists('branches', 'id')],
             'date' => ['nullable', 'date_format:Y-m-d'],
         ]);
+        if (
+            $hasAssignedBranch
+            && isset($filters['branch_id'])
+            && (int) $filters['branch_id'] !== (int) $user->branch_id
+        ) {
+            abort(404);
+        }
+
+        $branchId = $hasAssignedBranch
+            ? (int) $user->branch_id
+            : ($filters['branch_id'] ?? null);
         $selectedDate = isset($filters['date'])
             ? Carbon::createFromFormat('!Y-m-d', $filters['date'], config('clinic.timezone'))
             : null;
 
         $availabilityBlocks = AppointmentAvailabilityBlock::query()
             ->with(['branch', 'creator'])
-            ->when($filters['branch_id'] ?? null, fn ($query, int $branchId) => $query->where('branch_id', $branchId))
+            ->when($branchId !== null, fn ($query) => $query->where('branch_id', $branchId))
             ->when($selectedDate !== null, fn ($query) => $query
                 ->where('starts_at', '<', $selectedDate->copy()->endOfDay()->format('Y-m-d H:i:s'))
                 ->where('ends_at', '>', $selectedDate->copy()->startOfDay()->format('Y-m-d H:i:s')))
@@ -54,11 +70,14 @@ class AppointmentAvailabilityController extends Controller
             'branches' => $branches,
             'clinicNow' => $clinicNow,
             'reasons' => self::REASONS,
+            'hasAssignedBranch' => $hasAssignedBranch,
+            'selectedBranchId' => $branchId,
         ]);
     }
 
     public function store(Request $request, AuditTrail $auditTrail): RedirectResponse
     {
+        $user = $request->user();
         $data = $request->validate([
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
             'date' => ['required', 'date_format:Y-m-d'],
@@ -68,6 +87,16 @@ class AppointmentAvailabilityController extends Controller
             'description' => ['nullable', 'string', 'max:1000'],
             'confirm_existing_appointments' => ['sometimes', 'boolean'],
         ]);
+        if (
+            $user->hasRole('staff', 'doctor')
+            && $user->branch_id !== null
+            && (int) $data['branch_id'] !== (int) $user->branch_id
+        ) {
+            throw ValidationException::withMessages([
+                'branch_id' => 'Availability can only be managed for your assigned branch.',
+            ]);
+        }
+
         [$startsAt, $endsAt] = $this->validatedRange($data['date'], $data['starts_at'], $data['ends_at']);
         $branchId = (int) $data['branch_id'];
 
@@ -118,6 +147,14 @@ class AppointmentAvailabilityController extends Controller
                 ->whereKey($availabilityBlock->id)
                 ->lockForUpdate()
                 ->firstOrFail();
+            if (
+                $request->user()->hasRole('staff', 'doctor')
+                && $request->user()->branch_id !== null
+                && (int) $lockedBlock->branch_id !== (int) $request->user()->branch_id
+            ) {
+                abort(404);
+            }
+
             $branch = Branch::query()->whereKey($lockedBlock->branch_id)->lockForUpdate()->firstOrFail();
 
             if ($isActive) {
@@ -174,6 +211,14 @@ class AppointmentAvailabilityController extends Controller
                 ->whereKey($availabilityBlock->id)
                 ->lockForUpdate()
                 ->firstOrFail();
+            if (
+                $request->user()->hasRole('staff', 'doctor')
+                && $request->user()->branch_id !== null
+                && (int) $lockedBlock->branch_id !== (int) $request->user()->branch_id
+            ) {
+                abort(404);
+            }
+
             $branch = Branch::query()->whereKey($lockedBlock->branch_id)->lockForUpdate()->firstOrFail();
 
             $auditTrail->record(

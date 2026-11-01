@@ -22,11 +22,15 @@
                 @endif
                 <label class="form-label">Branch
                     <select class="form-input min-w-48" name="branch_id">
-                        <option value="" @selected($selectedBranchId === null)>All branches</option>
+                        @unless (auth()->user()->hasRole('staff', 'doctor') && auth()->user()->branch_id !== null)
+                            <option value="" @selected($selectedBranchId === null)>All branches</option>
+                        @endunless
                         @foreach ($branches as $branch)
                             <option value="{{ $branch->id }}" @selected((string) $selectedBranchId === (string) $branch->id)>{{ $branch->name }}</option>
                         @endforeach
-                        <option value="unassigned" @selected($selectedBranchId === 'unassigned')>Unassigned appointments</option>
+                        @unless (auth()->user()->hasRole('staff', 'doctor') && auth()->user()->branch_id !== null)
+                            <option value="unassigned" @selected($selectedBranchId === 'unassigned')>Unassigned appointments</option>
+                        @endunless
                     </select>
                 </label>
                 <button class="btn-secondary" type="submit">Apply filters</button>

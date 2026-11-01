@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Appointment;
 use App\Models\Bill;
 use App\Models\Service;
+use App\Services\AppointmentCompletionService;
 use App\Services\AuditTrail;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -15,8 +16,9 @@ use Illuminate\View\View;
 
 class AdditionalServiceController extends Controller
 {
-    public function create(Bill $bill): View
+    public function create(Request $request, Bill $bill): View
     {
+        $this->authorizeBillBranch($request, $bill);
         $bill->load(['appointment', 'patient.user', 'items', 'payments']);
         $appointment = $bill->appointment;
         abort_unless($appointment !== null && $this->isEligible($appointment, $bill), 422);
@@ -27,8 +29,14 @@ class AdditionalServiceController extends Controller
         ]);
     }
 
-    public function store(Request $request, Bill $bill, AuditTrail $auditTrail): RedirectResponse
-    {
+    public function store(
+        Request $request,
+        Bill $bill,
+        AppointmentCompletionService $appointmentCompletion,
+        AuditTrail $auditTrail,
+    ): RedirectResponse {
+        $this->authorizeBillBranch($request, $bill);
+
         $serviceIdsInput = $request->input('service_ids');
 
         if (is_array($serviceIdsInput)) {
@@ -51,6 +59,7 @@ class AdditionalServiceController extends Controller
             'service_ids' => ['required', 'array', 'min:1', 'max:20'],
             'service_ids.*' => ['required', 'integer', 'distinct', 'exists:services,id'],
             'items' => ['sometimes', 'array'],
+            'confirm_add_ons' => ['required', 'accepted'],
         ]);
 
         $serviceIds = array_map('intval', $data['service_ids']);
@@ -80,7 +89,7 @@ class AdditionalServiceController extends Controller
 
         $data = [...$data, ...$request->validate($rules)];
 
-        DB::transaction(function () use ($bill, $data, $serviceIds, $services, $request, $auditTrail): void {
+        DB::transaction(function () use ($bill, $data, $serviceIds, $services, $request, $auditTrail, $appointmentCompletion): void {
             $lockedBill = Bill::query()->lockForUpdate()->findOrFail($bill->id);
             $appointment = Appointment::query()
                 ->whereKey($lockedBill->appointment_id)
@@ -140,7 +149,16 @@ class AdditionalServiceController extends Controller
             }
 
             $subtotalCents = (int) round((float) $lockedBill->subtotal * 100) + $additionalCents;
-            $totalCents = (int) round((float) $lockedBill->total * 100) + $additionalCents;
+            $discountCents = (int) round((float) $lockedBill->discount * 100);
+
+            if ($lockedBill->discount_type === 'percentage') {
+                $discountBasisPoints = (int) round((float) $lockedBill->discount_value * 100);
+                $discountCents = intdiv($subtotalCents * $discountBasisPoints + 5000, 10000);
+            }
+
+            $totalCents = $lockedBill->discount_type === 'percentage'
+                ? $subtotalCents - $discountCents
+                : (int) round((float) $lockedBill->total * 100) + $additionalCents;
             $paidCents = (int) round((float) $lockedBill->payments()->sum('applied_amount') * 100);
 
             foreach ($itemRows as $itemRow) {
@@ -149,6 +167,7 @@ class AdditionalServiceController extends Controller
 
             $lockedBill->update([
                 'subtotal' => number_format($subtotalCents / 100, 2, '.', ''),
+                'discount' => number_format($discountCents / 100, 2, '.', ''),
                 'total' => number_format($totalCents / 100, 2, '.', ''),
                 'payment_status' => $paidCents >= $totalCents
                     ? 'paid'
@@ -162,6 +181,7 @@ class AdditionalServiceController extends Controller
                 $lockedBill,
                 'Added '.implode('; ', $auditDescriptions).'.',
             );
+            $appointmentCompletion->sync($lockedBill);
         });
 
         return redirect()
@@ -184,5 +204,19 @@ class AdditionalServiceController extends Controller
     {
         return $appointment->patient_id === $bill->patient_id
             && in_array($appointment->status, ['billed', 'completed'], true);
+    }
+
+    private function authorizeBillBranch(Request $request, Bill $bill): void
+    {
+        $user = $request->user();
+
+        if ($user->hasRole('admin') || $user->branch_id === null) {
+            return;
+        }
+
+        abort_unless(
+            $bill->appointment()->where('branch_id', $user->branch_id)->exists(),
+            404,
+        );
     }
 }

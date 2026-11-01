@@ -11,7 +11,7 @@
     <header class="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
             <a href="#home" class="flex min-w-0 items-center gap-3" aria-label="Doc Brigs Dental Care home">
-                <img src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="Doc Brigs Dental Care logo" class="h-14 w-12 shrink-0 object-contain sm:h-16 sm:w-14">
+                <img src="{{ asset('images/landing/doc-brigs-dental-care-logo.jpg') }}" alt="Doc Brigs Dental Care logo" class="h-14 w-12 shrink-0 object-contain sm:h-16 sm:w-14">
                 <span class="max-w-40 text-sm font-bold leading-tight text-slate-900 sm:max-w-none sm:text-base">Doc Brigs Dental Care</span>
             </a>
 
@@ -129,7 +129,7 @@
     <footer class="border-t border-slate-200 bg-white">
         <div class="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-7 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
             <a href="#home" class="flex items-center gap-3" aria-label="Doc Brigs Dental Care home">
-                <img src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="" class="h-12 w-10 object-contain">
+                <img src="{{ asset('images/landing/doc-brigs-dental-care-logo.jpg') }}" alt="" class="h-12 w-10 object-contain">
                 <span class="font-semibold text-slate-900">Doc Brigs Dental Care</span>
             </a>
             <nav class="flex flex-wrap gap-x-5 gap-y-2 text-sm" aria-label="Footer navigation">

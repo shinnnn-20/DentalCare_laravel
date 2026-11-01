@@ -12,6 +12,8 @@ use Illuminate\Support\Str;
 
 class PayMongoBillPaymentReconciler
 {
+    public function __construct(private AppointmentCompletionService $appointmentCompletion) {}
+
     /**
      * @return array{id: string, amount: int, paid_at: int|null}|null
      */
@@ -96,6 +98,7 @@ class PayMongoBillPaymentReconciler
                         'paid_payment_id' => $paidPayment['id'],
                         'paid_at' => $existingPayment->paid_at ?? now(),
                     ]);
+                    $this->appointmentCompletion->sync($bill);
 
                     return 'processed';
                 }
@@ -167,6 +170,7 @@ class PayMongoBillPaymentReconciler
                 'record_id' => (string) $payment->id,
                 'description' => "PayMongo test payment {$paidPayment['id']} recorded for bill {$bill->bill_number}.",
             ]);
+            $this->appointmentCompletion->sync($bill);
 
             return 'processed';
         });

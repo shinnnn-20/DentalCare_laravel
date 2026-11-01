@@ -86,6 +86,7 @@ class BranchAwareOverviewReportsTest extends TestCase
             'branch_id' => $northBranch->id,
         ]))
             ->assertOk()
+            ->assertSee(asset('images/landing/doc-brigs-dental-care-logo.jpg'), false)
             ->assertSee('data-report-branch="North Branch"', false)
             ->assertSee('Branch: <strong>North Branch</strong>', false)
             ->assertViewHas('appointments', 1)

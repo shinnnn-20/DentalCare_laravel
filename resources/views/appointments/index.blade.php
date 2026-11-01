@@ -26,7 +26,7 @@
                     <select class="form-input" name="branch_id" data-branch-select required>
                         <option value="">Choose a branch</option>
                         @foreach ($branches as $branch)
-                            <option value="{{ $branch->id }}" @selected((string) old('branch_id') === (string) $branch->id)>{{ $branch->name }}</option>
+                            <option value="{{ $branch->id }}" @selected((string) old('branch_id', $hasAssignedBranch ? auth()->user()->branch_id : '') === (string) $branch->id)>{{ $branch->name }}</option>
                         @endforeach
                     </select>
                 </label>
@@ -201,9 +201,11 @@
         <form method="GET" action="{{ route($isAppointmentRecordsPage ? 'clinic.appointment-records' : 'appointments.index') }}" class="grid gap-3 border-b border-slate-100 bg-slate-50/60 p-4 sm:flex sm:flex-wrap sm:items-end sm:p-5">
             <label class="form-label sm:min-w-48">Filter by Branch
                 <select class="form-input" name="branch_id">
-                    <option value="">All Branches</option>
+                    @unless ($hasAssignedBranch)
+                        <option value="">All Branches</option>
+                    @endunless
                     @foreach ($branches as $branch)
-                        <option value="{{ $branch->id }}" @selected(request('branch_id') === (string) $branch->id)>{{ $branch->name }}</option>
+                        <option value="{{ $branch->id }}" @selected(request('branch_id') === (string) $branch->id || ($hasAssignedBranch && request('branch_id') === null && (int) auth()->user()->branch_id === $branch->id))>{{ $branch->name }}</option>
                     @endforeach
                     @if ($hasUnassignedAppointments)
                         <option value="unassigned" @selected(request('branch_id') === 'unassigned')>Not Assigned</option>
@@ -252,11 +254,21 @@
                         <td data-label="Branch"><span class="inline-flex max-w-full rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ $appointment->branch?->name ?? 'Not Assigned' }}</span></td>
                         <td data-label="Service">
                             @php($appointmentServices = $appointment->services->isNotEmpty() ? $appointment->services : ($appointment->service ? collect([$appointment->service]) : collect()))
+                            @php($addOnItems = $appointment->bill?->items->where('is_add_on', true) ?? collect())
+                            <p class="mb-1 text-[0.65rem] font-semibold uppercase tracking-wide text-slate-500">Original booked services</p>
                             <div class="flex flex-wrap gap-1">
                                 @forelse ($appointmentServices as $apptService)
                                     <span class="inline-flex rounded-lg bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-900">{{ $apptService->name }}</span>
                                 @empty
                                     <span class="text-xs text-slate-400">No services</span>
+                                @endforelse
+                            </div>
+                            <p class="mb-1 mt-2 text-[0.65rem] font-semibold uppercase tracking-wide text-teal-800">Add-on Services</p>
+                            <div class="flex flex-wrap gap-1">
+                                @forelse ($addOnItems as $addOnItem)
+                                    <span class="inline-flex rounded-lg bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-900">{{ $addOnItem->service_name }}</span>
+                                @empty
+                                    <span class="text-xs text-slate-400">No add-on services.</span>
                                 @endforelse
                             </div>
                         </td><td data-label="Type" class="capitalize">{{ str_replace('_', ' ', $appointment->type) }}</td>
@@ -329,9 +341,6 @@
                                         @elseif (auth()->user()->hasRole('admin', 'staff') && $appointment->dentalRecord && ! $appointment->bill)
                                             <a class="btn-small text-teal-800" href="{{ route('clinic.bills.create', $appointment) }}">Create bill</a>
                                         @endif
-                                    @endif
-                                    @if ($appointment->status === 'billed' && $appointment->bill && $appointment->bill->payment_status === 'paid')
-                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'complete']) }}">@csrf<button class="btn-small text-teal-800">Complete</button></form>
                                     @endif
                                     @if ($appointment->bill)
                                         <a class="btn-small text-teal-800" href="{{ route('clinic.billing.index', ['bill' => $appointment->bill->id]) }}#bill-{{ $appointment->bill->id }}">View bill</a>

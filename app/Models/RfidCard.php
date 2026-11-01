@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\CarbonInterface;
 use Database\Factories\RfidCardFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -10,6 +11,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
 
+/**
+ * @property int $id
+ * @property int $patient_id
+ * @property string $uid
+ * @property bool $is_active
+ * @property Carbon|null $valid_from
+ * @property Carbon|null $valid_until
+ */
 #[Fillable(['patient_id', 'uid', 'is_active', 'valid_from', 'valid_until'])]
 class RfidCard extends Model
 {
@@ -25,7 +34,7 @@ class RfidCard extends Model
         ];
     }
 
-    public function validityStatus(?Carbon $now = null): string
+    public function validityStatus(?CarbonInterface $now = null): string
     {
         if (! $this->is_active) {
             return 'disabled';

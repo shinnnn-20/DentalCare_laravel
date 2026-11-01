@@ -18,7 +18,7 @@
                 <select class="form-input" name="branch_id" required>
                     <option value="">Choose a branch</option>
                     @foreach ($branches as $branch)
-                        <option value="{{ $branch->id }}" @selected(old('branch_id') == $branch->id)>{{ $branch->name }}</option>
+                        <option value="{{ $branch->id }}" @selected((string) old('branch_id', $hasAssignedBranch ? auth()->user()->branch_id : '') === (string) $branch->id)>{{ $branch->name }}</option>
                     @endforeach
                 </select>
             </label>
@@ -76,9 +76,11 @@
             <form method="GET" action="{{ route('clinic.availability.index') }}" class="mt-4 grid gap-3 sm:flex sm:flex-wrap sm:items-end">
                 <label class="form-label sm:min-w-48">Branch
                     <select class="form-input" name="branch_id">
-                        <option value="">All Branches</option>
+                        @unless ($hasAssignedBranch)
+                            <option value="">All Branches</option>
+                        @endunless
                         @foreach ($branches as $branch)
-                            <option value="{{ $branch->id }}" @selected(request('branch_id') === (string) $branch->id)>{{ $branch->name }}</option>
+                            <option value="{{ $branch->id }}" @selected((string) $selectedBranchId === (string) $branch->id)>{{ $branch->name }}</option>
                         @endforeach
                     </select>
                 </label>

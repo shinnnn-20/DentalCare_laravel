@@ -4,6 +4,7 @@
 
 @section('content')
     @php($services = $appointment->services->isNotEmpty() ? $appointment->services : ($appointment->service ? collect([$appointment->service]) : collect()))
+    @php($fixedSubtotalCents = $services->sum(fn ($service) => $service->requires_price_confirmation ? 0 : (int) round((float) $service->price * 100)))
     <section class="max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <p class="text-sm font-medium text-teal-700">{{ $appointment->patient->patient_number }} · {{ $appointment->starts_at->format('M j, Y') }}</p>
         <h1 class="mt-1 text-2xl font-bold">Create bill</h1>
@@ -16,13 +17,13 @@
                 </div>
                 <p class="mt-2 text-sm text-slate-500">{{ $appointment->patient->user->name }} · Appointment #{{ $appointment->id }}</p>
             </div>
-            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4">
+            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}">
                 @csrf
                 @if ($appointment->service->requires_price_confirmation)
                     <div class="grid gap-2">
                         <p class="text-sm leading-6 text-amber-800">This chart fee is an unverified reference only. Confirm the final amount with the clinic's approved fee schedule and dentist's assessment; the reference amount is not automatically billed.</p>
                         <label class="form-label">Staff-confirmed final amount (₱)
-                            <input class="form-input max-w-xs" type="text" inputmode="decimal" name="final_price" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ old('final_price') }}" required>
+                            <input class="form-input max-w-xs" type="text" inputmode="decimal" name="final_price" data-money-input data-bill-final-price pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ old('final_price') }}" required>
                         </label>
                         <label class="flex items-start gap-2 text-sm leading-5 text-slate-700">
                             <input class="mt-1" type="checkbox" name="confirm_final_price" value="1" @checked(old('confirm_final_price')) required>
@@ -30,9 +31,14 @@
                         </label>
                     </div>
                 @endif
-                <label class="form-label">Discount (₱)
-                    <input class="form-input max-w-xs" type="text" inputmode="decimal" name="discount" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ old('discount', '0.00') }}" required>
+                <label class="form-label">Discount (%)
+                    <input class="form-input max-w-xs" type="number" name="discount_value" min="0" max="100" step="0.01" value="{{ old('discount_value', '0') }}" data-discount-percentage required>
                 </label>
+                <div class="grid gap-1 rounded-xl border border-teal-100 bg-teal-50/60 p-4 text-sm">
+                    <p>Calculated discount amount: <strong data-discount-amount>{{ config('clinic.currency_symbol') }}0.00</strong></p>
+                    <p>Final bill total: <strong data-discounted-total>{{ config('clinic.currency_symbol') }}0.00</strong></p>
+                    <p class="text-xs text-slate-600" data-bill-calculation-status></p>
+                </div>
                 <p class="text-xs text-slate-500">The confirmed service amount is saved as a bill-item snapshot and won't change if the catalog is updated later. The appointment can be completed after the bill is fully paid.</p>
                 <button class="btn-primary justify-self-start">Create bill</button>
             </form>
@@ -57,7 +63,7 @@
                 <p class="mt-3 text-sm text-slate-500 border-t border-slate-200 pt-2">{{ $appointment->patient->user->name }} · Appointment #{{ $appointment->id }}</p>
             </div>
 
-            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4">
+            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}">
                 @csrf
                 @php($hasVariable = $services->contains('requires_price_confirmation', true))
                 @if ($hasVariable)
@@ -68,7 +74,7 @@
                                 <div class="grid gap-2 border-t border-amber-200 pt-3">
                                     <p class="text-sm font-semibold text-slate-800">{{ $service->name }} (Reference: {{ $service->price_display }})</p>
                                     <label class="form-label">Staff-confirmed final amount for {{ $service->name }} (₱)
-                                        <input class="form-input max-w-xs" type="text" inputmode="decimal" name="items[{{ $service->id }}][final_price]" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ old('items.'.$service->id.'.final_price') }}" required>
+                                        <input class="form-input max-w-xs" type="text" inputmode="decimal" name="items[{{ $service->id }}][final_price]" data-money-input data-bill-final-price pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ old('items.'.$service->id.'.final_price') }}" required>
                                     </label>
                                     <label class="flex items-start gap-2 text-sm leading-5 text-slate-700">
                                         <input class="mt-1" type="checkbox" name="items[{{ $service->id }}][confirm_final_price]" value="1" @checked(old('items.'.$service->id.'.confirm_final_price')) required>
@@ -79,9 +85,14 @@
                         @endforeach
                     </div>
                 @endif
-                <label class="form-label">Discount (₱)
-                    <input class="form-input max-w-xs" type="text" inputmode="decimal" name="discount" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ old('discount', '0.00') }}" required>
+                <label class="form-label">Discount (%)
+                    <input class="form-input max-w-xs" type="number" name="discount_value" min="0" max="100" step="0.01" value="{{ old('discount_value', '0') }}" data-discount-percentage required>
                 </label>
+                <div class="grid gap-1 rounded-xl border border-teal-100 bg-teal-50/60 p-4 text-sm">
+                    <p>Calculated discount amount: <strong data-discount-amount>{{ config('clinic.currency_symbol') }}0.00</strong></p>
+                    <p>Final bill total: <strong data-discounted-total>{{ config('clinic.currency_symbol') }}0.00</strong></p>
+                    <p class="text-xs text-slate-600" data-bill-calculation-status></p>
+                </div>
                 <p class="text-xs text-slate-500">The confirmed service amounts are saved as bill-item snapshots and won't change if the catalog is updated later. The appointment can be completed after the bill is fully paid.</p>
                 <button class="btn-primary justify-self-start">Create bill</button>
             </form>

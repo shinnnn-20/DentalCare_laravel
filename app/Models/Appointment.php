@@ -9,8 +9,23 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
+/**
+ * @property int $id
+ * @property int $patient_id
+ * @property int $service_id
+ * @property int|null $branch_id
+ * @property int|null $created_by
+ * @property string $type
+ * @property Carbon $starts_at
+ * @property int $duration_minutes
+ * @property string $status
+ * @property string|null $notes
+ * @property Carbon $created_at
+ * @property Carbon $updated_at
+ */
 #[Fillable(['patient_id', 'service_id', 'branch_id', 'created_by', 'type', 'starts_at', 'duration_minutes', 'status', 'notes'])]
 class Appointment extends Model
 {

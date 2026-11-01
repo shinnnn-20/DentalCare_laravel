@@ -8,6 +8,12 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @property int $id
+ * @property int $appointment_id
+ * @property string $status
+ * @property string $queue_number
+ */
 #[Fillable(['appointment_id', 'queue_date', 'queue_number', 'status'])]
 class QueueEntry extends Model
 {

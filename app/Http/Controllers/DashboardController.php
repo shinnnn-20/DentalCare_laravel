@@ -9,10 +9,10 @@ use App\Models\Patient;
 use App\Models\Payment;
 use App\Models\QueueEntry;
 use App\Models\User;
+use App\Services\ClinicRevenueReport;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -22,7 +22,7 @@ use Illuminate\View\View;
 
 class DashboardController extends Controller
 {
-    public function __invoke(Request $request): View|RedirectResponse
+    public function __invoke(Request $request, ClinicRevenueReport $revenueReport): View|RedirectResponse
     {
         $user = $request->user();
 
@@ -46,14 +46,22 @@ class DashboardController extends Controller
         $today = today(config('clinic.timezone'));
         $isAdmin = $user->role === 'admin';
         $branches = Branch::query()->orderBy('name')->get(['id', 'name']);
+        $hasAssignedBranch = $user->hasRole('staff', 'doctor') && $user->branch_id !== null;
+
+        if ($hasAssignedBranch) {
+            $branches = $branches->where('id', $user->branch_id)->values();
+        }
+
         $filters = $request->validate([
             'branch_id' => ['nullable', Rule::in([
-                'unassigned',
+                ...($hasAssignedBranch ? [] : ['unassigned']),
                 ...$branches->map(fn (Branch $branch): string => (string) $branch->id)->all(),
             ])],
             ...($isAdmin ? ['statistics_period' => ['nullable', 'in:week,month,year']] : []),
         ]);
-        $branchId = $filters['branch_id'] ?? null;
+        $branchId = $hasAssignedBranch
+            ? (string) $user->branch_id
+            : ($filters['branch_id'] ?? null);
         $selectedBranchName = match ($branchId) {
             'unassigned' => 'Unassigned appointments',
             null => 'All branches',
@@ -75,8 +83,13 @@ class DashboardController extends Controller
             'appointment',
             fn (Builder $query): Builder => $this->applyAppointmentBranchFilter($query, $branchId),
         );
-        $hasTestPaymentsToday = $paymentsForBranch()
-            ->whereDate('created_at', $today)
+        [$todayStartUtc, $todayEndUtc] = $revenueReport->utcRange(
+            $today->copy()->startOfDay(),
+            $today->copy()->endOfDay(),
+        );
+        $todayPayments = fn (): Builder => $paymentsForBranch()
+            ->whereBetween('created_at', [$todayStartUtc, $todayEndUtc]);
+        $hasTestPaymentsToday = $todayPayments()
             ->where('provider', 'paymongo')
             ->where('is_test', true)
             ->exists();
@@ -102,7 +115,7 @@ class DashboardController extends Controller
             ['Completed today', number_format($appointmentsForBranch()->whereDate('starts_at', $today)->where('status', 'completed')->count()), 'Appointments completed', 'completed_today'],
         ];
         if ($isAdmin) {
-            $metrics[] = ["Today's revenue", '₱'.number_format((float) $paymentsForBranch()->whereDate('created_at', $today)->sum('applied_amount'), 2), $hasTestPaymentsToday ? 'Includes PayMongo TEST MODE payments' : 'Payments applied today', null];
+            $metrics[] = ["Today's revenue", '₱'.number_format((float) $todayPayments()->sum('applied_amount'), 2), $hasTestPaymentsToday ? 'Includes PayMongo TEST MODE payments' : 'Payments applied today', 'today_revenue'];
         }
         if ($user->hasRole('admin', 'staff')) {
             $metrics[] = ['Unpaid bills', number_format($this->outstandingBillsForBranch($branchId)->count()), 'Including partial balances', 'unpaid_bills'];
@@ -113,7 +126,12 @@ class DashboardController extends Controller
 
         $statistics = [];
         if ($isAdmin) {
-            $statistics = $this->dashboardStatistics($filters['statistics_period'] ?? 'week', $today, $branchId);
+            $statistics = $this->dashboardStatistics(
+                $filters['statistics_period'] ?? 'week',
+                $today,
+                $branchId,
+                $revenueReport,
+            );
         }
 
         return view('dashboard.clinic', [
@@ -127,12 +145,18 @@ class DashboardController extends Controller
         ]);
     }
 
-    public function details(Request $request): JsonResponse
+    public function details(Request $request, ClinicRevenueReport $revenueReport): JsonResponse
     {
         $user = $request->user();
         abort_unless($user->hasRole('admin', 'staff', 'doctor'), 403);
 
         $branches = Branch::query()->get(['id']);
+        $hasAssignedBranch = $user->hasRole('staff', 'doctor') && $user->branch_id !== null;
+
+        if ($hasAssignedBranch) {
+            $branches = $branches->where('id', $user->branch_id)->values();
+        }
+
         $filters = $request->validate([
             'metric' => ['required', Rule::in([
                 'patients',
@@ -140,16 +164,17 @@ class DashboardController extends Controller
                 'pending_approval',
                 'queue',
                 'completed_today',
+                'today_revenue',
                 'unpaid_bills',
                 'active_staff',
             ])],
             'branch_id' => ['nullable', Rule::in([
-                'unassigned',
+                ...($hasAssignedBranch ? [] : ['unassigned']),
                 ...$branches->map(fn (Branch $branch): string => (string) $branch->id)->all(),
             ])],
             'appointment_branch_id' => ['sometimes', 'nullable', Rule::in([
                 'all',
-                'unassigned',
+                ...($hasAssignedBranch ? [] : ['unassigned']),
                 ...$branches->map(fn (Branch $branch): string => (string) $branch->id)->all(),
             ])],
             'appointment_status' => ['sometimes', 'nullable', Rule::in([
@@ -174,12 +199,19 @@ class DashboardController extends Controller
         if ($user->role === 'staff' && $filters['metric'] === 'active_staff') {
             abort(403);
         }
+        if ($filters['metric'] === 'today_revenue' && ! $user->hasRole('admin')) {
+            abort(403);
+        }
 
-        $branchId = $filters['branch_id'] ?? null;
+        $branchId = $hasAssignedBranch
+            ? (string) $user->branch_id
+            : ($filters['branch_id'] ?? null);
         $today = today(config('clinic.timezone'));
-        $appointmentBranchId = array_key_exists('appointment_branch_id', $filters)
-            ? $filters['appointment_branch_id']
-            : $branchId;
+        $appointmentBranchId = $hasAssignedBranch
+            ? (string) $user->branch_id
+            : (array_key_exists('appointment_branch_id', $filters)
+                ? $filters['appointment_branch_id']
+                : $branchId);
         $appointmentBranchId = $appointmentBranchId === 'all' ? null : $appointmentBranchId;
         $appointmentStatus = $filters['appointment_status'] ?? 'all';
         $todayAppointments = $this->applyAppointmentBranchFilter(Appointment::query(), $appointmentBranchId)
@@ -217,6 +249,12 @@ class DashboardController extends Controller
                 $filters['page'] ?? 1,
                 true,
             ),
+            'today_revenue' => $this->revenueDetails(
+                $branchId,
+                $today,
+                $filters['page'] ?? 1,
+                $revenueReport,
+            ),
             'unpaid_bills' => $this->billDetails($branchId, $filters['page'] ?? 1),
             'active_staff' => $this->staffDetails($filters['page'] ?? 1),
         };
@@ -229,17 +267,7 @@ class DashboardController extends Controller
                 'appointments',
                 fn (Builder $appointmentsQuery): Builder => $this->applyAppointmentBranchFilter($appointmentsQuery, $branchId),
             ))
-            ->with([
-                'user',
-                'appointments' => function (HasMany $query) use ($branchId): void {
-                    $query->with('branch');
-                    if ($branchId === 'unassigned') {
-                        $query->whereNull('branch_id');
-                    } elseif ($branchId !== null) {
-                        $query->where('branch_id', $branchId);
-                    }
-                },
-            ])
+            ->with('user')
             ->orderBy('id');
         $paginator = $query->paginate(20, ['*'], 'page', $page);
 
@@ -251,7 +279,6 @@ class DashboardController extends Controller
                 'email' => 'Email',
                 'phone' => 'Contact number',
                 'registered_at' => 'Registration date',
-                'branches' => 'Registered branch',
             ],
             $paginator,
             static fn (Patient $patient): array => [
@@ -259,8 +286,7 @@ class DashboardController extends Controller
                 'patient_id' => $patient->patient_number,
                 'email' => $patient->user->email,
                 'phone' => $patient->user->phone ?: '—',
-                'registered_at' => $patient->created_at->format('M j, Y'),
-                'branches' => $patient->appointments->pluck('branch.name')->filter()->unique()->join(', ') ?: '—',
+                'registered_at' => $patient->created_at->timezone(config('clinic.timezone'))->format('M j, Y'),
             ],
         );
     }
@@ -358,6 +384,47 @@ class DashboardController extends Controller
         );
     }
 
+    private function revenueDetails(
+        ?string $branchId,
+        Carbon $today,
+        int $page,
+        ClinicRevenueReport $revenueReport,
+    ): JsonResponse {
+        [$todayStartUtc, $todayEndUtc] = $revenueReport->utcRange(
+            $today->copy()->startOfDay(),
+            $today->copy()->endOfDay(),
+        );
+        $paginator = $this->applyPaymentBranchFilter(Payment::query(), $branchId)
+            ->whereBetween('created_at', [$todayStartUtc, $todayEndUtc])
+            ->with(['bill.patient.user', 'bill.appointment.branch'])
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->paginate(20, ['*'], 'page', $page);
+
+        return $this->detailsResponse(
+            "Today's revenue",
+            [
+                'date_time' => 'Recorded date and time',
+                'name' => 'Patient name',
+                'patient_id' => 'Patient ID',
+                'bill_number' => 'Bill number',
+                'branch' => 'Branch',
+                'method' => 'Payment method',
+                'amount' => 'Applied amount',
+            ],
+            $paginator,
+            static fn (Payment $payment): array => [
+                'date_time' => $payment->created_at->timezone(config('clinic.timezone'))->format('M j, Y · g:i A'),
+                'name' => $payment->bill->patient->user->name,
+                'patient_id' => $payment->bill->patient->patient_number,
+                'bill_number' => $payment->bill->bill_number,
+                'branch' => $payment->bill->appointment?->branch?->name ?? 'Unassigned',
+                'method' => strtoupper($payment->method).($payment->provider === 'paymongo' && $payment->is_test ? ' · PayMongo TEST MODE' : ''),
+                'amount' => '₱'.number_format((float) $payment->applied_amount, 2),
+            ],
+        );
+    }
+
     private function billDetails(?string $branchId, int $page): JsonResponse
     {
         $query = $this->outstandingBillsForBranch($branchId)
@@ -389,7 +456,7 @@ class DashboardController extends Controller
                     'patient_id' => $bill->patient->patient_number,
                     'bill_number' => $bill->bill_number,
                     'branch' => $bill->appointment?->branch?->name ?? 'Unassigned',
-                    'bill_date' => $bill->created_at->format('M j, Y'),
+                    'bill_date' => $bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y'),
                     'total' => number_format($total, 2),
                     'paid' => number_format($paid, 2),
                     'balance' => number_format(max(0, $total - $paid), 2),
@@ -402,6 +469,7 @@ class DashboardController extends Controller
     private function staffDetails(int $page): JsonResponse
     {
         $paginator = User::query()
+            ->with('branch')
             ->whereIn('role', ['staff', 'doctor'])
             ->where('is_active', true)
             ->orderBy('role')
@@ -414,7 +482,7 @@ class DashboardController extends Controller
                 'name' => 'Name',
                 'role' => 'Account role',
                 'email' => 'Email',
-                'branches' => 'Assigned branch(es)',
+                'branch' => 'Assigned branch',
                 'status' => 'Account status',
             ],
             $paginator,
@@ -422,7 +490,7 @@ class DashboardController extends Controller
                 'name' => $staff->name,
                 'role' => ucfirst($staff->role),
                 'email' => $staff->email,
-                'branches' => 'No branch assignment',
+                'branch' => $staff->branch?->name ?? 'No branch assigned',
                 'status' => $staff->is_active ? 'Active' : 'Inactive',
             ],
         );
@@ -454,8 +522,12 @@ class DashboardController extends Controller
      *     revenueMaximum:float
      * }
      */
-    private function dashboardStatistics(string $period, Carbon $today, ?string $branchId): array
-    {
+    private function dashboardStatistics(
+        string $period,
+        Carbon $today,
+        ?string $branchId,
+        ClinicRevenueReport $revenueReport,
+    ): array {
         $usesMonths = $period === 'year';
         $rangeStart = $usesMonths
             ? $today->copy()->startOfMonth()->subMonths(11)
@@ -465,13 +537,24 @@ class DashboardController extends Controller
             ? $date->format('Y-m')
             : $date->toDateString();
         $timeline = [];
+        $revenueBuckets = [];
         $cursor = $rangeStart->copy();
 
         while ($cursor->lessThanOrEqualTo($today)) {
-            $timeline[$bucketKey($cursor)] = [
+            $key = $bucketKey($cursor);
+            $bucketStart = $usesMonths ? $cursor->copy()->startOfMonth() : $cursor->copy()->startOfDay();
+            $bucketEnd = $usesMonths ? $cursor->copy()->endOfMonth() : $cursor->copy()->endOfDay();
+            if ($bucketEnd->greaterThan($today->copy()->endOfDay())) {
+                $bucketEnd = $today->copy()->endOfDay();
+            }
+            $timeline[$key] = [
                 'label' => $usesMonths ? $cursor->format('M Y') : $cursor->format('D j'),
                 'appointments' => 0,
                 'revenue' => 0.0,
+            ];
+            $revenueBuckets[$key] = [
+                'start' => $bucketStart,
+                'end' => $bucketEnd,
             ];
             $usesMonths ? $cursor->addMonth() : $cursor->addDay();
         }
@@ -489,16 +572,13 @@ class DashboardController extends Controller
             }
         }
 
-        $revenueRows = $this->applyPaymentBranchFilter(Payment::query(), $branchId)
-            ->selectRaw('DATE(created_at) as activity_date, SUM(applied_amount) as total')
-            ->whereBetween('created_at', [$rangeStart, $rangeEnd])
-            ->groupBy('activity_date')
-            ->get();
-
-        foreach ($revenueRows as $row) {
-            $key = $bucketKey(Carbon::parse($row->activity_date, config('clinic.timezone')));
+        $revenueByBucket = $revenueReport->totalsByClinicBuckets(
+            $this->applyPaymentBranchFilter(Payment::query(), $branchId),
+            $revenueBuckets,
+        );
+        foreach ($revenueByBucket as $key => $total) {
             if (isset($timeline[$key])) {
-                $timeline[$key]['revenue'] = (float) $row->total;
+                $timeline[$key]['revenue'] = $total;
             }
         }
 

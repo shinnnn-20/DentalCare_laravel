@@ -173,17 +173,18 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
             ->assertSee('₱1,000.00')
             ->assertSee('₱1,800.00');
 
-        // Staff creates one bill containing all applicable treatments with ₱100 discount
+        // Staff creates one bill containing all applicable treatments with a percentage discount
         $this->actingAs($staff)->post(route('clinic.bills.store', $appointment), [
-            'discount' => '100.00',
+            'discount_value' => '3.03',
         ])->assertRedirectToRoute('clinic.billing.index');
 
         $bill = Bill::query()->sole();
         $this->assertSame($appointment->id, $bill->appointment_id);
         $this->assertSame($patient->id, $bill->patient_id);
         $this->assertSame('3300.00', $bill->subtotal);
-        $this->assertSame('100.00', $bill->discount);
-        $this->assertSame('3200.00', $bill->total);
+        $this->assertSame('3.03', $bill->discount_value);
+        $this->assertSame('99.99', $bill->discount);
+        $this->assertSame('3200.01', $bill->total);
         $this->assertSame('unpaid', $bill->payment_status);
 
         // Confirm 3 separate bill items exist with correct unit prices and subtotals
@@ -220,7 +221,7 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
             ->assertSee('Consultation × 1')
             ->assertSee('Dental Cleaning × 1')
             ->assertSee('Dental Filling × 1')
-            ->assertSee('₱3,200.00');
+            ->assertSee('₱3,200.01');
     }
 
     public function test_staff_can_assign_an_rfid_card_to_a_patient(): void
@@ -259,7 +260,7 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
         $billA = Bill::factory()->for($patientA)->create([
             'bill_number' => 'B-2026-000101',
             'subtotal' => '3300.00',
-            'discount' => '0.00',
+            'discount_value' => '0',
             'total' => '3300.00',
             'payment_status' => 'unpaid',
         ]);
@@ -269,7 +270,7 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
         $billB = Bill::factory()->for($patientB)->create([
             'bill_number' => 'B-2026-000202',
             'subtotal' => '1500.00',
-            'discount' => '0.00',
+            'discount_value' => '0',
             'total' => '1500.00',
             'payment_status' => 'unpaid',
         ]);
@@ -426,7 +427,7 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
         $patient = Patient::factory()->for($patientUser)->create();
         $bill = Bill::factory()->for($patient)->create([
             'subtotal' => '3300.00',
-            'discount' => '0.00',
+            'discount_value' => '0',
             'total' => '3300.00',
             'payment_status' => 'unpaid',
         ]);

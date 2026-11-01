@@ -8,6 +8,12 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @property int $id
+ * @property int $patient_id
+ * @property int|null $appointment_id
+ * @property int|null $created_by
+ */
 #[Fillable(['patient_id', 'appointment_id', 'created_by', 'diagnosis', 'treatment', 'prescription', 'notes', 'follow_up_date'])]
 class DentalRecord extends Model
 {

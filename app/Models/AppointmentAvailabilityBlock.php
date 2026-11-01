@@ -7,7 +7,16 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property int $id
+ * @property int $branch_id
+ * @property int|null $created_by
+ * @property Carbon $starts_at
+ * @property Carbon $ends_at
+ * @property bool $is_active
+ */
 #[Fillable(['branch_id', 'created_by', 'starts_at', 'ends_at', 'reason', 'description', 'is_active'])]
 class AppointmentAvailabilityBlock extends Model
 {

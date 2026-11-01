@@ -7,6 +7,7 @@ use App\Models\PayMongoBillCheckout;
 use App\Services\PayMongoBillPaymentReconciler;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -17,9 +18,11 @@ use Illuminate\View\View;
 class PayMongoBillCheckoutController extends Controller
 {
     public function reconcile(
+        Request $request,
         PayMongoBillCheckout $checkout,
         PayMongoBillPaymentReconciler $reconciler,
     ): RedirectResponse {
+        $this->authorizeBillBranch($request, $checkout->bill);
         $this->ensureLocalEnvironment();
 
         if (! $this->hasValidTestConfiguration()) {
@@ -119,8 +122,9 @@ class PayMongoBillCheckoutController extends Controller
         ]);
     }
 
-    public function store(Bill $bill): RedirectResponse
+    public function store(Request $request, Bill $bill): RedirectResponse
     {
+        $this->authorizeBillBranch($request, $bill);
         $this->ensureLocalEnvironment();
 
         if (! $this->hasValidTestConfiguration()) {
@@ -277,18 +281,43 @@ class PayMongoBillCheckoutController extends Controller
         return redirect()->away($checkoutUrl);
     }
 
-    public function result(string $result): View
+    public function result(Request $request, string $result): View
     {
         $this->ensureLocalEnvironment();
         abort_unless(in_array($result, ['success', 'cancelled'], true), 404);
 
-        return view('paymongo.bill-checkout-result', ['result' => $result]);
+        [$returnUrl, $returnLabel] = match ($request->user()?->role) {
+            'admin', 'staff' => [route('clinic.appointment-records'), 'Return to Appointment Records'],
+            'doctor' => [route('appointments.index'), 'Return to Appointments'],
+            'patient' => [route('patient.billing'), 'Return to My Billing'],
+            default => [route('login'), 'Return to Sign In'],
+        };
+
+        return view('paymongo.bill-checkout-result', [
+            'result' => $result,
+            'returnUrl' => $returnUrl,
+            'returnLabel' => $returnLabel,
+        ]);
     }
 
     private function ensureLocalEnvironment(): void
     {
         abort_unless(
             app()->isLocal() || (app()->environment('testing') && app()->runningUnitTests()),
+            404,
+        );
+    }
+
+    private function authorizeBillBranch(Request $request, Bill $bill): void
+    {
+        $user = $request->user();
+
+        if ($user->hasRole('admin') || $user->branch_id === null) {
+            return;
+        }
+
+        abort_unless(
+            $bill->appointment()->where('branch_id', $user->branch_id)->exists(),
             404,
         );
     }

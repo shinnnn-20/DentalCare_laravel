@@ -91,9 +91,9 @@ class DashboardStatisticsDetailsTest extends TestCase
         $this->assertSame('2', $dashboardCounts['Active staff']);
         $this->assertSame("Today's revenue", $dashboardMetrics[5][0]);
         $this->assertSame('₱250.00', $dashboardMetrics[5][1]);
-        $this->assertSame(null, $dashboardMetrics[5][3]);
+        $this->assertSame('today_revenue', $dashboardMetrics[5][3]);
 
-        $this->get(route('dashboard.details', [
+        $patientDetails = $this->get(route('dashboard.details', [
             'metric' => 'patients',
             'branch_id' => $branch->id,
             'statistics_period' => 'week',
@@ -104,8 +104,10 @@ class DashboardStatisticsDetailsTest extends TestCase
             ->assertJsonPath('records.0.name', 'Dashboard Patient')
             ->assertJsonPath('records.0.patient_id', 'P-DETAIL-0001')
             ->assertJsonPath('records.0.email', 'dashboard.patient@example.test')
-            ->assertJsonPath('records.0.phone', '09170000000')
-            ->assertJsonPath('records.0.branches', 'General Trias Branch');
+            ->assertJsonPath('records.0.phone', '09170000000');
+        $this->assertCount(5, $patientDetails->json('columns'));
+        $this->assertArrayNotHasKey('branches', $patientDetails->json('columns'));
+        $this->assertArrayNotHasKey('branches', $patientDetails->json('records.0'));
 
         $this->get(route('dashboard.details', [
             'metric' => 'today_appointments',
@@ -159,6 +161,15 @@ class DashboardStatisticsDetailsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('total', 2)
             ->assertJsonPath('records.0.status', 'Active');
+
+        $this->get(route('dashboard.details', [
+            'metric' => 'today_revenue',
+            'branch_id' => $branch->id,
+        ]))
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('records.0.amount', '₱250.00')
+            ->assertJsonPath('records.0.bill_number', 'B-DETAIL-0001');
     }
 
     public function test_dashboard_details_respect_selected_branch_and_doctors_can_access_overview(): void
@@ -306,7 +317,7 @@ class DashboardStatisticsDetailsTest extends TestCase
             ->assertSessionHasErrors('appointment_status');
     }
 
-    public function test_dashboard_does_not_make_the_revenue_card_clickable(): void
+    public function test_dashboard_revenue_card_opens_recorded_payment_details(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
 
@@ -314,7 +325,144 @@ class DashboardStatisticsDetailsTest extends TestCase
             ->get(route('dashboard'))
             ->assertOk()
             ->assertSee("Today's revenue")
-            ->assertDontSee('data-dashboard-detail="revenue"', false);
+            ->assertSee('data-dashboard-detail="today_revenue"', false);
+    }
+
+    public function test_dashboard_and_reports_use_clinic_day_payment_boundaries_and_branch_filters(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-01 12:00:00', config('clinic.timezone')));
+        $admin = User::factory()->create(['role' => 'admin']);
+        $generalTrias = Branch::query()->where('slug', 'general-trias')->firstOrFail();
+        $dasmarinas = Branch::query()->where('slug', 'dasmarinas')->firstOrFail();
+        $service = Service::factory()->create(['name' => 'Branch Report Cleaning']);
+        $generalPatient = Patient::factory()->create([
+            'created_at' => '2026-10-31 16:30:00',
+            'updated_at' => '2026-10-31 16:30:00',
+        ]);
+        $dasmarinasPatient = Patient::factory()->create([
+            'created_at' => '2026-10-31 17:00:00',
+            'updated_at' => '2026-10-31 17:00:00',
+        ]);
+        $nextDayPatient = Patient::factory()->create([
+            'created_at' => '2026-11-01 16:30:00',
+            'updated_at' => '2026-11-01 16:30:00',
+        ]);
+        $completedAppointment = Appointment::factory()
+            ->for($generalPatient)
+            ->for($generalTrias)
+            ->for($service)
+            ->create([
+                'starts_at' => '2026-11-01 10:00:00',
+                'status' => 'completed',
+                'type' => 'walk_in',
+            ]);
+        Appointment::factory()
+            ->for($generalPatient)
+            ->for($generalTrias)
+            ->for($service)
+            ->create([
+                'starts_at' => '2026-11-01 11:00:00',
+                'status' => 'cancelled',
+            ]);
+        $otherBranchAppointment = Appointment::factory()
+            ->for($dasmarinasPatient)
+            ->for($dasmarinas)
+            ->for($service)
+            ->create([
+                'starts_at' => '2026-11-01 12:00:00',
+                'status' => 'completed',
+            ]);
+        Appointment::factory()
+            ->for($nextDayPatient)
+            ->for($generalTrias)
+            ->for($service)
+            ->create([
+                'starts_at' => '2026-11-02 10:00:00',
+                'status' => 'completed',
+            ]);
+        $generalBill = Bill::factory()->for($generalPatient)->for($completedAppointment)->create([
+            'total' => '300.00',
+            'payment_status' => 'partially_paid',
+        ]);
+        $otherBranchBill = Bill::factory()->for($dasmarinasPatient)->for($otherBranchAppointment)->create([
+            'total' => '500.00',
+            'payment_status' => 'paid',
+        ]);
+        Payment::factory()->for($generalBill)->create([
+            'amount' => '100.00',
+            'applied_amount' => '100.00',
+            'created_at' => '2026-10-31 16:30:00',
+            'updated_at' => '2026-10-31 16:30:00',
+        ]);
+        Payment::factory()->for($generalBill)->create([
+            'amount' => '200.00',
+            'applied_amount' => '200.00',
+            'created_at' => '2026-11-01 16:30:00',
+            'updated_at' => '2026-11-01 16:30:00',
+        ]);
+        Payment::factory()->for($otherBranchBill)->create([
+            'amount' => '500.00',
+            'applied_amount' => '500.00',
+            'created_at' => '2026-11-01 12:00:00',
+            'updated_at' => '2026-11-01 12:00:00',
+        ]);
+
+        $this->actingAs($admin);
+        $dashboard = $this->get(route('dashboard', [
+            'branch_id' => $generalTrias->id,
+            'statistics_period' => 'week',
+        ]));
+        $dashboardMetrics = array_column($dashboard->viewData('metrics'), 1, 0);
+        $this->assertSame('₱100.00', $dashboardMetrics["Today's revenue"]);
+        $todayBucket = collect($dashboard->viewData('statistics')['timeline'])
+            ->firstWhere('label', 'Sun 1');
+        $this->assertSame(100.0, $todayBucket['revenue']);
+        $yearDashboard = $this->get(route('dashboard', [
+            'branch_id' => $generalTrias->id,
+            'statistics_period' => 'year',
+        ]));
+        $novemberBucket = collect($yearDashboard->viewData('statistics')['timeline'])
+            ->firstWhere('label', 'Nov 2026');
+        $this->assertSame(100.0, $novemberBucket['revenue']);
+
+        $this->get(route('dashboard.details', [
+            'metric' => 'today_revenue',
+            'branch_id' => $generalTrias->id,
+        ]))
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('records.0.amount', '₱100.00')
+            ->assertJsonPath('records.0.date_time', 'Nov 1, 2026 · 12:30 AM');
+
+        $generalReport = $this->get(route('admin.reports', [
+            'from' => '2026-11-01',
+            'to' => '2026-11-01',
+            'branch_id' => $generalTrias->id,
+        ]));
+        $this->assertSame(2, $generalReport->viewData('appointments'));
+        $this->assertSame(1, $generalReport->viewData('walkIns'));
+        $this->assertSame(1, $generalReport->viewData('completed'));
+        $this->assertSame(1, $generalReport->viewData('cancelled'));
+        $this->assertSame(100.0, (float) $generalReport->viewData('revenue'));
+        $this->assertSame(1, $generalReport->viewData('newPatients'));
+        $this->assertSame(100.0, $generalReport->viewData('timeline')[0]['revenue']);
+        $weeklyReport = $this->get(route('admin.reports', [
+            'from' => '2026-10-01',
+            'to' => '2026-11-01',
+            'branch_id' => $generalTrias->id,
+        ]));
+        $this->assertSame(
+            100.0,
+            array_sum(array_column($weeklyReport->viewData('timeline'), 'revenue')),
+        );
+
+        $allBranchesReport = $this->get(route('admin.reports', [
+            'from' => '2026-11-01',
+            'to' => '2026-11-01',
+        ]));
+        $this->assertSame(600.0, (float) $allBranchesReport->viewData('revenue'));
+        $this->assertSame(2, $allBranchesReport->viewData('newPatients'));
+        $this->assertSame(600.0, $allBranchesReport->viewData('timeline')[0]['revenue']);
     }
 
     public function test_patients_cannot_access_dashboard_statistic_details(): void

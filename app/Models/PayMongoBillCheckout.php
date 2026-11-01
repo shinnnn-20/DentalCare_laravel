@@ -5,7 +5,17 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property int $id
+ * @property int $bill_id
+ * @property string $reference_number
+ * @property string $status
+ * @property string|null $checkout_session_id
+ * @property int $amount_centavos
+ * @property Carbon|null $paid_at
+ */
 #[Fillable([
     'bill_id',
     'reference_number',

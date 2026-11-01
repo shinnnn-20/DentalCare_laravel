@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Bill;
 use App\Models\Payment;
 use App\Models\Receipt;
+use App\Services\AppointmentCompletionService;
 use App\Services\AuditTrail;
 use App\Services\ClinicNotificationService;
 use App\Services\SmsNotifier;
@@ -20,10 +21,13 @@ class PaymentController extends Controller
     public function store(
         Request $request,
         Bill $bill,
+        AppointmentCompletionService $appointmentCompletion,
         AuditTrail $auditTrail,
         SmsNotifier $smsNotifier,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
+        $this->authorizeBillBranch($request, $bill);
+
         foreach (['amount', 'applied_amount'] as $field) {
             $value = $request->input($field);
 
@@ -39,7 +43,7 @@ class PaymentController extends Controller
             'applied_amount' => ['required', 'numeric', 'decimal:0,2', 'gt:0', 'max:1000000'],
         ]);
 
-        $payment = DB::transaction(function () use ($bill, $data, $request): Payment {
+        $payment = DB::transaction(function () use ($bill, $data, $request, $appointmentCompletion): Payment {
             $lockedBill = Bill::query()->lockForUpdate()->findOrFail($bill->id);
             $paid = (int) round((float) $lockedBill->payments()->sum('applied_amount') * 100);
             $total = (int) round((float) $lockedBill->total * 100);
@@ -75,6 +79,7 @@ class PaymentController extends Controller
             $lockedBill->update([
                 'payment_status' => $newPaid >= $total ? 'paid' : 'partially_paid',
             ]);
+            $appointmentCompletion->sync($lockedBill);
 
             return $payment;
         });
@@ -103,6 +108,7 @@ class PaymentController extends Controller
     public function showReceipt(Request $request, Receipt $receipt): View
     {
         abort_if($request->user()->role === 'patient', 404);
+        $this->authorizeBillBranch($request, $receipt->payment->bill);
 
         return $this->receiptView($receipt, false);
     }
@@ -127,5 +133,19 @@ class PaymentController extends Controller
         ]);
 
         return view('receipts.show', compact('receipt', 'isPreview'));
+    }
+
+    private function authorizeBillBranch(Request $request, Bill $bill): void
+    {
+        $user = $request->user();
+
+        if ($user->hasRole('admin') || $user->branch_id === null) {
+            return;
+        }
+
+        abort_unless(
+            $bill->appointment()->where('branch_id', $user->branch_id)->exists(),
+            404,
+        );
     }
 }
