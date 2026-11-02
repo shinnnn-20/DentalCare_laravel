@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\Appointment;
 use App\Models\Bill;
+use App\Models\Branch;
+use App\Models\DentalRecord;
 use App\Models\Patient;
 use App\Models\Service;
 use App\Models\User;
@@ -32,6 +34,7 @@ class ClinicNotificationTest extends TestCase
         $service = Service::factory()->create();
 
         $response = $this->actingAs($patient->user)->post(route('appointments.store'), [
+            'branch_id' => Branch::query()->where('slug', 'general-trias')->firstOrFail()->id,
             'service_id' => $service->id,
             'appointment_date' => '2026-10-08',
             'appointment_time' => '14:00',
@@ -52,6 +55,7 @@ class ClinicNotificationTest extends TestCase
         $this->assertSame('appointment', $notification->data['related_type']);
         $this->assertSame($appointment->id, $notification->data['related_id']);
         $this->assertStringContainsString('#appointment-'.$appointment->id, $notification->data['url']);
+        $this->assertStringStartsWith(route('clinic.appointment-records', [], false), $notification->data['url']);
     }
 
     public function test_patient_cancellation_notifies_staff_with_the_original_appointment_time(): void
@@ -110,10 +114,162 @@ class ClinicNotificationTest extends TestCase
 
         $this->actingAs($recipient)
             ->post(route('clinic.notifications.open', $notification->id))
-            ->assertRedirect($notification->data['url']);
+            ->assertRedirect(route('clinic.appointment-records', [
+                'appointment_id' => $appointment->id,
+            ], false).'#appointment-'.$appointment->id);
 
         $this->assertNotNull($notification->fresh()->read_at);
         $this->assertSame(0, $recipient->unreadNotifications()->count());
+    }
+
+    public function test_opening_appointment_notification_uses_its_exact_record_and_drops_stale_filters(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = Patient::factory()->create();
+        $otherAppointment = Appointment::factory()->for($patient)->create(['status' => 'pending']);
+        $appointment = Appointment::factory()->for($patient)->create(['status' => 'approved']);
+        $notification = new ClinicActivityNotification(
+            'appointment.approved',
+            'Appointment Approved',
+            'An appointment was approved.',
+            route('clinic.appointment-records', [
+                'appointment_id' => $otherAppointment->id,
+                'status' => 'pending',
+            ], false).'#appointment-'.$otherAppointment->id,
+            'appointment',
+            $appointment->id,
+        );
+        $staff->notify($notification);
+        $savedNotification = $staff->notifications()->firstOrFail();
+        $expectedUrl = route('clinic.appointment-records', [
+            'appointment_id' => $appointment->id,
+        ], false).'#appointment-'.$appointment->id;
+
+        $this->actingAs($staff)
+            ->postJson(route('clinic.notifications.open', $savedNotification->id))
+            ->assertOk()
+            ->assertJsonPath('redirect_url', $expectedUrl);
+
+        $response = $this->get(route('clinic.appointment-records', ['appointment_id' => $appointment->id]));
+        $response->assertSee('id="appointment-'.$appointment->id.'"', false)
+            ->assertDontSee('id="appointment-'.$otherAppointment->id.'"', false);
+        $appointmentRowStart = strpos($response->getContent(), 'id="appointment-'.$appointment->id.'"');
+        $appointmentRowEnd = strpos($response->getContent(), '</tr>', $appointmentRowStart);
+        $this->assertNotFalse($appointmentRowStart);
+        $this->assertNotFalse($appointmentRowEnd);
+        $this->assertStringContainsString(
+            'aria-current="true"',
+            substr($response->getContent(), $appointmentRowStart, $appointmentRowEnd - $appointmentRowStart),
+        );
+    }
+
+    public function test_opening_bill_notification_selects_the_exact_bill_for_a_patient_with_multiple_bills(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = Patient::factory()->create();
+        $otherBill = Bill::factory()->for($patient)->create();
+        $bill = Bill::factory()->for($patient)->create();
+        $notification = new ClinicActivityNotification(
+            'billing.payment_recorded',
+            'Payment Recorded',
+            'A payment was recorded.',
+            route('clinic.billing.index', ['bill' => $otherBill->id], false).'#bill-'.$otherBill->id,
+            'bill',
+            $bill->id,
+        );
+        $staff->notify($notification);
+        $savedNotification = $staff->notifications()->firstOrFail();
+        $expectedUrl = route('clinic.billing.index', ['bill' => $bill->id], false).'#bill-'.$bill->id;
+
+        $this->actingAs($staff)
+            ->postJson(route('clinic.notifications.open', $savedNotification->id))
+            ->assertOk()
+            ->assertJsonPath('redirect_url', $expectedUrl);
+
+        $this->get(route('clinic.billing.index', ['bill' => $bill->id]))
+            ->assertSee('id="bill-'.$bill->id.'" class="selected-bill"', false)
+            ->assertDontSee('id="bill-'.$otherBill->id.'" class="selected-bill"', false);
+    }
+
+    public function test_opening_dental_record_notification_highlights_the_exact_record_on_its_patient_profile(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = Patient::factory()->create();
+        $otherRecord = DentalRecord::factory()->for($patient)->create();
+        $record = DentalRecord::factory()->for($patient)->create();
+        $notification = new ClinicActivityNotification(
+            'patient.dental_record_created',
+            'Dental Record Created',
+            'A dental record was created.',
+            route('clinic.patients.show', $patient, false),
+            'dental_record',
+            $record->id,
+        );
+        $staff->notify($notification);
+        $savedNotification = $staff->notifications()->firstOrFail();
+        $expectedUrl = route('clinic.patients.show', [
+            'patient' => $patient->id,
+            'record' => $record->id,
+        ], false).'#dental-record-'.$record->id;
+
+        $this->actingAs($staff)
+            ->postJson(route('clinic.notifications.open', $savedNotification->id))
+            ->assertOk()
+            ->assertJsonPath('redirect_url', $expectedUrl);
+
+        $response = $this->get(route('clinic.patients.show', [
+            'patient' => $patient->id,
+            'record' => $record->id,
+        ]));
+        $html = $response->getContent();
+        $recordStart = strpos($html, 'id="dental-record-'.$record->id.'"');
+        $recordEnd = strpos($html, '</article>', $recordStart);
+        $this->assertNotFalse($recordStart);
+        $this->assertNotFalse($recordEnd);
+        $this->assertStringContainsString('aria-current="true"', substr($html, $recordStart, $recordEnd - $recordStart));
+        $this->assertStringNotContainsString('aria-current="true"', substr(
+            $html,
+            strpos($html, 'id="dental-record-'.$otherRecord->id.'"'),
+            strpos($html, '</article>', strpos($html, 'id="dental-record-'.$otherRecord->id.'"'))
+                - strpos($html, 'id="dental-record-'.$otherRecord->id.'"'),
+        ));
+    }
+
+    public function test_patient_profile_rejects_a_dental_record_highlight_owned_by_another_patient(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = Patient::factory()->create();
+        $otherPatient = Patient::factory()->create();
+        $otherRecord = DentalRecord::factory()->for($otherPatient)->create();
+
+        $this->actingAs($staff)
+            ->get(route('clinic.patients.show', [
+                'patient' => $patient->id,
+                'record' => $otherRecord->id,
+            ]))
+            ->assertNotFound();
+    }
+
+    public function test_missing_related_record_does_not_follow_the_stored_notification_url(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = Patient::factory()->create();
+        $appointment = Appointment::factory()->for($patient)->create();
+        $notification = new ClinicActivityNotification(
+            'appointment.approved',
+            'Appointment Approved',
+            'An appointment was approved.',
+            route('clinic.appointment-records', ['appointment_id' => $appointment->id], false),
+            'appointment',
+            999999,
+        );
+        $staff->notify($notification);
+        $savedNotification = $staff->notifications()->firstOrFail();
+
+        $this->actingAs($staff)
+            ->postJson(route('clinic.notifications.open', $savedNotification->id))
+            ->assertOk()
+            ->assertJsonPath('redirect_url', route('clinic.appointment-records', [], false));
     }
 
     public function test_staff_notification_endpoints_are_role_protected_and_scoped_to_the_authenticated_user(): void

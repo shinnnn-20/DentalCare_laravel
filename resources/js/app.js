@@ -1,4 +1,213 @@
 document.addEventListener('DOMContentLoaded', () => {
+    const moneyInputs = Array.from(document.querySelectorAll('[data-money-input]'));
+
+    const formatMoneyInput = (input) => {
+        const currentValue = input.value;
+        const selectionStart = input.selectionStart ?? currentValue.length;
+        const selectionEnd = input.selectionEnd ?? selectionStart;
+        const countMeaningfulCharacters = (value) => value.replace(/[^\d.]/g, '').length;
+        const meaningfulCharactersBeforeStart = countMeaningfulCharacters(currentValue.slice(0, selectionStart));
+        const meaningfulCharactersBeforeEnd = countMeaningfulCharacters(currentValue.slice(0, selectionEnd));
+        let normalizedValue = currentValue.replace(/,/g, '').replace(/[^\d.]/g, '');
+        const decimalIndex = normalizedValue.indexOf('.');
+
+        if (decimalIndex !== -1) {
+            normalizedValue = `${normalizedValue.slice(0, decimalIndex + 1)}${normalizedValue.slice(decimalIndex + 1).replace(/\./g, '').slice(0, 2)}`;
+        }
+
+        const [integerPart, decimalPart] = normalizedValue.split('.');
+        const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        const formattedValue = decimalPart === undefined
+            ? groupedInteger
+            : `${groupedInteger}.${decimalPart}`;
+        const positionForMeaningfulCharacterCount = (characterCount) => {
+            if (characterCount === 0) {
+                return 0;
+            }
+
+            let meaningfulCharacters = 0;
+            for (let index = 0; index < formattedValue.length; index += 1) {
+                if (formattedValue[index] !== ',') {
+                    meaningfulCharacters += 1;
+                }
+                if (meaningfulCharacters === characterCount) {
+                    return index + 1;
+                }
+            }
+
+            return formattedValue.length;
+        };
+
+        input.value = formattedValue;
+        input.setSelectionRange(
+            positionForMeaningfulCharacterCount(meaningfulCharactersBeforeStart),
+            positionForMeaningfulCharacterCount(meaningfulCharactersBeforeEnd),
+        );
+    };
+
+    moneyInputs.forEach((input) => {
+        formatMoneyInput(input);
+        input.addEventListener('input', () => formatMoneyInput(input));
+    });
+
+    document.querySelectorAll('[data-bill-discount]').forEach((form) => {
+        const percentageInput = form.querySelector('[data-discount-percentage]');
+        const discountAmount = form.querySelector('[data-discount-amount]');
+        const discountedTotal = form.querySelector('[data-discounted-total]');
+        const calculationStatus = form.querySelector('[data-bill-calculation-status]');
+        const formatCurrency = (cents) => new Intl.NumberFormat('en-PH', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(cents / 100);
+
+        const updateBillTotals = () => {
+            const percentage = Number.parseFloat(percentageInput.value);
+            if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100) {
+                discountAmount.textContent = 'Enter 0–100%';
+                discountedTotal.textContent = '—';
+                calculationStatus.textContent = '';
+                return;
+            }
+
+            let subtotalCents = Number.parseInt(form.dataset.billBaseCents ?? '0', 10);
+            for (const priceInput of form.querySelectorAll('[data-bill-final-price]')) {
+                const normalizedPrice = priceInput.value.replace(/,/g, '').trim();
+                if (!/^\d+(?:\.\d{1,2})?$/.test(normalizedPrice)) {
+                    discountAmount.textContent = '—';
+                    discountedTotal.textContent = '—';
+                    calculationStatus.textContent = 'Enter and confirm all final treatment amounts to calculate the bill.';
+                    return;
+                }
+
+                const [whole, fraction = ''] = normalizedPrice.split('.');
+                subtotalCents += Number.parseInt(whole, 10) * 100
+                    + Number.parseInt(`${fraction}00`.slice(0, 2), 10);
+            }
+
+            const discountBasisPoints = Math.round(percentage * 100);
+            const discountCents = Math.floor((subtotalCents * discountBasisPoints + 5000) / 10000);
+            discountAmount.textContent = `₱${formatCurrency(discountCents)}`;
+            discountedTotal.textContent = `₱${formatCurrency(subtotalCents - discountCents)}`;
+            calculationStatus.textContent = '';
+        };
+
+        form.addEventListener('input', updateBillTotals);
+        form.addEventListener('change', updateBillTotals);
+        updateBillTotals();
+    });
+
+    document.querySelectorAll('[data-addon-form]').forEach((form) => {
+        const summaryItems = form.querySelector('[data-addon-summary-items]');
+        const emptyMessage = form.querySelector('[data-addon-empty]');
+        const total = form.querySelector('[data-addon-total]');
+        const formatCurrency = (cents) => new Intl.NumberFormat('en-PH', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(cents / 100);
+
+        const updateSummary = () => {
+            const selectedServices = Array.from(form.querySelectorAll('[data-addon-toggle]'));
+            const selected = selectedServices.filter((service) => service.checked);
+            let totalCents = 0;
+            let hasUnconfirmedPrice = false;
+
+            summaryItems.replaceChildren();
+            emptyMessage.hidden = selected.length > 0;
+            summaryItems.classList.toggle('hidden', selected.length === 0);
+
+            selectedServices.forEach((service) => {
+                const pricePanel = form.querySelector(`[data-addon-price-panel="${service.dataset.serviceId}"]`);
+                const priceInput = form.querySelector(`[data-addon-final-price="${service.dataset.serviceId}"]`);
+                const priceConfirmation = form.querySelector(`[data-addon-price-confirmation="${service.dataset.serviceId}"]`);
+                service.closest('[data-addon-card]')?.classList.toggle(
+                    'border-teal-500',
+                    service.checked,
+                );
+                service.closest('[data-addon-card]')?.classList.toggle(
+                    'bg-teal-50/60',
+                    service.checked,
+                );
+                pricePanel?.classList.toggle('hidden', !service.checked);
+                if (priceInput) {
+                    priceInput.required = service.checked;
+                    priceInput.disabled = !service.checked;
+                }
+                if (priceConfirmation) {
+                    priceConfirmation.required = service.checked;
+                    priceConfirmation.disabled = !service.checked;
+                }
+            });
+
+            form.querySelectorAll('[data-addon-category]').forEach((category) => {
+                const selectedCount = category.querySelectorAll('[data-addon-toggle]:checked').length;
+                const selectedCountBadge = category.querySelector('[data-addon-category-selected-count]');
+                selectedCountBadge.textContent = `${selectedCount} selected`;
+                selectedCountBadge.classList.toggle('hidden', selectedCount === 0);
+            });
+
+            selected.forEach((service) => {
+                let priceCents = Number.parseInt(service.dataset.priceCents ?? '0', 10);
+                let priceLabel = `₱${formatCurrency(priceCents)}`;
+                let canAddToTotal = true;
+
+                if (service.dataset.requiresPriceConfirmation === 'true') {
+                    const priceInput = form.querySelector(`[data-addon-final-price="${service.dataset.serviceId}"]`);
+                    const priceConfirmation = form.querySelector(`[data-addon-price-confirmation="${service.dataset.serviceId}"]`);
+                    const normalizedPrice = priceInput?.value.replace(/,/g, '').trim() ?? '';
+
+                    if (!/^\d+(?:\.\d{1,2})?$/.test(normalizedPrice)) {
+                        hasUnconfirmedPrice = true;
+                        canAddToTotal = false;
+                        priceLabel = 'Enter final price';
+                    } else {
+                        const [whole, fraction = ''] = normalizedPrice.split('.');
+                        priceCents = Number.parseInt(whole, 10) * 100
+                            + Number.parseInt(`${fraction}00`.slice(0, 2), 10);
+                        priceLabel = `₱${formatCurrency(priceCents)}`;
+                        if (!priceConfirmation?.checked) {
+                            hasUnconfirmedPrice = true;
+                            canAddToTotal = false;
+                        }
+                    }
+                }
+
+                if (canAddToTotal) {
+                    totalCents += priceCents;
+                }
+                const item = document.createElement('li');
+                item.className = 'flex flex-wrap justify-between gap-2 py-2 text-sm';
+                const name = document.createElement('span');
+                name.className = 'min-w-0 break-words text-slate-800';
+                name.textContent = `${service.dataset.serviceName} × 1`;
+                const price = document.createElement('span');
+                price.className = 'shrink-0 font-semibold text-slate-900';
+                price.textContent = priceLabel;
+                item.append(name, price);
+                summaryItems.append(item);
+            });
+
+            total.textContent = hasUnconfirmedPrice
+                ? 'Enter and confirm prices in the selected services above'
+                : `₱${formatCurrency(totalCents)}`;
+        };
+
+        form.addEventListener('change', updateSummary);
+        form.addEventListener('input', (event) => {
+            if (event.target.matches('[data-addon-final-price]')) {
+                updateSummary();
+            }
+        });
+        updateSummary();
+    });
+
+    document.querySelectorAll('form').forEach((form) => {
+        form.addEventListener('submit', () => {
+            form.querySelectorAll('[data-money-input]').forEach((input) => {
+                input.value = input.value.replace(/,/g, '');
+            });
+        });
+    });
+
     document.querySelectorAll('[data-password-toggle]').forEach((button) => {
         const input = button.closest('.password-input-wrap')?.querySelector('input');
 

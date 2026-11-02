@@ -2,6 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Appointment;
+use App\Models\Bill;
+use App\Models\DentalRecord;
+use App\Models\Patient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -38,11 +42,10 @@ class ClinicNotificationController extends Controller
             ->whereKey($notification)
             ->firstOrFail();
         $userNotification->markAsRead();
-        $url = $userNotification->data['url'] ?? route('appointments.index', [], false);
-
-        if (! is_string($url) || ! str_starts_with($url, '/') || str_starts_with($url, '//')) {
-            $url = route('appointments.index', [], false);
-        }
+        $url = $this->relatedRecordUrl(
+            $userNotification->data['related_type'] ?? null,
+            $userNotification->data['related_id'] ?? null,
+        );
 
         if ($request->expectsJson()) {
             return response()->json(['redirect_url' => $url]);
@@ -60,5 +63,43 @@ class ClinicNotificationController extends Controller
         }
 
         return back()->with('status', 'All notifications marked as read.');
+    }
+
+    private function relatedRecordUrl(mixed $relatedType, mixed $relatedId): string
+    {
+        $id = is_int($relatedId) || (is_string($relatedId) && ctype_digit($relatedId))
+            ? filter_var($relatedId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]])
+            : false;
+
+        return match ($relatedType) {
+            'appointment' => $id !== false && Appointment::query()->whereKey($id)->exists()
+                ? route('clinic.appointment-records', ['appointment_id' => $id], false).'#appointment-'.$id
+                : route('clinic.appointment-records', [], false),
+            'bill' => $id !== false && Bill::query()->whereKey($id)->exists()
+                ? route('clinic.billing.index', ['bill' => $id], false).'#bill-'.$id
+                : route('clinic.billing.index', [], false),
+            'patient' => $id !== false && Patient::query()->whereKey($id)->exists()
+                ? route('clinic.patients.show', $id, false)
+                : route('clinic.patients.index', [], false),
+            'dental_record' => $this->dentalRecordUrl($id),
+            default => route('clinic.appointment-records', [], false),
+        };
+    }
+
+    private function dentalRecordUrl(int|false $id): string
+    {
+        if ($id === false) {
+            return route('clinic.appointment-records', [], false);
+        }
+
+        $record = DentalRecord::query()->find($id);
+        if ($record === null) {
+            return route('clinic.appointment-records', [], false);
+        }
+
+        return route('clinic.patients.show', [
+            'patient' => $record->patient_id,
+            'record' => $record->id,
+        ], false).'#dental-record-'.$record->id;
     }
 }

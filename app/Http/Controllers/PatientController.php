@@ -39,16 +39,25 @@ class PatientController extends Controller
         return view('patients.index', compact('patients'));
     }
 
-    public function show(Patient $patient): View
+    public function show(Request $request, Patient $patient): View
     {
+        $filters = $request->validate([
+            'record' => ['nullable', 'integer'],
+        ]);
+        $highlightedDentalRecordId = isset($filters['record']) ? (int) $filters['record'] : null;
+
+        if ($highlightedDentalRecordId !== null) {
+            abort_unless($patient->dentalRecords()->whereKey($highlightedDentalRecordId)->exists(), 404);
+        }
+
         $patient->load([
             'user',
             'rfidCard',
-            'appointments' => fn ($query) => $query->with(['service', 'bill'])->latest('starts_at'),
-            'dentalRecords' => fn ($query) => $query->with(['creator', 'appointment.service'])->latest(),
+            'appointments' => fn ($query) => $query->with(['service', 'services', 'bill'])->latest('starts_at'),
+            'dentalRecords' => fn ($query) => $query->with(['creator', 'appointment.service', 'appointment.services'])->latest(),
         ]);
 
-        return view('patients.show', compact('patient'));
+        return view('patients.show', compact('patient', 'highlightedDentalRecordId'));
     }
 
     public function resetPassword(Request $request, Patient $patient, AuditTrail $auditTrail): RedirectResponse
@@ -66,7 +75,7 @@ class PatientController extends Controller
 
     public function destroy(Request $request, Patient $patient, AuditTrail $auditTrail): RedirectResponse
     {
-        $data = $request->validate([
+        $request->validate([
             'confirmation' => ['required', 'string', Rule::in([$patient->patient_number])],
         ], [
             'confirmation.in' => 'Enter the patient number exactly to confirm account removal.',

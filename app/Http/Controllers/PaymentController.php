@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Bill;
 use App\Models\Payment;
 use App\Models\Receipt;
+use App\Services\AppointmentCompletionService;
 use App\Services\AuditTrail;
 use App\Services\ClinicNotificationService;
 use App\Services\SmsNotifier;
@@ -20,17 +21,29 @@ class PaymentController extends Controller
     public function store(
         Request $request,
         Bill $bill,
+        AppointmentCompletionService $appointmentCompletion,
         AuditTrail $auditTrail,
         SmsNotifier $smsNotifier,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
+        $this->authorizeBillBranch($request, $bill);
+
+        foreach (['amount', 'applied_amount'] as $field) {
+            $value = $request->input($field);
+
+            if (is_string($value)
+                && preg_match('/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/', $value) === 1) {
+                $request->merge([$field => str_replace(',', '', $value)]);
+            }
+        }
+
         $data = $request->validate([
-            'method' => ['required', 'in:cash,gcash,card,other'],
+            'method' => ['required', 'in:cash,gcash,other'],
             'amount' => ['required', 'numeric', 'decimal:0,2', 'gt:0', 'max:1000000'],
             'applied_amount' => ['required', 'numeric', 'decimal:0,2', 'gt:0', 'max:1000000'],
         ]);
 
-        $payment = DB::transaction(function () use ($bill, $data, $request): Payment {
+        $payment = DB::transaction(function () use ($bill, $data, $request, $appointmentCompletion): Payment {
             $lockedBill = Bill::query()->lockForUpdate()->findOrFail($bill->id);
             $paid = (int) round((float) $lockedBill->payments()->sum('applied_amount') * 100);
             $total = (int) round((float) $lockedBill->total * 100);
@@ -58,14 +71,15 @@ class PaymentController extends Controller
             $payment->update(['transaction_id' => sprintf('TXN-%s-%06d', now()->format('Ymd'), $payment->id)]);
             $receipt = Receipt::create([
                 'payment_id' => $payment->id,
-                'receipt_number' => 'OR-PENDING-'.Str::uuid(),
+                'receipt_number' => 'AR-PENDING-'.Str::uuid(),
             ]);
-            $receipt->update(['receipt_number' => sprintf('OR-%s-%06d', now()->format('Y'), $receipt->id)]);
+            $receipt->update(['receipt_number' => sprintf('AR-%s-%06d', now()->format('Y'), $receipt->id)]);
 
             $newPaid = $paid + $applied;
             $lockedBill->update([
                 'payment_status' => $newPaid >= $total ? 'paid' : 'partially_paid',
             ]);
+            $appointmentCompletion->sync($lockedBill);
 
             return $payment;
         });
@@ -93,12 +107,45 @@ class PaymentController extends Controller
 
     public function showReceipt(Request $request, Receipt $receipt): View
     {
-        $receipt->load(['payment.processor', 'payment.bill.patient.user', 'payment.bill.items', 'payment.bill.appointment']);
+        abort_if($request->user()->role === 'patient', 404);
+        $this->authorizeBillBranch($request, $receipt->payment->bill);
 
-        if ($request->user()->role === 'patient' && $receipt->payment->bill->patient->user_id !== $request->user()->id) {
+        return $this->receiptView($receipt, false);
+    }
+
+    public function showPatientReceiptPreview(Request $request, Bill $bill, Receipt $receipt): View
+    {
+        if ($bill->patient->user_id !== $request->user()->id || $receipt->payment->bill_id !== $bill->id) {
             abort(404);
         }
 
-        return view('receipts.show', compact('receipt'));
+        return $this->receiptView($receipt, true);
+    }
+
+    private function receiptView(Receipt $receipt, bool $isPreview): View
+    {
+        $receipt->load([
+            'payment.processor',
+            'payment.bill.patient.user',
+            'payment.bill.items',
+            'payment.bill.payments',
+            'payment.bill.appointment',
+        ]);
+
+        return view('receipts.show', compact('receipt', 'isPreview'));
+    }
+
+    private function authorizeBillBranch(Request $request, Bill $bill): void
+    {
+        $user = $request->user();
+
+        if ($user->hasRole('admin') || $user->branch_id === null) {
+            return;
+        }
+
+        abort_unless(
+            $bill->appointment()->where('branch_id', $user->branch_id)->exists(),
+            404,
+        );
     }
 }

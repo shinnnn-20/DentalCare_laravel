@@ -6,7 +6,7 @@
     <section class="mx-auto max-w-2xl rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
         <div class="mb-8">
             <a class="text-sm font-semibold text-teal-800 hover:underline" href="{{ route('login') }}">← Sign in</a>
-            <p class="mt-6 text-sm font-semibold uppercase tracking-widest text-teal-700">Patient registration</p>
+            <p class="mt-6 text-sm font-semibold uppercase tracking-widest text-teal-700">{{ config('clinic.name') }} · Patient registration</p>
             <h1 class="mt-2 text-3xl font-bold tracking-tight text-slate-900">Create your account</h1>
             <p class="mt-2 text-slate-500">Your account is for patient access only. Clinic staff accounts are created by the clinic administrator.</p>
         </div>

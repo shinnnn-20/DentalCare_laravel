@@ -3,43 +3,117 @@
 @section('title', 'Billing and payments')
 
 @section('content')
+    @if ($errors->has('checkout'))
+        <div class="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert">{{ $errors->first('checkout') }}</div>
+    @endif
     <div class="mb-8 flex flex-wrap items-end justify-between gap-4 print-hidden">
-        <div><p class="text-sm font-medium text-teal-700">Clinic operations</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Billing & payments</h1><p class="mt-2 text-slate-500">Record transactions and issue a receipt for each payment.</p></div>
+        <div><p class="text-sm font-medium text-teal-700">Clinic operations</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Billing & payments</h1><p class="mt-2 text-slate-500">Record transactions and issue an acknowledgement receipt for each payment.</p></div>
         <button class="btn-secondary gap-2" type="button" data-print-all-bills>
             🖨 Print All
         </button>
     </div>
+    <p class="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950 print-hidden">
+        <strong class="block">ACKNOWLEDGEMENT RECEIPT (AR) ONLY</strong>
+        ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.
+    </p>
     <section class="rounded-2xl border border-slate-200 bg-white">
         <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Bill</th><th>Patient</th><th>Services</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Action</th><th>Record payment</th></tr></thead><tbody>
             @forelse ($bills as $bill)
                 @php($paid = (float) $bill->payments->sum('applied_amount'))
                 @php($balance = max(0, (float) $bill->total - $paid))
+                @php($originalItems = $bill->items->where('is_add_on', false))
+                @php($addOnItems = $bill->items->where('is_add_on', true))
+                @php($unreconciledPaymongoCheckout = $bill->payMongoBillCheckouts->contains(fn ($checkout) => $checkout->status === 'paid' && (! $checkout->paid_payment_id || ! $bill->payments->contains(fn ($payment) => $payment->provider === 'paymongo' && $payment->is_test && $payment->provider_transaction_id === $checkout->paid_payment_id))))
                 <tr id="bill-{{ $bill->id }}" @class(['selected-bill' => $selectedBillId === $bill->id])>
-                    <td data-label="Bill" class="font-semibold">{{ $bill->bill_number }}<div class="text-xs font-normal text-slate-400">{{ $bill->created_at->format('M j, Y') }}</div></td>
+                    <td data-label="Bill" class="font-semibold">{{ $bill->bill_number }}<div class="text-xs font-normal text-slate-400">{{ $bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y') }}</div></td>
                     <td data-label="Patient">{{ $bill->patient->user->name }}<div class="text-xs text-slate-400">{{ $bill->patient->patient_number }}</div></td>
                     <td data-label="Services" class="min-w-56">
-                        @forelse ($bill->items as $item)
-                            <p class="text-sm font-medium">{{ $item->service_name }}</p>
-                            <p class="mb-2 text-xs text-slate-500">{{ $item->quantity }} × ₱{{ number_format((float) $item->unit_price, 2) }} = ₱{{ number_format((float) $item->subtotal, 2) }}</p>
-                        @empty
+                        @if ($originalItems->isNotEmpty())
+                            <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Original Services</p>
+                            @foreach ($originalItems as $item)
+                                <p class="text-sm font-medium">{{ $item->service_name }}</p>
+                                <p class="mb-2 text-xs text-slate-500">{{ $item->quantity }} × ₱{{ number_format((float) $item->unit_price, 2) }} = ₱{{ number_format((float) $item->subtotal, 2) }}</p>
+                            @endforeach
+                        @endif
+                        @if ($addOnItems->isNotEmpty())
+                            <p class="mb-1 mt-2 text-xs font-semibold uppercase tracking-wide text-teal-800">Add-on Services</p>
+                            @foreach ($addOnItems as $item)
+                                <p class="text-sm font-medium"><span class="mr-1 inline-flex rounded-full bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-800">Add-on Service</span>{{ $item->service_name }}</p>
+                                <p class="mb-2 text-xs text-slate-500">{{ $item->quantity }} × ₱{{ number_format((float) $item->unit_price, 2) }} = ₱{{ number_format((float) $item->subtotal, 2) }}</p>
+                            @endforeach
+                        @endif
+                        @if ($bill->items->isEmpty())
                             <span class="text-sm text-slate-500">No services recorded for this bill.</span>
-                        @endforelse
+                        @endif
                     </td>
-                    <td data-label="Total">₱{{ number_format((float) $bill->total, 2) }}</td><td data-label="Paid">₱{{ number_format($paid, 2) }}</td><td data-label="Balance">₱{{ number_format($balance, 2) }}</td>
+                    <td data-label="Total">₱{{ number_format((float) $bill->total, 2) }}<span class="mt-1 block text-xs text-slate-500">{{ $bill->discountLabel() }}: ₱{{ number_format((float) $bill->discount, 2) }}</span></td><td data-label="Paid">₱{{ number_format($paid, 2) }}</td><td data-label="Balance">₱{{ number_format($balance, 2) }}</td>
                     <td data-label="Status"><span class="status-badge capitalize">{{ str_replace('_', ' ', $bill->payment_status) }}</span></td>
-                    <td data-label="Action"><button class="btn-small whitespace-nowrap" type="button" data-print-bill="bill-print-{{ $bill->id }}">🖨 Print Bill</button></td>
+                    <td data-label="Action">
+                        <button class="btn-small whitespace-nowrap" type="button" data-print-bill="bill-print-{{ $bill->id }}">🖨 Print Bill</button>
+                        @if ($bill->appointment && in_array($bill->appointment->status, ['billed', 'completed'], true))
+                            <a class="btn-small mt-2 whitespace-nowrap" href="{{ route('clinic.bills.additional-services.create', $bill) }}">Add services</a>
+                        @endif
+                    </td>
                     <td data-label="Record payment" class="min-w-80">
+                        @if ($bill->payMongoBillCheckouts->contains('status', 'review'))
+                            <p class="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+                                A PayMongo test payment was confirmed, but could not be safely applied. Review this payment before starting another checkout.
+                            </p>
+                        @elseif ($unreconciledPaymongoCheckout)
+                            <p class="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                                A PayMongo test payment was confirmed but is not yet in this bill’s payment history. Reconcile it before starting another checkout.
+                            </p>
+                        @endif
+                        @foreach ($bill->payMongoBillCheckouts as $checkout)
+                            @if ($paymongoTestCheckoutAvailable && $checkout->status === 'pending' && $checkout->checkout_session_id)
+                                <form method="POST" action="{{ route('clinic.billing.paymongo.reconcile', $checkout) }}" class="mb-3">
+                                    @csrf
+                                    <button class="btn-secondary" type="submit">Check existing payment with PayMongo</button>
+                                    <p class="mt-1 text-xs text-slate-500">Checks this checkout’s status; it does not start a new charge.</p>
+                                </form>
+                            @endif
+                        @endforeach
                         @if ($balance > 0)
+                            @if ($paymongoTestCheckoutAvailable)
+                                @if (! $unreconciledPaymongoCheckout && ! $bill->payMongoBillCheckouts->contains('status', 'review'))
+                                    <form method="POST" action="{{ route('clinic.billing.paymongo.store', $bill) }}" class="mb-3">
+                                        @csrf
+                                        <button class="btn-primary" type="submit">Start GCash test checkout</button>
+                                        <p class="mt-1 text-xs text-amber-700">Test mode only; a confirmed checkout is recorded as a clearly labeled test payment and applied to this bill.</p>
+                                    </form>
+                                @endif
+                            @endif
                             <form method="POST" action="{{ route('clinic.payments.store', $bill) }}" class="grid gap-2">
                                 @csrf
-                                <select class="form-input" name="method" required><option value="cash">Cash</option><option value="gcash">GCash</option><option value="card">Card (manual)</option><option value="other">Other</option></select>
-                                <div class="grid grid-cols-2 gap-2"><label class="form-label text-xs">Amount received<input class="form-input" type="number" name="amount" min="0.01" step="0.01" value="{{ number_format($balance, 2, '.', '') }}" required></label><label class="form-label text-xs">Apply to bill<input class="form-input" type="number" name="applied_amount" min="0.01" max="{{ number_format($balance, 2, '.', '') }}" step="0.01" value="{{ number_format($balance, 2, '.', '') }}" required></label></div>
+                                <select class="form-input" name="method" required><option value="cash">Cash</option><option value="gcash">GCash</option><option value="other">Other</option></select>
+                                <div class="grid grid-cols-2 gap-2"><label class="form-label text-xs">Amount received<input class="form-input" type="text" inputmode="decimal" name="amount" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ number_format($balance, 2, '.', '') }}" required></label><label class="form-label text-xs">Apply to bill<input class="form-input" type="text" inputmode="decimal" name="applied_amount" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ number_format($balance, 2, '.', '') }}" required></label></div>
                                 <button class="btn-secondary justify-self-start">Record payment</button>
                             </form>
-                        @else
+                        @endif
+                        @if ($bill->payments->isNotEmpty())
+                            <div class="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                                <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment history</p>
                             @foreach ($bill->payments as $payment)
-                                @if ($payment->receipt)<a class="block text-sm font-semibold text-teal-800 hover:underline" href="{{ route('receipts.show', $payment->receipt) }}">{{ $payment->receipt->receipt_number }}</a>@endif
+                                    <div class="rounded-lg bg-slate-50 p-2 text-xs">
+                                        <p class="font-semibold uppercase text-slate-700">
+                                            {{ $payment->method }} · ₱{{ number_format((float) $payment->applied_amount, 2) }}
+                                            @if ($payment->provider === 'paymongo' && $payment->is_test)
+                                                <span class="text-amber-700">· PayMongo TEST MODE</span>
+                                            @endif
+                                        </p>
+                                        <p class="mt-1 text-slate-500">{{ ($payment->paid_at ?? $payment->created_at)->timezone(config('clinic.timezone'))->format('M j, Y g:i A') }}</p>
+                                        @if ($payment->provider_transaction_id)
+                                            <p class="mt-1 break-all text-slate-500">PayMongo payment: {{ $payment->provider_transaction_id }}</p>
+                                            <p class="break-all text-slate-500">Checkout session: {{ $payment->provider_checkout_session_id }}</p>
+                                        @endif
+                                        @if ($payment->receipt)
+                                            <a class="mt-1 inline-block font-semibold text-teal-800 hover:underline" href="{{ route('receipts.show', $payment->receipt) }}">
+                                                Receipt {{ $payment->receipt->receipt_number }}
+                                            </a>
+                                        @endif
+                                    </div>
                             @endforeach
+                            </div>
                         @endif
                     </td>
                 </tr>
@@ -47,15 +121,32 @@
         </tbody></table></div>
         <div class="p-4">{{ $bills->links() }}</div>
     </section>
-    <p class="mt-4 text-sm text-slate-500">Card and GCash entries are recorded manually here. No external payment is charged by this application.</p>
+    <p class="mt-4 text-sm text-slate-500">Manual cash, GCash, and other entries do not charge an external payment. PayMongo test checkouts are available to staff and admins in local test mode only; confirmed test payments are included in bill balances and reports, and are labeled TEST MODE because no real money is transferred.</p>
 
     <section class="billing-print-report" data-billing-print-report data-print-all-page aria-label="Printable billing report">
         <header class="billing-print-header">
-            <p>{{ config('clinic.name') }}</p>
-            <h1>Billing &amp; Payments</h1>
-            <p>Generated {{ now()->format('F j, Y g:i A') }}</p>
+            <img class="billing-print-logo" src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="Doc Brigs Dental Care logo">
+            <div class="billing-print-brand">
+                <p>{{ config('clinic.name') }}</p>
+                <p>{{ config('clinic.address') }}</p>
+                <p>{{ config('clinic.phone') }}</p>
+                <h1>Billing &amp; Payments</h1>
+                <p>Generated {{ now(config('clinic.timezone'))->format('F j, Y g:i A') }}</p>
+            </div>
         </header>
         <table class="billing-print-table">
+            <colgroup>
+                <col class="billing-print-column-number">
+                <col class="billing-print-column-date">
+                <col class="billing-print-column-patient">
+                <col class="billing-print-column-patient-id">
+                <col class="billing-print-column-amount">
+                <col class="billing-print-column-amount">
+                <col class="billing-print-column-amount">
+                <col class="billing-print-column-status">
+                <col class="billing-print-column-payment">
+                <col class="billing-print-column-receipt">
+            </colgroup>
             <thead>
                 <tr>
                     <th>Bill Number</th>
@@ -66,27 +157,43 @@
                     <th>Amount Paid</th>
                     <th>Remaining Balance</th>
                     <th>Payment Status</th>
-                    <th>OR / Receipt Number</th>
+                    <th>Payment Details</th>
+                    <th>AR / Receipt Number</th>
                 </tr>
             </thead>
             <tbody>
                 @forelse ($bills as $bill)
                     @php($paid = (float) $bill->payments->sum('applied_amount'))
                     @php($balance = max(0, (float) $bill->total - $paid))
-                    @php($receiptNumbers = $bill->payments->pluck('receipt.receipt_number')->filter()->implode(', '))
+                    @php($receiptNumbers = $bill->payments->map(fn ($payment) => $payment->receipt?->receipt_number ? $payment->receipt->receipt_number.($payment->is_test ? ' (TEST MODE)' : '') : null)->filter()->implode(', '))
                     <tr>
                         <td>{{ $bill->bill_number }}</td>
-                        <td>{{ $bill->created_at->format('M j, Y') }}</td>
+                        <td>{{ $bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y') }}</td>
                         <td>{{ $bill->patient->user->name }}</td>
                         <td>{{ $bill->patient->patient_number }}</td>
                         <td>₱{{ number_format((float) $bill->total, 2) }}</td>
                         <td>₱{{ number_format($paid, 2) }}</td>
                         <td>₱{{ number_format($balance, 2) }}</td>
                         <td>{{ str_replace('_', ' ', ucfirst($bill->payment_status)) }}</td>
+                        <td>
+                            @forelse ($bill->payments as $payment)
+                                <div>
+                                    {{ strtoupper($payment->method) }}
+                                    @if ($payment->provider === 'paymongo' && $payment->is_test)
+                                        · PayMongo TEST MODE
+                                    @endif
+                                    @if ($payment->provider_transaction_id)
+                                        · {{ $payment->provider_transaction_id }}
+                                    @endif
+                                </div>
+                            @empty
+                                —
+                            @endforelse
+                        </td>
                         <td>{{ $receiptNumbers !== '' ? $receiptNumbers : '—' }}</td>
                     </tr>
                 @empty
-                    <tr><td colspan="9">No billing records are displayed.</td></tr>
+                    <tr><td colspan="10">No billing records are displayed.</td></tr>
                 @endforelse
             </tbody>
         </table>
@@ -98,21 +205,27 @@
     @foreach ($bills as $bill)
         @php($paid = (float) $bill->payments->sum('applied_amount'))
         @php($balance = max(0, (float) $bill->total - $paid))
+        @php($originalItems = $bill->items->where('is_add_on', false))
+        @php($addOnItems = $bill->items->where('is_add_on', true))
         <article class="billing-print-paper" id="bill-print-{{ $bill->id }}">
             <header class="bill-print-header">
-                <h1>{{ config('clinic.name') }}</h1>
-                @if (config('clinic.address') !== 'Clinic address not configured')
-                    <p>{{ config('clinic.address') }}</p>
-                @endif
-                @if (config('clinic.phone') !== 'Clinic contact not configured')
-                    <p>{{ config('clinic.phone') }}</p>
-                @endif
-                <h2>Bill / Payment Receipt</h2>
+                <img class="bill-print-logo" src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="Doc Brigs Dental Care logo">
+                <div class="bill-print-brand">
+                    <h1>{{ config('clinic.name') }}</h1>
+                    @if (config('clinic.address') !== 'Clinic address not configured')
+                        <p>{{ config('clinic.address') }}</p>
+                    @endif
+                    @if (config('clinic.phone') !== 'Clinic contact not configured')
+                        <p>{{ config('clinic.phone') }}</p>
+                    @endif
+                    <h2>ACKNOWLEDGEMENT RECEIPT (AR) ONLY</h2>
+                </div>
             </header>
+            <p class="bill-print-disclaimer">ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.</p>
 
             <section class="bill-print-details">
                 <div><span>Bill No</span><strong>{{ $bill->bill_number }}</strong></div>
-                <div><span>Date</span><strong>{{ $bill->created_at->format('M j, Y') }}</strong></div>
+                <div><span>Date</span><strong>{{ $bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y') }}</strong></div>
                 <div><span>Patient</span><strong>{{ $bill->patient->user->name }}</strong></div>
                 <div><span>Patient ID</span><strong>{{ $bill->patient->patient_number }}</strong></div>
             </section>
@@ -120,30 +233,50 @@
             @if ($bill->items->isNotEmpty())
                 <section class="bill-print-items">
                     <h3>Services / Items</h3>
-                    <table>
-                        <thead><tr><th>Service / Item</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
-                        <tbody>
-                            @foreach ($bill->items as $item)
-                                <tr>
-                                    <td>{{ $item->service_name }}</td>
-                                    <td>{{ $item->quantity }}</td>
-                                    <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->unit_price, 2) }}</td>
-                                    <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->subtotal, 2) }}</td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
+                    @if ($originalItems->isNotEmpty())
+                        <h4>Original Services</h4>
+                        <table>
+                            <thead><tr><th>Service / Item</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
+                            <tbody>
+                                @foreach ($originalItems as $item)
+                                    <tr>
+                                        <td>{{ $item->service_name }}</td>
+                                        <td>{{ $item->quantity }}</td>
+                                        <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->unit_price, 2) }}</td>
+                                        <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->subtotal, 2) }}</td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    @endif
+                    @if ($addOnItems->isNotEmpty())
+                        <h4>Add-on Services</h4>
+                        <table>
+                            <thead><tr><th>Service / Item</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead>
+                            <tbody>
+                                @foreach ($addOnItems as $item)
+                                    <tr>
+                                        <td><strong>Add-on Service</strong><br>{{ $item->service_name }}</td>
+                                        <td>{{ $item->quantity }}</td>
+                                        <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->unit_price, 2) }}</td>
+                                        <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->subtotal, 2) }}</td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    @endif
                 </section>
             @endif
 
             <section class="bill-print-summary">
+                <div><span>{{ $bill->discountLabel() }}</span><strong>₱{{ number_format((float) $bill->discount, 2) }}</strong></div>
                 <div><span>Total Amount</span><strong>₱{{ number_format((float) $bill->total, 2) }}</strong></div>
                 <div><span>Amount Paid</span><strong>₱{{ number_format($paid, 2) }}</strong></div>
                 <div><span>Remaining Balance</span><strong>₱{{ number_format($balance, 2) }}</strong></div>
                 <div><span>Status</span><strong>{{ strtoupper(str_replace('_', ' ', $bill->payment_status)) }}</strong></div>
                 <div>
-                    <span>OR / Receipt Number</span>
-                    <strong>{{ $bill->payments->pluck('receipt.receipt_number')->filter()->implode(', ') ?: '—' }}</strong>
+                    <span>AR / Receipt Number</span>
+                    <strong>{{ $bill->payments->map(fn ($payment) => $payment->receipt?->receipt_number ? $payment->receipt->receipt_number.($payment->is_test ? ' (TEST MODE)' : '') : null)->filter()->implode(', ') ?: '—' }}</strong>
                 </div>
             </section>
 
@@ -151,13 +284,26 @@
                 <section class="bill-print-payments">
                     <h3>Payment details</h3>
                     <table>
-                        <thead><tr><th>Date</th><th>Payment method</th><th>Amount applied</th><th>OR / Receipt No</th></tr></thead>
+                        <thead><tr><th>Date</th><th>Payment method / provider</th><th>Amount applied</th><th>Provider reference</th><th>AR / Receipt No</th></tr></thead>
                         <tbody>
                             @foreach ($bill->payments as $payment)
                                 <tr>
-                                    <td>{{ $payment->created_at->format('M j, Y') }}</td>
-                                    <td>{{ strtoupper($payment->method) }}</td>
+                                    <td>{{ ($payment->paid_at ?? $payment->created_at)->timezone(config('clinic.timezone'))->format('M j, Y g:i A') }}</td>
+                                    <td>
+                                        {{ strtoupper($payment->method) }}
+                                        @if ($payment->provider === 'paymongo' && $payment->is_test)
+                                            · PayMongo TEST MODE
+                                        @endif
+                                    </td>
                                     <td>₱{{ number_format((float) $payment->applied_amount, 2) }}</td>
+                                    <td>
+                                        @if ($payment->provider_transaction_id)
+                                            Payment: {{ $payment->provider_transaction_id }}<br>
+                                            Session: {{ $payment->provider_checkout_session_id }}
+                                        @else
+                                            —
+                                        @endif
+                                    </td>
                                     <td>{{ $payment->receipt?->receipt_number ?? '—' }}</td>
                                 </tr>
                             @endforeach
@@ -178,7 +324,26 @@
         };
 
         let printInProgress = false;
-        const beginBillPrint = (mode, papers = []) => {
+        const preparePrintImages = async (container) => {
+            const images = Array.from(container.querySelectorAll('img'));
+
+            await Promise.all(images.map(async (image) => {
+                if (!image.complete) {
+                    await new Promise((resolve, reject) => {
+                        image.addEventListener('load', resolve, { once: true });
+                        image.addEventListener('error', () => reject(new Error('The clinic logo could not be loaded.')), { once: true });
+                    });
+                }
+
+                if (image.naturalWidth === 0) {
+                    throw new Error('The clinic logo could not be loaded.');
+                }
+
+                await image.decode();
+            }));
+        };
+
+        const beginBillPrint = async (mode, printContent, papers = []) => {
             if (printInProgress) {
                 return false;
             }
@@ -189,12 +354,25 @@
             document.querySelectorAll('[data-print-bill], [data-print-all-bills]').forEach((button) => {
                 button.disabled = true;
             });
-            window.print();
+
+            try {
+                await preparePrintImages(printContent);
+                window.print();
+            } catch (error) {
+                console.error(error);
+                clearBillPrintSelection();
+                printInProgress = false;
+                document.querySelectorAll('[data-print-bill], [data-print-all-bills]').forEach((button) => {
+                    button.disabled = false;
+                });
+                window.alert('The clinic logo could not be loaded, so the document was not printed. Please try again.');
+            }
+
             return true;
         };
 
         document.querySelector('[data-print-all-bills]').addEventListener('click', () => {
-            beginBillPrint('printing-all-bills');
+            beginBillPrint('printing-all-bills', document.querySelector('[data-billing-print-report]'));
         });
 
         document.querySelectorAll('[data-print-bill]').forEach((button) => {
@@ -205,7 +383,7 @@
                     throw new Error('The selected bill print layout could not be found.');
                 }
 
-                beginBillPrint('printing-single-bill', [paper]);
+                beginBillPrint('printing-single-bill', paper, [paper]);
             });
         });
 

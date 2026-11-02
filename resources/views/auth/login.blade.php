@@ -3,12 +3,10 @@
 @section('title', 'Sign in')
 
 @section('content')
-    <section class="mx-auto max-w-lg rounded-3xl border border-sky-100 bg-gradient-to-br from-white via-sky-50 to-emerald-50 p-8 shadow-xl shadow-sky-100/80 sm:p-10">
-        <div class="mb-8 text-center">
-            <div class="flex justify-center">
-                <img src="{{ asset('images/dentalcare-logo.png') }}" alt="{{ config('clinic.name') }} logo" class="h-24 w-auto drop-shadow-sm">
-            </div>
-            <p class="mt-6 text-sm font-semibold uppercase tracking-[0.2em] text-sky-700">Dental clinic portal</p>
+    <section class="mx-auto max-w-lg rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
+        <div class="mb-8">
+            <img class="h-20 w-14 object-contain" src="{{ asset('images/landing/doc-brigs-dental-care-logo.jpg') }}" alt="Doc Brigs Dental Care logo">
+            <p class="mt-6 text-sm font-semibold uppercase tracking-widest text-teal-700">{{ config('clinic.name') }}</p>
             <h1 class="mt-2 text-3xl font-bold tracking-tight text-slate-900">Welcome back</h1>
             <p class="mt-2 text-slate-500">Sign in to continue to your clinic account.</p>
         </div>

@@ -12,9 +12,9 @@
         <div class="app-shell min-h-screen lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
             <aside class="app-sidebar border-b border-sky-100 bg-gradient-to-b from-white via-sky-50 to-emerald-50/60 px-4 py-3 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto lg:border-r lg:border-b-0 lg:px-5 lg:py-6">
                 <div class="flex items-center justify-between gap-3">
-                <a href="{{ route('dashboard') }}" class="flex min-w-0 items-center gap-3 font-bold text-xl text-sky-800">
-                    <img src="{{ asset('images/dentalcare-logo.png') }}" alt="{{ config('clinic.name') }} logo" class="h-11 w-auto shrink-0">
-                    <span class="truncate">DentalCare</span>
+                <a href="{{ route('dashboard') }}" class="flex min-w-0 items-center gap-3 font-bold text-xl text-teal-800">
+                    <img src="{{ asset('images/landing/doc-brigs-dental-care-logo.jpg') }}" alt="Doc Brigs Dental Care logo" class="h-16 w-12 shrink-0 object-contain">
+                    <span class="min-w-0 leading-tight">{{ config('clinic.name') }}</span>
                 </a>
                 <details class="relative lg:hidden">
                     <summary class="btn-secondary cursor-pointer list-none">Menu</summary>
@@ -43,7 +43,7 @@
             <main class="min-w-0 px-4 py-5 sm:px-8 sm:py-6 lg:px-10">
                 <div class="mx-auto w-full max-w-screen-2xl">
                 @if (auth()->user()->hasRole('admin', 'staff'))
-                    <div class="mb-5 flex justify-end">
+                    <div @class(['mb-5 flex justify-end', 'print-hidden' => request()->routeIs('admin.reports')])>
                         @include('layouts.clinic-notifications')
                     </div>
                 @endif

@@ -17,21 +17,43 @@
                     <option value="doctor" @selected(old('role') === 'doctor')>Doctor</option>
                 </select>
             </label>
+            <label class="form-label">Assigned branch
+                <select class="form-input" name="branch_id" required>
+                    <option value="">Choose a branch</option>
+                    @foreach ($branches as $branch)
+                        <option value="{{ $branch->id }}" @selected((string) old('branch_id') === (string) $branch->id)>{{ $branch->name }}</option>
+                    @endforeach
+                </select>
+            </label>
             <label class="form-label">Temporary password<input class="form-input" type="password" name="password" minlength="12" required></label>
             <label class="form-label">Confirm password<input class="form-input" type="password" name="password_confirmation" required></label>
             <button class="btn-primary self-end">Create account</button>
         </form>
     </section>
     <section class="rounded-2xl border border-slate-200 bg-white">
-        <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Name</th><th>Account type</th><th>Email</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+        <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Name</th><th>Account type</th><th>Email</th><th>Assigned branch</th><th>Status</th><th>Actions</th></tr></thead><tbody>
             @forelse ($clinicAccounts as $staff)
-                <tr><td data-label="Name" class="font-semibold">{{ $staff->name }}</td><td data-label="Account type">{{ ucfirst($staff->role) }}</td><td data-label="Email">{{ $staff->email }}</td><td data-label="Status"><span class="status-badge">{{ $staff->is_active ? 'Active' : 'Disabled' }}</span></td>
+                <tr><td data-label="Name" class="font-semibold">{{ $staff->name }}</td><td data-label="Account type">{{ ucfirst($staff->role) }}</td><td data-label="Email">{{ $staff->email }}</td>
+                    <td data-label="Assigned branch">
+                        <form method="POST" action="{{ route('admin.staff.branch.update', $staff) }}" class="flex min-w-56 gap-2">
+                            @csrf
+                            @method('PATCH')
+                            <select class="form-input min-w-0" name="branch_id" aria-label="Assigned branch for {{ $staff->name }}" required>
+                                <option value="" @selected($staff->branch_id === null)>No branch assigned</option>
+                                @foreach ($branches as $branch)
+                                    <option value="{{ $branch->id }}" @selected($staff->branch_id === $branch->id)>{{ $branch->name }}</option>
+                                @endforeach
+                            </select>
+                            <button class="btn-small shrink-0 text-teal-800">Save</button>
+                        </form>
+                    </td>
+                    <td data-label="Status"><span class="status-badge">{{ $staff->is_active ? 'Active' : 'Disabled' }}</span></td>
                     <td data-label="Actions"><div class="flex flex-wrap gap-2">
                         <form method="POST" action="{{ route('admin.staff.toggle', $staff) }}">@csrf @method('PATCH')<button class="btn-small text-teal-800">{{ $staff->is_active ? 'Disable' : 'Activate' }}</button></form>
                         <form method="POST" action="{{ route('admin.staff.password', $staff) }}" class="flex flex-wrap gap-2">@csrf @method('PUT')<input type="password" class="form-input min-w-0 flex-1 sm:min-w-32" name="password" placeholder="New password" minlength="12" required><input type="password" class="form-input min-w-0 flex-1 sm:min-w-32" name="password_confirmation" placeholder="Confirm" required><button class="btn-small text-teal-800">Reset</button></form>
                     </div></td>
                 </tr>
-            @empty<tr><td colspan="5" class="py-10 text-center text-slate-500">No clinic staff or doctor accounts have been created yet.</td></tr>@endforelse
+            @empty<tr><td colspan="6" class="py-10 text-center text-slate-500">No clinic staff or doctor accounts have been created yet.</td></tr>@endforelse
         </tbody></table></div>
         <div class="p-4">{{ $clinicAccounts->links() }}</div>
     </section>
