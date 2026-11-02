@@ -11,6 +11,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
@@ -195,7 +196,7 @@ class AdditionalServiceController extends Controller
             ->where('is_active', true)
             ->whereNotIn('id', $bill->items()->whereNotNull('service_id')->select('service_id'))
             ->whereNotIn('name', $bill->items()->select('service_name'))
-            ->orderBy('category')
+            ->when(Schema::hasColumn('services', 'category'), fn ($query) => $query->orderBy('category'))
             ->orderBy('name')
             ->get();
     }

@@ -6,6 +6,7 @@ use App\Models\Service;
 use App\Services\AuditTrail;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -34,6 +35,10 @@ class ServiceController extends Controller
             $data['price_display'] = null;
         }
 
+        if (! Schema::hasColumn('services', 'category')) {
+            unset($data['category']);
+        }
+
         $service = Service::create([...$data, 'is_active' => true]);
         $auditTrail->record($request->user(), 'service_created', 'services', $service);
 
@@ -55,6 +60,10 @@ class ServiceController extends Controller
 
         if (! $request->boolean('requires_price_confirmation')) {
             $data['price_display'] = null;
+        }
+
+        if (! Schema::hasColumn('services', 'category')) {
+            unset($data['category']);
         }
 
         $service->update($data);

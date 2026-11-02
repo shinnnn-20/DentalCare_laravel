@@ -69,6 +69,8 @@ Route::middleware('guest')->group(function (): void {
     Route::post('/register', [AuthController::class, 'storePatient'])->middleware('throttle:5,1')->name('register.store');
 });
 
+Route::get('/appointments/start', [AuthController::class, 'appointmentBooking'])->name('appointments.start');
+
 Route::middleware(['auth', 'active'])->group(function (): void {
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
     Route::get('/dashboard', DashboardController::class)->name('dashboard');

@@ -18,6 +18,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
@@ -118,7 +119,11 @@ class AppointmentController extends Controller
             ->pluck('id')
             ->all();
 
-        $services = Service::query()->where('is_active', true)->orderBy('category')->orderBy('name')->get();
+        $services = Service::query()
+            ->where('is_active', true)
+            ->when(Schema::hasColumn('services', 'category'), fn ($query) => $query->orderBy('category'))
+            ->orderBy('name')
+            ->get();
         $patients = $request->user()->hasRole('admin', 'staff')
             ? Patient::with('user')->orderBy('patient_number')->get()
             : collect();

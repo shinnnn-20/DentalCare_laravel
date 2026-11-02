@@ -27,6 +27,7 @@ class LandingPageTest extends TestCase
             ->assertOk()
             ->assertSee('Doc Brigs Dental Care')
             ->assertSee('Book an Appointment')
+            ->assertSee('href="'.route('appointments.start').'"', false)
             ->assertSee('Clinic Catalog Cleaning')
             ->assertDontSee('Inactive Clinic Service')
             ->assertSee('0917 160 0541')
@@ -35,10 +36,45 @@ class LandingPageTest extends TestCase
             ->assertSee('where1=14.313687869546%2C%20120.91615498066')
             ->assertSee('target="_blank" rel="noopener noreferrer"', false)
             ->assertSee('images/landing/doc-brigs-dental-care-logo.jpg')
-            ->assertSee('images/landing/clinic-exterior.png')
-            ->assertSee('images/landing/clinic-services.png')
-            ->assertSee('images/landing/clinic-interior.png')
+            ->assertSee('General Trias Branch')
+            ->assertSee('Trece Branch')
+            ->assertSee('images/landing/general-trias-treatment-room.jpg')
+            ->assertSee('images/landing/general-trias-clinic-room.jpg')
+            ->assertSee('images/landing/general-trias-waiting-area.jpg')
+            ->assertSee('images/landing/trece-treatment-room.jpg')
+            ->assertSee('images/landing/trece-clinic-team.jpg')
+            ->assertSee('images/landing/trece-reception.jpg')
             ->assertSee('© '.now()->year.' Doc Brigs Dental Care. All rights reserved.');
+    }
+
+    public function test_booking_entry_shows_login_before_returning_to_appointments(): void
+    {
+        $user = User::factory()->create();
+
+        $this->get(route('appointments.start'))
+            ->assertRedirect(route('login'))
+            ->assertSessionHas('url.intended', route('appointments.index'));
+
+        $this->get(route('login'))
+            ->assertOk()
+            ->assertSee('Sign in to continue to your clinic account.');
+
+        $this->post(route('login.store'), [
+            'email' => $user->email,
+            'password' => 'password',
+        ])->assertRedirect(route('appointments.index'));
+    }
+
+    public function test_signed_in_patient_sees_login_first_page_with_continue_booking_option(): void
+    {
+        $patient = User::factory()->create(['role' => 'patient']);
+
+        $this->actingAs($patient)
+            ->get(route('appointments.start'))
+            ->assertOk()
+            ->assertSee('You’re already signed in.')
+            ->assertSee('href="'.route('appointments.index').'"', false)
+            ->assertSee('Continue to Book an Appointment');
     }
 
     public function test_authenticated_homepage_and_existing_portal_routes_remain_available(): void

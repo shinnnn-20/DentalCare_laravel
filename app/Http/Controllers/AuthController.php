@@ -25,6 +25,17 @@ class AuthController extends Controller
         return view('auth.login');
     }
 
+    public function appointmentBooking(Request $request): RedirectResponse|View
+    {
+        if ($request->user() !== null) {
+            return view('auth.login', ['alreadyAuthenticated' => true]);
+        }
+
+        $request->session()->put('url.intended', route('appointments.index'));
+
+        return redirect()->route('login');
+    }
+
     public function authenticate(Request $request, AuditTrail $auditTrail): RedirectResponse
     {
         $credentials = $request->validate([
