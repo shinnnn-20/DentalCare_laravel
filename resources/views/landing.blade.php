@@ -65,7 +65,6 @@
                                 <span class="block text-xs font-semibold uppercase tracking-[0.14em] text-teal-700">A warm welcome</span>
                                 <span class="mt-1 block font-semibold text-slate-900">Your care, close to home</span>
                             </span>
-                            <span class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-teal-50 text-xl text-teal-700" aria-hidden="true">✦</span>
                         </figcaption>
                     </figure>
                 </div>
@@ -102,7 +101,7 @@
                             <img src="{{ asset('images/landing/general-trias-clinic-room.jpg') }}" alt="Dental chair and equipment at the General Trias Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
                             <img src="{{ asset('images/landing/general-trias-waiting-area.jpg') }}" alt="Waiting area at the General Trias Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
                         </div>
-                        <div class="flex flex-1 flex-col gap-5 px-5 pb-6 sm:px-6">
+                        <div class="flex flex-1 flex-col gap-3 px-5 pb-6 sm:px-6">
                             <div class="flex-1">
                                 <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">Doc Brigs Dental Care</p>
                                 <h3 class="mt-1 text-xl font-bold text-teal-950">General Trias Branch</h3>
@@ -120,11 +119,12 @@
                             <img src="{{ asset('images/landing/trece-clinic-team.jpg') }}" alt="Clinic staff at the Trece Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
                             <img src="{{ asset('images/landing/trece-reception.jpg') }}" alt="Reception area at the Trece Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
                         </div>
-                        <div class="flex flex-1 flex-col gap-5 px-5 pb-6 sm:px-6">
+                        <div class="flex flex-1 flex-col gap-3 px-5 pb-6 sm:px-6">
                             <div class="flex-1">
                                 <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">Doc Brigs Dental Care</p>
                                 <h3 class="mt-1 text-xl font-bold text-teal-950">Trece Branch</h3>
                                 <p class="mt-2 text-sm leading-6 text-slate-600">Visit our Trece clinic for your dental care.</p>
+                                <p class="mt-3 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-600">Incencio, Trece Marites, 2nd floor Alfamart</p>
                             </div>
                             <a class="btn-primary self-start rounded-full px-5" href="{{ route('appointments.start') }}">Book a Visit <span class="ml-2" aria-hidden="true">→</span></a>
                         </div>
