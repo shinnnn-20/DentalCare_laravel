@@ -3,27 +3,27 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Discover Doc Brigs Dental Care in General Trias and Trece. Find your branch, explore our services, and book an appointment.">
-    <title>Doc Brigs Dental Care | General Trias &amp; Trece</title>
+    <meta name="description" content="Discover Doc Brigs Dental Care in Dasmariñas, General Trias, and Trece. Find your branch, explore our services, and book an appointment.">
+    <title>Doc Brigs Dental Care | Dasmariñas, General Trias &amp; Trece</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="bg-white text-slate-800 antialiased">
-    <header class="sticky top-0 z-40 border-b border-teal-100 bg-white/95 backdrop-blur">
-        <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
+    <header class="sticky top-0 z-40 border-b border-teal-100/80 bg-white/95 backdrop-blur-xl">
+        <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3.5 sm:px-6 lg:px-8">
             <a href="#home" class="flex min-w-0 items-center gap-3" aria-label="Doc Brigs Dental Care home">
                 <img src="{{ asset('images/landing/doc-brigs-dental-care-logo.jpg') }}" alt="Doc Brigs Dental Care logo" class="h-14 w-12 shrink-0 object-contain sm:h-16 sm:w-14">
                 <span class="max-w-40 text-sm font-bold leading-tight text-teal-950 sm:max-w-none sm:text-base">Doc Brigs Dental Care</span>
             </a>
 
-            <nav class="hidden items-center gap-7 md:flex" aria-label="Main navigation">
-                <a class="text-sm font-medium text-slate-600 transition hover:text-teal-800" href="#home">Home</a>
-                <a class="text-sm font-medium text-slate-600 transition hover:text-teal-800" href="#about">About Us</a>
-                <a class="text-sm font-medium text-slate-600 transition hover:text-teal-800" href="#branches">Our Branches</a>
-                <a class="text-sm font-medium text-slate-600 transition hover:text-teal-800" href="#services">Services</a>
-                <a class="btn-primary" href="{{ route('appointments.start') }}">Book an Appointment</a>
+            <nav class="hidden items-center gap-8 lg:flex" aria-label="Main navigation">
+                <a class="text-sm font-semibold text-slate-600 transition hover:text-teal-800" href="#home">Home</a>
+                <a class="text-sm font-semibold text-slate-600 transition hover:text-teal-800" href="#about">About Us</a>
+                <a class="text-sm font-semibold text-slate-600 transition hover:text-teal-800" href="#branches">Our Branches</a>
+                <a class="text-sm font-semibold text-slate-600 transition hover:text-teal-800" href="#services">Services</a>
+                <a class="btn-primary rounded-full px-5 shadow-md shadow-teal-800/15" href="{{ route('appointments.start') }}">Book an Appointment</a>
             </nav>
 
-            <details class="relative md:hidden">
+            <details class="relative lg:hidden">
                 <summary class="btn-secondary cursor-pointer list-none">Menu</summary>
                 <nav class="absolute right-0 top-full z-50 mt-2 grid w-56 gap-1 rounded-2xl border border-slate-200 bg-white p-3 shadow-xl" aria-label="Mobile navigation">
                     <a class="rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-teal-50" href="#home">Home</a>
@@ -38,91 +38,113 @@
 
     <main>
         <section id="home" class="relative isolate scroll-mt-24 overflow-hidden bg-gradient-to-br from-teal-50 via-white to-emerald-50">
-            <div class="pointer-events-none absolute -right-32 -top-40 -z-10 h-96 w-96 rounded-full bg-emerald-100/70 blur-3xl" aria-hidden="true"></div>
-            <div class="mx-auto grid max-w-7xl items-center gap-12 px-4 py-14 sm:px-6 sm:py-20 lg:grid-cols-[1fr_0.95fr] lg:gap-16 lg:px-8 lg:py-24">
+            <div class="pointer-events-none absolute -right-28 -top-24 -z-10 h-[30rem] w-[30rem] rounded-full bg-emerald-100/70 blur-3xl" aria-hidden="true"></div>
+            <div class="mx-auto grid max-w-7xl items-center gap-12 px-4 py-16 sm:px-6 sm:py-20 md:min-h-[560px] md:grid-cols-[1.02fr_0.98fr] md:gap-10 lg:min-h-[650px] lg:gap-16 lg:px-8 lg:py-24">
                 <div class="max-w-2xl">
-                    <p class="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white/80 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-teal-800">
+                    <p class="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white/80 px-4 py-2 text-xs font-bold uppercase tracking-[0.16em] text-teal-800 shadow-sm shadow-teal-950/5">
                         <span class="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true"></span>
-                        General Trias &amp; Trece
+                        Three locations across Cavite
                     </p>
-                    <h1 class="mt-6 text-4xl font-bold leading-tight tracking-tight text-teal-950 sm:text-5xl lg:text-6xl">A brighter smile begins with care you can feel.</h1>
-                    <p class="mt-5 max-w-xl text-lg leading-8 text-slate-600">Welcome to Doc Brigs Dental Care. Find a branch near you, explore our services, and take the next step toward your smile.</p>
+                    <h1 class="mt-6 text-4xl font-bold leading-[1.08] tracking-tight text-teal-950 sm:text-5xl lg:text-6xl">A brighter smile begins with <span class="text-teal-700">care you can feel.</span></h1>
+                    <p class="mt-6 max-w-xl text-lg leading-8 text-slate-600">Welcome to Doc Brigs Dental Care. Find a branch near you, explore our services, and take the next step toward your smile.</p>
                     <div class="mt-8 flex flex-wrap items-center gap-3">
-                        <a class="btn-primary min-h-12 px-5 shadow-lg shadow-teal-800/15" href="{{ route('appointments.start') }}">Book an Appointment <span class="ml-2" aria-hidden="true">→</span></a>
-                        <a class="btn-secondary min-h-12 px-5" href="#branches">Explore Our Branches</a>
+                        <a class="btn-primary min-h-12 rounded-full px-6 shadow-lg shadow-teal-800/20" href="{{ route('appointments.start') }}">Book an Appointment <span class="ml-2" aria-hidden="true">→</span></a>
+                        <a class="btn-secondary min-h-12 rounded-full border-teal-200 px-6" href="#branches">Explore Our Branches</a>
                     </div>
-                    <div class="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm font-medium text-slate-600">
-                        <span class="inline-flex items-center gap-2"><span class="text-emerald-600" aria-hidden="true">✓</span> Two convenient branches</span>
-                        <span class="inline-flex items-center gap-2"><span class="text-emerald-600" aria-hidden="true">✓</span> Care centered around you</span>
+                    <div class="mt-9 flex flex-wrap items-center gap-x-7 gap-y-3 border-t border-teal-200/70 pt-5 text-sm font-medium text-slate-600">
+                        <span class="inline-flex items-center gap-2"><span class="grid h-5 w-5 place-items-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700" aria-hidden="true">✓</span> Three convenient branches</span>
+                        <span class="inline-flex items-center gap-2"><span class="grid h-5 w-5 place-items-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700" aria-hidden="true">✓</span> Care centered around you</span>
                     </div>
                 </div>
-                <div class="relative mx-auto w-full max-w-xl">
-                    <div class="absolute -inset-3 -rotate-2 rounded-[2rem] bg-gradient-to-br from-teal-200 to-emerald-200" aria-hidden="true"></div>
-                    <figure class="relative overflow-hidden rounded-[1.75rem] border-4 border-white bg-white shadow-2xl shadow-teal-950/15">
+                <div class="relative mx-auto w-full max-w-xl px-2 py-3 sm:px-4">
+                    <div class="absolute inset-3 rotate-3 rounded-[2rem] bg-gradient-to-br from-teal-200 to-emerald-200" aria-hidden="true"></div>
+                    <figure class="relative overflow-hidden rounded-[2rem] border-8 border-white bg-white shadow-2xl shadow-teal-950/15">
                         <img src="{{ asset('images/landing/general-trias-treatment-room.jpg') }}" alt="Treatment room at the General Trias Branch" class="aspect-[4/3] w-full object-cover" fetchpriority="high">
-                        <figcaption class="flex items-center justify-between gap-4 bg-white px-5 py-4">
+                        <figcaption class="flex items-center justify-between gap-4 bg-white px-5 py-5 sm:px-7">
                             <span>
                                 <span class="block text-xs font-semibold uppercase tracking-[0.14em] text-teal-700">A warm welcome</span>
                                 <span class="mt-1 block font-semibold text-slate-900">Your care, close to home</span>
                             </span>
-                            <span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-emerald-50 text-xl text-emerald-700" aria-hidden="true">✦</span>
+                            <span class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-teal-50 text-xl text-teal-700" aria-hidden="true">✦</span>
                         </figcaption>
                     </figure>
                 </div>
             </div>
         </section>
 
-        <section id="about" class="scroll-mt-24 border-y border-teal-100 bg-white">
-            <div class="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 sm:py-18 lg:grid-cols-[0.8fr_1.2fr] lg:items-center lg:gap-16 lg:px-8">
-                <div>
-                    <p class="text-sm font-bold uppercase tracking-[0.16em] text-teal-700">Welcome to Doc Brigs</p>
-                    <h2 class="mt-3 text-3xl font-bold tracking-tight text-teal-950 sm:text-4xl">Good care starts with feeling at ease.</h2>
-                </div>
-                <div class="max-w-3xl">
-                    <p class="text-lg leading-8 text-slate-600">We want every visit to feel welcoming. Our General Trias and Trece clinics are here to help you find the dental care you need in a friendly setting.</p>
-                    <a class="mt-5 inline-flex min-h-11 items-center font-semibold text-teal-800 transition hover:text-teal-950" href="#branches">Get to know our branches <span class="ml-2" aria-hidden="true">→</span></a>
+        <section id="about" class="scroll-mt-24 bg-white">
+            <div class="mx-auto max-w-7xl px-4 py-14 sm:px-6 sm:py-20 lg:px-8">
+                <div class="grid gap-8 rounded-[2rem] border border-teal-100 bg-gradient-to-br from-teal-50/80 to-white p-7 shadow-sm shadow-teal-950/5 sm:p-10 lg:grid-cols-[0.85fr_1.15fr] lg:items-center lg:gap-16 lg:p-14">
+                    <div>
+                        <p class="text-sm font-bold uppercase tracking-[0.16em] text-teal-700">Welcome to Doc Brigs</p>
+                        <h2 class="mt-3 text-3xl font-bold tracking-tight text-teal-950 sm:text-4xl">Good care starts with feeling at ease.</h2>
+                    </div>
+                    <div class="max-w-3xl">
+                        <p class="text-lg leading-8 text-slate-600">We want every visit to feel welcoming. Our Dasmariñas, General Trias, and Trece clinics are here to help you find the dental care you need in a friendly setting.</p>
+                        <a class="mt-5 inline-flex min-h-11 items-center font-semibold text-teal-800 transition hover:text-teal-950" href="#branches">Get to know our branches <span class="ml-2" aria-hidden="true">→</span></a>
+                    </div>
                 </div>
             </div>
         </section>
 
-        <section id="branches" class="scroll-mt-24 bg-gradient-to-b from-teal-50/80 to-white">
+        <section id="branches" class="scroll-mt-24 bg-gradient-to-b from-teal-50/70 via-white to-white">
             <div class="mx-auto max-w-7xl px-4 py-14 sm:px-6 sm:py-20 lg:px-8">
                 <div class="mx-auto max-w-2xl text-center">
                     <p class="text-sm font-bold uppercase tracking-[0.16em] text-teal-700">Find us near you</p>
-                    <h2 class="mt-3 text-3xl font-bold tracking-tight text-teal-950 sm:text-4xl">Two branches, one caring team.</h2>
+                    <h2 class="mt-3 text-3xl font-bold tracking-tight text-teal-950 sm:text-4xl">Three branches, one caring team.</h2>
                     <p class="mt-4 leading-7 text-slate-600">Take a look inside our clinics and choose the location that works for you.</p>
                 </div>
 
-                <div class="mt-10 grid gap-6 lg:grid-cols-2 lg:gap-8">
-                    <article class="overflow-hidden rounded-3xl border border-teal-100 bg-white shadow-lg shadow-teal-950/5">
-                        <div class="grid grid-cols-3 gap-2 p-3 sm:gap-3 sm:p-4">
-                            <img src="{{ asset('images/landing/general-trias-treatment-room.jpg') }}" alt="Dental treatment room at the General Trias Branch" class="col-span-2 row-span-2 aspect-[4/3] h-full w-full rounded-2xl object-cover">
-                            <img src="{{ asset('images/landing/general-trias-clinic-room.jpg') }}" alt="Dental chair and equipment at the General Trias Branch" class="aspect-[4/3] w-full rounded-2xl object-cover">
-                            <img src="{{ asset('images/landing/general-trias-waiting-area.jpg') }}" alt="Waiting area at the General Trias Branch" class="aspect-[4/3] w-full rounded-2xl object-cover">
+                <div class="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-3 lg:gap-7">
+                    <article class="flex h-full flex-col overflow-hidden rounded-[1.75rem] border border-teal-100 bg-white shadow-md shadow-teal-950/5 transition duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-teal-950/10">
+                        <div class="grid aspect-[1.5] grid-cols-3 grid-rows-2 gap-2 p-3 sm:gap-2.5 sm:p-4">
+                            <img src="{{ asset('images/landing/general-trias-treatment-room.jpg') }}" alt="Dental treatment room at the General Trias Branch" class="col-span-2 row-span-2 h-full min-h-0 w-full rounded-2xl object-cover">
+                            <img src="{{ asset('images/landing/general-trias-clinic-room.jpg') }}" alt="Dental chair and equipment at the General Trias Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
+                            <img src="{{ asset('images/landing/general-trias-waiting-area.jpg') }}" alt="Waiting area at the General Trias Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
                         </div>
-                        <div class="flex flex-col gap-5 px-5 pb-6 sm:flex-row sm:items-end sm:justify-between sm:px-6">
-                            <div>
+                        <div class="flex flex-1 flex-col gap-5 px-5 pb-6 sm:px-6">
+                            <div class="flex-1">
                                 <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">Doc Brigs Dental Care</p>
-                                <h3 class="mt-1 text-2xl font-bold text-teal-950">General Trias Branch</h3>
+                                <h3 class="mt-1 text-xl font-bold text-teal-950">General Trias Branch</h3>
                                 <p class="mt-2 text-sm leading-6 text-slate-600">A welcoming clinic in General Trias, Cavite.</p>
+                                <p class="mt-3 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-600">Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107</p>
                             </div>
-                            <a class="btn-primary shrink-0" href="{{ route('appointments.start') }}">Book a Visit <span class="ml-2" aria-hidden="true">→</span></a>
+                            <a class="btn-primary self-start rounded-full px-5" href="{{ route('appointments.start') }}">Book a Visit <span class="ml-2" aria-hidden="true">→</span></a>
                         </div>
                     </article>
 
-                    <article class="overflow-hidden rounded-3xl border border-teal-100 bg-white shadow-lg shadow-teal-950/5">
-                        <div class="grid grid-cols-3 gap-2 p-3 sm:gap-3 sm:p-4">
-                            <img src="{{ asset('images/landing/trece-treatment-room.jpg') }}" alt="Dental treatment room at the Trece Branch" class="col-span-2 row-span-2 aspect-[4/3] h-full w-full rounded-2xl object-cover">
-                            <img src="{{ asset('images/landing/trece-clinic-team.jpg') }}" alt="Clinic staff at the Trece Branch" class="aspect-[4/3] w-full rounded-2xl object-cover">
-                            <img src="{{ asset('images/landing/trece-reception.jpg') }}" alt="Reception area at the Trece Branch" class="aspect-[4/3] w-full rounded-2xl object-cover">
+                    <article class="flex h-full flex-col overflow-hidden rounded-[1.75rem] border border-teal-100 bg-white shadow-md shadow-teal-950/5 transition duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-teal-950/10">
+                        <div class="grid aspect-[1.5] grid-cols-3 grid-rows-2 gap-2 p-3 sm:gap-2.5 sm:p-4">
+                            <img src="{{ asset('images/landing/trece-treatment-room.jpg') }}" alt="Dental treatment room at the Trece Branch" class="col-span-2 row-span-2 h-full min-h-0 w-full rounded-2xl object-cover">
+                            <img src="{{ asset('images/landing/trece-clinic-team.jpg') }}" alt="Clinic staff at the Trece Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
+                            <img src="{{ asset('images/landing/trece-reception.jpg') }}" alt="Reception area at the Trece Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
                         </div>
-                        <div class="flex flex-col gap-5 px-5 pb-6 sm:flex-row sm:items-end sm:justify-between sm:px-6">
-                            <div>
+                        <div class="flex flex-1 flex-col gap-5 px-5 pb-6 sm:px-6">
+                            <div class="flex-1">
                                 <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">Doc Brigs Dental Care</p>
-                                <h3 class="mt-1 text-2xl font-bold text-teal-950">Trece Branch</h3>
+                                <h3 class="mt-1 text-xl font-bold text-teal-950">Trece Branch</h3>
                                 <p class="mt-2 text-sm leading-6 text-slate-600">Visit our Trece clinic for your dental care.</p>
                             </div>
-                            <a class="btn-primary shrink-0" href="{{ route('appointments.start') }}">Book a Visit <span class="ml-2" aria-hidden="true">→</span></a>
+                            <a class="btn-primary self-start rounded-full px-5" href="{{ route('appointments.start') }}">Book a Visit <span class="ml-2" aria-hidden="true">→</span></a>
+                        </div>
+                    </article>
+
+                    <article class="flex h-full flex-col overflow-hidden rounded-[1.75rem] border border-teal-100 bg-white shadow-md shadow-teal-950/5 transition duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-teal-950/10">
+                        <div class="grid aspect-[1.5] grid-cols-3 grid-rows-2 gap-2 p-3 sm:gap-2.5 sm:p-4">
+                            <img src="{{ asset('images/landing/dasmarinas-exterior.jpg') }}" alt="Exterior of the Dasmariñas Branch" class="col-span-2 row-span-2 h-full min-h-0 w-full rounded-2xl object-cover">
+                            <img src="{{ asset('images/landing/dasmarinas-reception.jpg') }}" alt="Reception area at the Dasmariñas Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
+                            <img src="{{ asset('images/landing/dasmarinas-treatment-room.jpg') }}" alt="Dental treatment room at the Dasmariñas Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
+                        </div>
+                        <div class="flex flex-1 flex-col gap-5 px-5 pb-6 sm:px-6">
+                            <div class="flex-1">
+                                <p class="text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">Doc Brigs Dental Care</p>
+                                <h3 class="mt-1 text-xl font-bold text-teal-950">Dasmariñas Branch</h3>
+                                <p class="mt-2 text-sm leading-6 text-slate-600">Visit our Dasmariñas clinic in Cavite.</p>
+                                <p class="mt-3 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-600">Unit 8 CITRINE Bldg., Brgy. Sampaloc I (opposite side of Philippine Christian University - PCU), Dasmariñas, Philippines, 4114</p>
+                                <p class="mt-3 text-sm leading-6 text-slate-600">Monday–Saturday, 8 AM–7 PM; Sunday by appointment</p>
+                                <a class="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-teal-800 hover:underline" href="tel:+639672841871">0967 284 1871</a>
+                            </div>
+                            <a class="btn-primary self-start rounded-full px-5" href="{{ route('appointments.start') }}">Book a Visit <span class="ml-2" aria-hidden="true">→</span></a>
                         </div>
                     </article>
                 </div>
@@ -130,38 +152,34 @@
         </section>
 
         <section id="services" class="scroll-mt-24 border-t border-slate-100 bg-white">
-            <div class="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 sm:py-20 lg:grid-cols-[0.7fr_1.3fr] lg:gap-16 lg:px-8">
-                <div class="max-w-xl">
+            <div class="mx-auto max-w-7xl px-4 py-14 sm:px-6 sm:py-20 lg:px-8">
+                <div class="mx-auto max-w-2xl text-center">
                     <p class="text-sm font-bold uppercase tracking-[0.16em] text-teal-700">Our Services</p>
                     <h2 class="mt-3 text-3xl font-bold tracking-tight text-teal-950 sm:text-4xl">Care for every kind of smile.</h2>
                     <p class="mt-4 leading-7 text-slate-600">Explore services offered by Doc Brigs Dental Care. Have a question? Get in touch or book an appointment to learn more.</p>
-                    <a class="btn-secondary mt-6 min-h-11" href="{{ route('appointments.start') }}">Ask about a service <span class="ml-2" aria-hidden="true">→</span></a>
+                    <a class="btn-secondary mx-auto mt-6 min-h-11" href="{{ route('appointments.start') }}">Ask about a service <span class="ml-2" aria-hidden="true">→</span></a>
                 </div>
 
-                <div>
-                    @if ($services->isNotEmpty())
-                        <ul class="grid gap-3 sm:grid-cols-2">
-                            @foreach ($services as $service)
-                                <li class="rounded-2xl border border-teal-100 bg-teal-50/50 p-5 transition hover:border-teal-200 hover:bg-white hover:shadow-md">
-                                    @if ($service->category)
-                                        <p class="text-xs font-bold uppercase tracking-wide text-emerald-700">{{ $service->category }}</p>
-                                    @endif
-                                    <h3 class="mt-1 font-semibold text-teal-950">{{ $service->name }}</h3>
-                                    @if ($service->description)
-                                        <p class="mt-2 text-sm leading-6 text-slate-600">{{ $service->description }}</p>
-                                    @endif
-                                </li>
-                            @endforeach
-                        </ul>
-                    @else
-                        <p class="rounded-2xl border border-teal-100 bg-teal-50 p-5 leading-7 text-slate-600">Please contact the clinic for information about available dental services.</p>
-                    @endif
+                <ul class="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    @foreach (['Oral Prophylaxis', 'Restoration', 'Extraction', 'Dentures', 'Braces', 'Surgery', 'Root Canal Therapy', 'Jacket Crowns', 'Whitening', 'Implant'] as $serviceName)
+                        <li class="flex min-h-20 items-center gap-4 rounded-2xl border border-teal-100/80 bg-white px-5 py-4 shadow-sm shadow-teal-950/[0.03] transition duration-200 hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-lg hover:shadow-teal-950/5">
+                            <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-700" aria-hidden="true">
+                                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 3.5c-1.6 0-2.5 1-4.1 1-1.8 0-3.4-1.3-5-.2-1.8 1.4-1.1 5.2-.3 7.3 1 2.8 2.3 4.9 3.3 7.7.4 1.1 1.1 2.2 2.1 2.2 1.8 0 1.3-4.9 4-4.9s2.2 4.9 4 4.9c1 0 1.7-1.1 2.1-2.2 1-2.8 2.3-4.9 3.3-7.7.8-2.1 1.5-5.9-.3-7.3-1.6-1.1-3.2.2-5 .2-1.6 0-2.5-1-4.1-1Z"/>
+                                    <path stroke-linecap="round" d="M9.5 9.5h5"/>
+                                </svg>
+                            </span>
+                            <span class="font-semibold text-teal-950">{{ $serviceName }}</span>
+                        </li>
+                    @endforeach
+                </ul>
                 </div>
             </div>
         </section>
 
-        <section id="contact" class="scroll-mt-24 bg-teal-950 text-white">
-            <div class="mx-auto grid max-w-7xl gap-8 px-4 py-12 sm:px-6 sm:py-16 lg:grid-cols-[1fr_auto] lg:items-center lg:px-8">
+        <section id="contact" class="scroll-mt-24 bg-white px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
+            <div class="relative mx-auto grid max-w-7xl gap-8 overflow-hidden rounded-[2rem] bg-gradient-to-br from-teal-950 via-teal-900 to-teal-800 px-6 py-10 text-white shadow-xl shadow-teal-950/15 sm:px-10 sm:py-14 lg:grid-cols-[1fr_auto] lg:items-center lg:px-14">
+                <div class="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full border-[40px] border-white/5" aria-hidden="true"></div>
                 <div>
                     <p class="text-sm font-bold uppercase tracking-[0.16em] text-emerald-300">Let’s get you smiling</p>
                     <h2 class="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">Ready to plan your visit?</h2>
@@ -171,12 +189,12 @@
                         <a class="min-h-11 leading-6 underline decoration-emerald-400 underline-offset-4 hover:text-emerald-200" href="https://www.bing.com/maps/default.aspx?v=2&amp;pc=FACEBK&amp;mid=8100&amp;where1=14.313687869546%2C%20120.91615498066&amp;FORM=FBKPL1&amp;name=Unit%20F%202nd%20Floor%2C%20QMRC%20Building%2C%20Brookeside%20Lane%2C%20General%20Trias%2C%20Philippines%2C%204107&amp;mkt=en-US" target="_blank" rel="noopener noreferrer">Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107</a>
                     </div>
                 </div>
-                <a class="inline-flex min-h-12 items-center justify-center rounded-xl bg-white px-5 py-3 text-sm font-bold text-teal-900 transition hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-teal-950" href="{{ route('appointments.start') }}">Book an Appointment <span class="ml-2" aria-hidden="true">→</span></a>
+                <a class="relative inline-flex min-h-12 items-center justify-center rounded-full bg-white px-6 py-3 text-sm font-bold text-teal-900 shadow-lg transition hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-teal-950" href="{{ route('appointments.start') }}">Book an Appointment <span class="ml-2" aria-hidden="true">→</span></a>
             </div>
         </section>
     </main>
 
-    <footer class="border-t border-teal-100 bg-white">
+    <footer class="border-t border-teal-100 bg-teal-50/40">
         <div class="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-7 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
             <a href="#home" class="flex items-center gap-3" aria-label="Doc Brigs Dental Care home">
                 <img src="{{ asset('images/landing/doc-brigs-dental-care-logo.jpg') }}" alt="" class="h-12 w-10 object-contain">
