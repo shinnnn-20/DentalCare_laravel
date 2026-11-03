@@ -17,6 +17,18 @@ class AppointmentAvailabilityTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_booking_form_keeps_the_selected_time_while_refreshing_availability_before_submission(): void
+    {
+        $patient = Patient::factory()->create();
+
+        $this->actingAs($patient->user)
+            ->get(route('appointments.index'))
+            ->assertOk()
+            ->assertSee('const selectedTime = preferredTime || timeSelect.value;', false)
+            ->assertSee('const availableTimes = availability[dateInput.value] || [];', false)
+            ->assertDontSee('if (dateInput.value && !availability[dateInput.value])', false);
+    }
+
     #[DataProvider('availabilityManagerRoles')]
     public function test_authorized_clinic_users_can_create_and_view_a_branch_availability_block(string $role): void
     {

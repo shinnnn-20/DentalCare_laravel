@@ -231,7 +231,7 @@
             @endif
             <div class="overflow-x-auto">
             <table class="data-table">
-                <thead><tr><th>Date & time</th>@if (auth()->user()->hasRole('admin', 'staff', 'doctor'))<th>Patient</th>@endif<th>Branch</th><th>Service</th><th>Type</th><th>Status</th><th>Queue</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Date & time</th>@if (auth()->user()->hasRole('admin', 'staff', 'doctor'))<th>Patient</th>@endif @if ($isAppointmentRecordsPage)<th>Follow-up date</th>@endif<th>Branch</th><th>Service</th><th>Type</th><th>Status</th><th>Queue</th><th>Actions</th></tr></thead>
                 <tbody>
                 @forelse ($sectionAppointments as $appointment)
                     <tr id="appointment-{{ $appointment->id }}" @class(['bg-amber-50 outline outline-2 outline-amber-400 outline-offset-[-2px]' => $highlightedAppointmentId === $appointment->id]) @if ($highlightedAppointmentId === $appointment->id) aria-current="true" @endif>
@@ -250,6 +250,9 @@
                                 @endif
                                 <div class="text-xs text-slate-400">{{ $appointment->patient->patient_number }}</div>
                             </td>
+                        @endif
+                        @if ($isAppointmentRecordsPage)
+                            <td data-label="Follow-up date">{{ $appointment->dentalRecord?->follow_up_date?->format('M j, Y') ?? '—' }}</td>
                         @endif
                         <td data-label="Branch"><span class="inline-flex max-w-full rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ $appointment->branch?->name ?? 'Not Assigned' }}</span></td>
                         <td data-label="Service">
@@ -1007,11 +1010,6 @@
                     if (selectedService?.value) {
                         url.searchParams.set('service_id', selectedService.value);
                     }
-                }
-
-                if (dateInput.value && !availability[dateInput.value]) {
-                    preferredTime = '';
-                    timeSelect.value = '';
                 }
 
                 try {

@@ -3,7 +3,7 @@
 @section('title', 'Notifications')
 
 @section('content')
-    <div class="mb-8"><p class="text-sm font-medium text-teal-700">Patient portal</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Notifications</h1><p class="mt-2 text-slate-500">Appointment and payment messages sent to your registered contact number.</p></div>
+    <div class="mb-8"><p class="text-sm font-medium text-teal-700">Patient portal</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Notifications</h1><p class="mt-2 text-slate-500">Appointment approval and rejection messages sent to your registered contact number.</p></div>
     <section class="rounded-2xl border border-slate-200 bg-white">
         <div class="divide-y divide-slate-100">
             @forelse ($logs as $log)

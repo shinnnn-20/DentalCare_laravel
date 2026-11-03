@@ -86,6 +86,52 @@ class ClinicNotificationTest extends TestCase
             'Jamie Patient cancelled their appointment scheduled for October 8, 2026 at 2:00 PM.',
             $notification->data['message'],
         );
+        $this->assertDatabaseCount('sms_logs', 0);
+    }
+
+    public function test_appointment_approval_and_rejection_are_the_only_sms_types_sent(): void
+    {
+        $this->travelTo('2026-10-07 08:00:00');
+        Config::set('services.clinic_sms.endpoint', 'https://sms.example.test/send');
+        Config::set('services.clinic_sms.token', 'test-token');
+        Http::fake(['sms.example.test/*' => Http::response(['ok' => true], 200)]);
+
+        $staff = User::factory()->create(['role' => 'staff']);
+        $approvedPatient = Patient::factory()->for(User::factory()->state([
+            'role' => 'patient',
+            'phone' => '09170000001',
+        ]))->create();
+        $rejectedPatient = Patient::factory()->for(User::factory()->state([
+            'role' => 'patient',
+            'phone' => '09170000002',
+        ]))->create();
+        $approvedAppointment = Appointment::factory()->for($approvedPatient)->create([
+            'starts_at' => Carbon::parse('2026-10-08 14:00:00'),
+            'status' => 'pending',
+        ]);
+        $rejectedAppointment = Appointment::factory()->for($rejectedPatient)->create([
+            'starts_at' => Carbon::parse('2026-10-08 15:00:00'),
+            'status' => 'pending',
+        ]);
+
+        $this->actingAs($staff)
+            ->post(route('appointments.transition', [$approvedAppointment, 'approve']))
+            ->assertSessionHasNoErrors();
+        $this->post(route('appointments.transition', [$rejectedAppointment, 'reject']))
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('sms_logs', [
+            'appointment_id' => $approvedAppointment->id,
+            'type' => 'appointment_approve',
+            'status' => 'sent',
+        ]);
+        $this->assertDatabaseHas('sms_logs', [
+            'appointment_id' => $rejectedAppointment->id,
+            'type' => 'appointment_reject',
+            'status' => 'sent',
+        ]);
+        $this->assertDatabaseCount('sms_logs', 2);
+        Http::assertSentCount(2);
     }
 
     public function test_staff_action_notifies_other_clinic_users_and_opening_marks_only_the_recipient_notification_read(): void

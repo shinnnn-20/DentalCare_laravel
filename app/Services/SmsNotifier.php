@@ -7,11 +7,18 @@ use App\Models\Patient;
 use App\Models\SmsLog;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
+use InvalidArgumentException;
 
 class SmsNotifier
 {
+    public const ALLOWED_TYPES = ['appointment_approve', 'appointment_reject'];
+
     public function send(Patient $patient, string $type, string $message, ?Appointment $appointment = null): SmsLog
     {
+        if (! in_array($type, self::ALLOWED_TYPES, true)) {
+            throw new InvalidArgumentException('Only appointment approval and rejection SMS messages are allowed.');
+        }
+
         $brandedMessage = config('clinic.name').': '.$message;
 
         $log = SmsLog::create([

@@ -45,6 +45,7 @@ class DashboardController extends Controller
 
         $today = today(config('clinic.timezone'));
         $isAdmin = $user->role === 'admin';
+        $canViewRevenue = $user->hasRole('admin', 'doctor');
         $branches = Branch::query()->orderBy('name')->get(['id', 'name']);
         $hasAssignedBranch = $user->hasRole('staff', 'doctor') && $user->branch_id !== null;
 
@@ -114,7 +115,7 @@ class DashboardController extends Controller
             ['Patients in queue', number_format($queueEntriesForBranch()->whereDate('queue_date', $today)->whereIn('status', ['waiting', 'called'])->count()), 'Waiting or called today', 'queue'],
             ['Completed today', number_format($appointmentsForBranch()->whereDate('starts_at', $today)->where('status', 'completed')->count()), 'Appointments completed', 'completed_today'],
         ];
-        if ($isAdmin) {
+        if ($canViewRevenue) {
             $metrics[] = ["Today's revenue", '₱'.number_format((float) $todayPayments()->sum('applied_amount'), 2), $hasTestPaymentsToday ? 'Includes PayMongo TEST MODE payments' : 'Payments applied today', 'today_revenue'];
         }
         if ($user->hasRole('admin', 'staff')) {
@@ -191,6 +192,7 @@ class DashboardController extends Controller
                 'no_show',
             ])],
             ...($user->role === 'admin' ? ['statistics_period' => ['nullable', 'in:week,month,year']] : []),
+            'patient_search' => ['nullable', 'string', 'max:120'],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
         if ($user->role === 'doctor' && in_array($filters['metric'], ['patients', 'unpaid_bills', 'active_staff'], true)) {
@@ -199,7 +201,7 @@ class DashboardController extends Controller
         if ($user->role === 'staff' && $filters['metric'] === 'active_staff') {
             abort(403);
         }
-        if ($filters['metric'] === 'today_revenue' && ! $user->hasRole('admin')) {
+        if ($filters['metric'] === 'today_revenue' && ! $user->hasRole('admin', 'doctor')) {
             abort(403);
         }
 
@@ -254,6 +256,7 @@ class DashboardController extends Controller
                 $today,
                 $filters['page'] ?? 1,
                 $revenueReport,
+                isset($filters['patient_search']) ? trim($filters['patient_search']) : null,
             ),
             'unpaid_bills' => $this->billDetails($branchId, $filters['page'] ?? 1),
             'active_staff' => $this->staffDetails($filters['page'] ?? 1),
@@ -389,13 +392,19 @@ class DashboardController extends Controller
         Carbon $today,
         int $page,
         ClinicRevenueReport $revenueReport,
+        ?string $patientSearch,
     ): JsonResponse {
         [$todayStartUtc, $todayEndUtc] = $revenueReport->utcRange(
             $today->copy()->startOfDay(),
             $today->copy()->endOfDay(),
         );
-        $paginator = $this->applyPaymentBranchFilter(Payment::query(), $branchId)
-            ->whereBetween('created_at', [$todayStartUtc, $todayEndUtc])
+        $payments = $revenueReport->filterPaymentsByPatient(
+            $this->applyPaymentBranchFilter(Payment::query(), $branchId)
+                ->whereBetween('created_at', [$todayStartUtc, $todayEndUtc]),
+            $patientSearch,
+        );
+        $totalAmount = (float) (clone $payments)->sum('applied_amount');
+        $paginator = $payments
             ->with(['bill.patient.user', 'bill.appointment.branch'])
             ->orderBy('created_at')
             ->orderBy('id')
@@ -422,6 +431,7 @@ class DashboardController extends Controller
                 'method' => strtoupper($payment->method).($payment->provider === 'paymongo' && $payment->is_test ? ' · PayMongo TEST MODE' : ''),
                 'amount' => '₱'.number_format((float) $payment->applied_amount, 2),
             ],
+            ['revenue_total' => '₱'.number_format($totalAmount, 2)],
         );
     }
 
@@ -500,8 +510,13 @@ class DashboardController extends Controller
      * @param  array<string, string>  $columns
      * @param  callable(Model): array<string, string>  $mapRecord
      */
-    private function detailsResponse(string $title, array $columns, LengthAwarePaginator $paginator, callable $mapRecord): JsonResponse
-    {
+    private function detailsResponse(
+        string $title,
+        array $columns,
+        LengthAwarePaginator $paginator,
+        callable $mapRecord,
+        array $metadata = [],
+    ): JsonResponse {
         return response()->json([
             'title' => $title,
             'total' => $paginator->total(),
@@ -509,6 +524,7 @@ class DashboardController extends Controller
             'last_page' => $paginator->lastPage(),
             'columns' => $columns,
             'records' => $paginator->getCollection()->map($mapRecord)->values()->all(),
+            ...$metadata,
         ]);
     }
 

@@ -3,7 +3,7 @@
 @section('title', 'Dental record')
 
 @section('content')
-    <div class="mb-6"><a class="text-sm font-semibold text-teal-800 hover:underline" href="{{ route('appointments.index') }}">← Appointments</a></div>
+    <div class="mb-6"><a class="text-sm font-semibold text-teal-800 hover:underline" href="{{ auth()->user()->hasRole('doctor') ? route('clinic.queue.index') : route('appointments.index') }}">{{ auth()->user()->hasRole('doctor') ? '← Patient queue' : '← Appointments' }}</a></div>
     <section class="max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
         <p class="text-sm font-medium text-teal-700">{{ $appointment->patient->patient_number }} · {{ $appointment->starts_at->format('M j, Y') }}</p>
         <h1 class="mt-1 text-2xl font-bold">Dental record for {{ $appointment->patient->user->name }}</h1>

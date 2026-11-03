@@ -8,7 +8,6 @@ use App\Models\Receipt;
 use App\Services\AppointmentCompletionService;
 use App\Services\AuditTrail;
 use App\Services\ClinicNotificationService;
-use App\Services\SmsNotifier;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,7 +22,6 @@ class PaymentController extends Controller
         Bill $bill,
         AppointmentCompletionService $appointmentCompletion,
         AuditTrail $auditTrail,
-        SmsNotifier $smsNotifier,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
         $this->authorizeBillBranch($request, $bill);
@@ -95,11 +93,6 @@ class PaymentController extends Controller
             route('clinic.billing.index', ['bill' => $payment->bill_id], false).'#bill-'.$payment->bill_id,
             'bill',
             $payment->bill_id,
-        );
-        $smsNotifier->send(
-            $payment->bill->patient,
-            'payment',
-            'Payment received for bill '.$payment->bill->bill_number.'. Receipt '.$payment->receipt->receipt_number.'.',
         );
 
         return redirect()->route('receipts.show', $payment->receipt)->with('status', 'Payment recorded and receipt generated.');

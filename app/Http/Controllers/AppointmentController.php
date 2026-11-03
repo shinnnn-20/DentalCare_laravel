@@ -92,17 +92,28 @@ class AppointmentController extends Controller
             ->paginate(20)
             ->withQueryString();
         $appointmentCollection = $appointments->getCollection();
-        $appointmentSections = $isAppointmentRecordsPage
-            ? [
-                'Ongoing Appointments' => $appointmentCollection->whereIn('status', self::ONGOING_APPOINTMENT_STATUSES),
-                'Pending Appointments' => $appointmentCollection->where('status', 'pending'),
+        if ($isAppointmentRecordsPage) {
+            $followUpAppointments = $appointmentCollection->filter(
+                fn (Appointment $appointment): bool => $appointment->dentalRecord?->follow_up_date !== null,
+            );
+            $followUpAppointmentIds = $followUpAppointments->modelKeys();
+            $appointmentSections = [
+                'Ongoing Appointments' => $appointmentCollection
+                    ->whereIn('status', self::ONGOING_APPOINTMENT_STATUSES)
+                    ->whereNotIn('id', $followUpAppointmentIds),
+                'Pending Appointments' => $appointmentCollection
+                    ->where('status', 'pending')
+                    ->whereNotIn('id', $followUpAppointmentIds),
+                'Follow-up appointments' => $followUpAppointments,
                 'Other Appointments' => $appointmentCollection->reject(fn (Appointment $appointment): bool => in_array(
                     $appointment->status,
                     [...self::ONGOING_APPOINTMENT_STATUSES, 'pending'],
                     true,
-                )),
-            ]
-            : ['Appointments' => $appointmentCollection];
+                ) || $followUpAppointments->contains('id', $appointment->id)),
+            ];
+        } else {
+            $appointmentSections = ['Appointments' => $appointmentCollection];
+        }
         $clinicNow = now(config('clinic.timezone'));
         $canRescheduleOnAppointmentDate = $request->user()->hasRole('admin', 'staff');
         $reschedulableAppointmentIds = $appointments->getCollection()
@@ -376,7 +387,7 @@ class AppointmentController extends Controller
         AuditTrail $auditTrail,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
-        abort_unless($request->user()->hasRole('admin', 'staff'), 403);
+        abort_unless($request->user()->hasRole('admin', 'staff', 'doctor'), 403);
 
         DB::transaction(function () use ($appointment, $request, $auditTrail): void {
             $lockedAppointment = Appointment::query()
@@ -428,6 +439,23 @@ class AppointmentController extends Controller
         return redirect()->route('clinic.queue.index')->with('status', 'Appointment checked in and added to the queue.');
     }
 
+    private function addToQueue(Appointment $appointment): QueueEntry
+    {
+        if ($appointment->queueEntry !== null) {
+            return $appointment->queueEntry;
+        }
+
+        $queueEntry = QueueEntry::create([
+            'appointment_id' => $appointment->id,
+            'queue_date' => today(config('clinic.timezone')),
+            'queue_number' => 'Q-PENDING-'.str_pad((string) $appointment->id, 6, '0', STR_PAD_LEFT),
+            'status' => 'waiting',
+        ]);
+        $queueEntry->update(['queue_number' => sprintf('Q-%03d', $queueEntry->id)]);
+
+        return $queueEntry;
+    }
+
     public function transition(
         Request $request,
         Appointment $appointment,
@@ -437,7 +465,7 @@ class AppointmentController extends Controller
         ClinicNotificationService $notifications,
     ): RedirectResponse {
         $user = $request->user();
-        abort_unless($user->hasRole('patient', 'admin', 'staff'), 403);
+        abort_unless($user->hasRole('patient', 'admin', 'staff', 'doctor'), 403);
 
         if (
             $user->hasRole('staff', 'doctor')
@@ -464,6 +492,10 @@ class AppointmentController extends Controller
         [$from, $to] = $transitions[$action];
 
         if ($action === 'cancel' && $user->role !== 'patient' && ! $user->hasRole('admin', 'staff')) {
+            abort(403);
+        }
+
+        if ($user->hasRole('doctor') && ! in_array($action, ['call', 'consult'], true)) {
             abort(403);
         }
 
@@ -554,11 +586,10 @@ class AppointmentController extends Controller
             $appointment->id,
         );
 
-        if (in_array($action, ['approve', 'reject', 'cancel'], true)) {
+        if (in_array($action, ['approve', 'reject'], true)) {
             $message = match ($action) {
                 'approve' => 'Your dental appointment is confirmed for '.$appointment->starts_at->format('F j, Y \a\t g:i A').'.',
                 'reject' => 'Your dental appointment request was not approved. Please contact the clinic to reschedule.',
-                default => 'Your dental appointment on '.$appointment->starts_at->format('F j, Y \a\t g:i A').' has been cancelled.',
             };
             $smsNotifier->send($appointment->patient, 'appointment_'.$action, $message, $appointment);
         }
@@ -612,7 +643,6 @@ class AppointmentController extends Controller
         Request $request,
         Appointment $appointment,
         AuditTrail $auditTrail,
-        SmsNotifier $smsNotifier,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
         $this->mergeAppointmentStart($request);
@@ -748,33 +778,7 @@ class AppointmentController extends Controller
             $appointment->id,
         );
 
-        if ($appointment->status === 'approved') {
-            $smsNotifier->send(
-                $appointment->patient,
-                'appointment_rescheduled',
-                'Your dental appointment has been rescheduled to '.$appointment->starts_at->format('F j, Y \a\t g:i A').'.',
-                $appointment,
-            );
-        }
-
         return back()->with('status', 'Appointment rescheduled to '.$appointment->starts_at->format('F j, Y \a\t g:i A').'.');
-    }
-
-    private function addToQueue(Appointment $appointment): QueueEntry
-    {
-        if ($appointment->queueEntry !== null) {
-            return $appointment->queueEntry;
-        }
-
-        $queueEntry = QueueEntry::create([
-            'appointment_id' => $appointment->id,
-            'queue_date' => today(config('clinic.timezone')),
-            'queue_number' => 'Q-PENDING-'.str_pad((string) $appointment->id, 6, '0', STR_PAD_LEFT),
-            'status' => 'waiting',
-        ]);
-        $queueEntry->update(['queue_number' => sprintf('Q-%03d', $queueEntry->id)]);
-
-        return $queueEntry;
     }
 
     private function mergeAppointmentStart(Request $request): void

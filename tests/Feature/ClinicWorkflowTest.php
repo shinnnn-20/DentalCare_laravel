@@ -13,14 +13,14 @@ use App\Models\QueueEntry;
 use App\Models\Receipt;
 use App\Models\RfidCard;
 use App\Models\Service;
+use App\Models\SmsLog;
 use App\Models\User;
 use Carbon\Constants\UnitValue;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
@@ -207,6 +207,7 @@ class ClinicWorkflowTest extends TestCase
     #[DataProvider('clinicStaffRoles')]
     public function test_saving_a_dental_record_returns_to_the_same_appointment_with_create_bill_available(string $role): void
     {
+        $this->travelTo(Carbon::parse('2026-10-20 08:00:00', config('clinic.timezone')));
         $actor = User::factory()->create(['role' => $role]);
         $patient = $this->createPatient('P-2026-00062');
         $appointment = Appointment::factory()->for($patient)->create([
@@ -219,6 +220,7 @@ class ClinicWorkflowTest extends TestCase
             'branch_id' => (string) $appointment->branch_id,
             'search' => $patient->user->name,
         ];
+        $followUpDate = '2026-11-17';
         $listFilters = [
             ...$filters,
             'date' => $appointment->starts_at->toDateString(),
@@ -234,7 +236,7 @@ class ClinicWorkflowTest extends TestCase
             'diagnosis' => 'Routine examination',
             'treatment' => 'Dental cleaning',
             'prescription' => 'Use fluoride rinse',
-            'follow_up_date' => now()->addMonth()->toDateString(),
+            'follow_up_date' => $followUpDate,
         ])
             ->assertRedirect(route('clinic.appointment-records', $listFilters).'#appointment-'.$appointment->id)
             ->assertSessionHas('status', 'Dental record saved.');
@@ -243,12 +245,17 @@ class ClinicWorkflowTest extends TestCase
             'appointment_id' => $appointment->id,
             'patient_id' => $patient->id,
             'diagnosis' => 'Routine examination',
+            'follow_up_date' => $followUpDate.' 00:00:00',
         ]);
         $this->assertDatabaseCount('bills', 0);
 
         $this->get(route('clinic.appointment-records', $listFilters))
             ->assertSee('id="appointment-'.$appointment->id.'"', false)
             ->assertSee('bg-amber-50')
+            ->assertSee('Follow-up appointments')
+            ->assertSee('data-label="Follow-up date"', false)
+            ->assertSee('Nov 17, 2026')
+            ->assertDontSee('Nov 17, 2026 12:00 AM')
             ->assertSee('Create bill')
             ->assertDontSee('id="appointment-'.$otherAppointment->id.'"', false);
 
@@ -258,6 +265,70 @@ class ClinicWorkflowTest extends TestCase
 
         $this->assertDatabaseCount('dental_records', 1);
         $this->assertDatabaseCount('bills', 0);
+    }
+
+    public function test_doctors_can_create_dental_records_from_their_queue_and_set_a_follow_up_date(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-03 08:00:00', config('clinic.timezone')));
+        $branch = Branch::factory()->create(['name' => 'Doctor Follow-up Branch']);
+        $doctor = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $branch->id,
+        ]);
+        $patient = $this->createPatient('P-2026-00150', 'Doctor Follow-up Patient');
+        $service = Service::factory()->create(['name' => 'Doctor Follow-up Cleaning']);
+        $appointment = Appointment::factory()
+            ->for($patient)
+            ->for($branch)
+            ->for($service)
+            ->create([
+                'starts_at' => Carbon::parse('2026-11-03 10:00:00', config('clinic.timezone')),
+                'status' => 'in_consultation',
+            ]);
+        QueueEntry::factory()->for($appointment)->create([
+            'queue_date' => today(config('clinic.timezone')),
+            'status' => 'in_consultation',
+        ]);
+        $otherBranchAppointment = Appointment::factory()
+            ->for($patient)
+            ->for(Branch::factory()->create())
+            ->create([
+                'starts_at' => Carbon::parse('2026-11-03 11:00:00', config('clinic.timezone')),
+                'status' => 'in_consultation',
+            ]);
+
+        $this->actingAs($doctor)
+            ->get(route('clinic.queue.index'))
+            ->assertSee($patient->user->name)
+            ->assertSee(route('clinic.records.create', $appointment));
+
+        $this->get(route('clinic.records.create', $otherBranchAppointment))
+            ->assertNotFound();
+
+        $this->get(route('clinic.records.create', $appointment))
+            ->assertSee('Save dental record')
+            ->assertSee('Follow-up date');
+
+        $this->post(route('clinic.records.store', $appointment), [
+            'diagnosis' => 'Follow-up diagnosis',
+            'treatment' => 'Follow-up treatment',
+            'follow_up_date' => '2026-11-17',
+        ])
+            ->assertRedirectToRoute('clinic.queue.index')
+            ->assertSessionHas('status', 'Dental record saved.');
+
+        $this->assertDatabaseHas('dental_records', [
+            'appointment_id' => $appointment->id,
+            'created_by' => $doctor->id,
+            'follow_up_date' => '2026-11-17 00:00:00',
+        ]);
+
+        $this->actingAs(User::factory()->create(['role' => 'staff']))
+            ->get(route('clinic.appointment-records'))
+            ->assertSee('Follow-up appointments')
+            ->assertSee('Nov 17, 2026')
+            ->assertDontSee('Nov 17, 2026 12:00 AM')
+            ->assertSee($patient->user->name);
     }
 
     public function test_invalid_dental_record_submission_returns_to_the_form_without_creating_a_record(): void
@@ -862,6 +933,7 @@ class ClinicWorkflowTest extends TestCase
             'action' => 'appointment_rescheduled',
             'record_id' => (string) $appointment->id,
         ]);
+        $this->assertDatabaseCount('sms_logs', 0);
 
         $this->post(route('appointments.transition', [$appointment, 'approve']))->assertForbidden();
         $this->post(route('appointments.store'), [
@@ -1443,11 +1515,7 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('0917 160 0541');
         $receipt = Receipt::firstOrFail();
         $this->assertDatabaseHas('receipts', ['id' => $receipt->id]);
-        $this->assertDatabaseHas('sms_logs', ['type' => 'payment', 'status' => 'failed']);
-        $this->assertSame(
-            'Doc Brigs Dental Care: Payment received for bill '.$bill->bill_number.'. Receipt '.$receipt->receipt_number.'.',
-            DB::table('sms_logs')->where('type', 'payment')->value('message'),
-        );
+        $this->assertDatabaseCount('sms_logs', 0);
 
         $this->actingAs($patientUser)
             ->get(route('patient.billing.receipts.preview', ['bill' => $bill, 'receipt' => $receipt]))
@@ -2455,39 +2523,44 @@ class ClinicWorkflowTest extends TestCase
         ]);
     }
 
-    public function test_approved_appointments_receive_one_scheduled_reminder(): void
+    public function test_appointment_reminder_command_is_not_registered(): void
     {
-        $this->travelTo(now()->startOfMinute());
-        Config::set('services.clinic_sms.endpoint', 'https://sms.example.test/send');
-        Config::set('services.clinic_sms.token', 'test-token');
-        Http::fake(['sms.example.test/*' => Http::response(['ok' => true], 200)]);
+        $this->assertArrayNotHasKey('clinic:send-appointment-reminders', Artisan::all());
+    }
 
-        $patientUser = User::factory()->create(['role' => 'patient', 'phone' => '09170000000']);
-        $patient = Patient::create([
-            'user_id' => $patientUser->id,
-            'patient_number' => 'P-2026-00006',
-            'date_of_birth' => '1990-01-01',
-            'gender' => 'other',
-            'address' => 'Test address',
+    public function test_sms_logs_only_show_appointment_approvals_and_rejections(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $patient = Patient::factory()->for(User::factory()->state(['role' => 'patient']))->create();
+        SmsLog::factory()->for($patient)->create([
+            'type' => 'appointment_approve',
+            'message' => 'Approval SMS',
         ]);
-        $service = Service::create(['name' => 'X-Ray', 'price' => 500, 'is_active' => true]);
-        $appointment = Appointment::create([
-            'patient_id' => $patient->id,
-            'service_id' => $service->id,
-            'type' => 'online',
-            'starts_at' => now()->addHours(24)->addMinutes(5),
-            'status' => 'approved',
+        SmsLog::factory()->for($patient)->create([
+            'type' => 'appointment_reject',
+            'message' => 'Rejection SMS',
         ]);
-
-        $this->artisan('clinic:send-appointment-reminders')->assertSuccessful();
-        $this->artisan('clinic:send-appointment-reminders')->assertSuccessful();
-
-        $this->assertDatabaseHas('sms_logs', [
-            'appointment_id' => $appointment->id,
+        SmsLog::factory()->for($patient)->create([
+            'type' => 'payment',
+            'message' => 'Legacy payment SMS',
+        ]);
+        SmsLog::factory()->for($patient)->create([
             'type' => 'appointment_reminder',
-            'status' => 'sent',
+            'message' => 'Legacy reminder SMS',
         ]);
-        $this->assertDatabaseCount('sms_logs', 1);
-        Http::assertSentCount(1);
+
+        $this->actingAs($admin)
+            ->get(route('admin.sms-logs'))
+            ->assertSee('Approval SMS')
+            ->assertSee('Rejection SMS')
+            ->assertDontSee('Legacy payment SMS')
+            ->assertDontSee('Legacy reminder SMS');
+
+        $this->actingAs($patient->user)
+            ->get(route('patient.notifications'))
+            ->assertSee('Approval SMS')
+            ->assertSee('Rejection SMS')
+            ->assertDontSee('Legacy payment SMS')
+            ->assertDontSee('Legacy reminder SMS');
     }
 }

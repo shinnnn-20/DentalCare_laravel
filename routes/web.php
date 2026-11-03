@@ -81,6 +81,8 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::get('/receipts/{receipt}', [PaymentController::class, 'showReceipt'])->name('receipts.show');
 
     Route::middleware('role:patient')->group(function (): void {
+        Route::get('/my/rfid', [RfidController::class, 'patientCard'])->name('patient.rfid.index');
+        Route::post('/my/rfid', [RfidController::class, 'registerPatientCard'])->name('patient.rfid.store');
         Route::get('/my/dental-records', [ClinicWorkflowController::class, 'records'])->name('patient.records');
         Route::get('/my/billing', [ClinicWorkflowController::class, 'patientBilling'])->name('patient.billing');
         Route::get('/my/billing/{bill}/receipts/{receipt}/preview', [PaymentController::class, 'showPatientReceiptPreview'])
@@ -103,7 +105,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
             ->middleware('role:admin')
             ->name('patients.password');
         Route::get('/services', [ServiceController::class, 'index'])->name('services.index');
-        Route::get('/queue', [ClinicWorkflowController::class, 'queue'])->name('queue.index');
         Route::get('/billing', [ClinicWorkflowController::class, 'billing'])->name('billing.index');
         Route::get('/bills/{bill}/additional-services', [AdditionalServiceController::class, 'create'])
             ->name('bills.additional-services.create');
@@ -118,21 +119,20 @@ Route::middleware(['auth', 'active'])->group(function (): void {
             ->name('billing.paymongo.reconcile');
         Route::get('/rfid', [RfidController::class, 'index'])->name('rfid.index');
         Route::post('/patients/{patient}/rfid', [RfidController::class, 'assign'])->name('rfid.assign');
-        Route::get('/rfid/check-in', [RfidController::class, 'scanPage'])->name('rfid.scan');
-        Route::post('/rfid/check-in', [RfidController::class, 'scan'])->name('rfid.scan.submit');
-        Route::post('/queue/{appointment}/check-in', [AppointmentController::class, 'checkInFromQueue'])
-            ->name('queue.check-in');
-        Route::get('/appointments/{appointment}/record', [ClinicWorkflowController::class, 'createRecord'])
-            ->middleware('role:admin,staff')
-            ->name('records.create');
-        Route::post('/appointments/{appointment}/record', [ClinicWorkflowController::class, 'storeRecord'])
-            ->middleware('role:admin,staff')
-            ->name('records.store');
         Route::get('/appointments/{appointment}/bill', [ClinicWorkflowController::class, 'createBill'])->name('bills.create');
         Route::post('/appointments/{appointment}/bill', [ClinicWorkflowController::class, 'storeBill'])->name('bills.store');
     });
 
     Route::prefix('clinic')->name('clinic.')->middleware('role:admin,staff,doctor')->group(function (): void {
+        Route::get('/queue', [ClinicWorkflowController::class, 'queue'])->name('queue.index');
+        Route::get('/appointments/{appointment}/record', [ClinicWorkflowController::class, 'createRecord'])
+            ->name('records.create');
+        Route::post('/appointments/{appointment}/record', [ClinicWorkflowController::class, 'storeRecord'])
+            ->name('records.store');
+        Route::get('/rfid/check-in', [RfidController::class, 'scanPage'])->name('rfid.scan');
+        Route::post('/rfid/check-in', [RfidController::class, 'scan'])->name('rfid.scan.submit');
+        Route::post('/queue/{appointment}/check-in', [AppointmentController::class, 'checkInFromQueue'])
+            ->name('queue.check-in');
         Route::get('/appointment-availability', [AppointmentAvailabilityController::class, 'index'])
             ->name('availability.index');
         Route::post('/appointment-availability', [AppointmentAvailabilityController::class, 'store'])
@@ -144,6 +144,11 @@ Route::middleware(['auth', 'active'])->group(function (): void {
             ->name('availability.destroy');
     });
 
+    Route::prefix('admin')->name('admin.')->middleware('role:admin,doctor')->group(function (): void {
+        Route::get('/reports', [ClinicWorkflowController::class, 'reports'])->name('reports');
+        Route::get('/reports/details', [ClinicWorkflowController::class, 'reportDetails'])->name('reports.details');
+    });
+
     Route::prefix('admin')->name('admin.')->middleware('role:admin')->group(function (): void {
         Route::get('/staff', [StaffController::class, 'index'])->name('staff.index');
         Route::post('/staff', [StaffController::class, 'store'])->name('staff.store');
@@ -152,8 +157,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::put('/staff/{staff}/password', [StaffController::class, 'resetPassword'])->name('staff.password');
         Route::post('/services', [ServiceController::class, 'store'])->name('services.store');
         Route::put('/services/{service}', [ServiceController::class, 'update'])->name('services.update');
-        Route::get('/reports', [ClinicWorkflowController::class, 'reports'])->name('reports');
-        Route::get('/reports/details', [ClinicWorkflowController::class, 'reportDetails'])->name('reports.details');
         Route::get('/audit-logs', [ClinicWorkflowController::class, 'auditLogs'])->name('audit-logs');
         Route::get('/sms-logs', [ClinicWorkflowController::class, 'smsLogs'])->name('sms-logs');
     });

@@ -117,6 +117,7 @@ class AppointmentBranchSupportTest extends TestCase
             ...$expectedOngoingRows,
             'Pending Appointments',
             'id="appointment-'.$pending->id.'"',
+            'Follow-up appointments',
             'Other Appointments',
             'id="appointment-'.$completed->id.'"',
         ], false)
