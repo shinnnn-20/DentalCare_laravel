@@ -4,7 +4,17 @@ A Laravel 13 clinic portal for patient registration, appointment requests, walk-
 
 ## Setup
 
-Requirements: PHP 8.3+ with `fileinfo` and `pdo_sqlite` enabled (when using SQLite), Composer, and Node.js/npm.
+Requirements: PHP 8.3+ with `fileinfo` and `pdo_mysql` enabled, MySQL Server 8.4+, Composer, and Node.js/npm. SQLite remains available as an alternative when `pdo_sqlite` is enabled.
+
+Before setup, create a `dentalcare` database and a dedicated application user in MySQL Workbench (or another MySQL client), then grant that user privileges only on the `dentalcare` database:
+
+```sql
+CREATE DATABASE dentalcare CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'dentalcare_app'@'127.0.0.1' IDENTIFIED BY 'choose-a-strong-local-password';
+GRANT ALL PRIVILEGES ON dentalcare.* TO 'dentalcare_app'@'127.0.0.1';
+```
+
+Copy `.env.example` to `.env` if needed, set `DB_PASSWORD` to the application user's password, and keep the populated `.env` file private.
 
 ```powershell
 # Only needed if Node.js is installed but npm is not on PATH:
@@ -14,7 +24,7 @@ php artisan clinic:create-admin "Clinic Doctor" doctor@example.com
 npm run dev
 ```
 
-The administrator creation command prompts for a password without echoing it and refuses to create a second administrator. `composer run setup` installs dependencies, creates the default SQLite database file if needed, generates the application key, runs migrations and seeds the example dental services, then installs/builds front-end dependencies.
+The administrator creation command prompts for a password without echoing it and refuses to create a second administrator. `composer run setup` installs dependencies, generates the application key, runs migrations and seeds the example dental services in the configured database, then installs/builds front-end dependencies. The existing SQLite database is kept as a backup; it is not removed by the MySQL migration.
 
 In a second terminal, run the web server:
 
@@ -32,7 +42,7 @@ For appointment reminders in a local environment, run `php artisan schedule:work
 
 | Module | Main routes | Responsibility |
 | --- | --- | --- |
-| Authentication | `/login`, `/register`, `/logout` | Session login, public patient registration, throttling, and active-account enforcement |
+| Authentication | `/login`, `/register`, `/logout` | Session login, public patient registration, administrator-managed patient password resets, throttling, and active-account enforcement |
 | Portals | `/dashboard` | Role-specific patient, staff, and administrator summaries |
 | Patients | `/clinic/patients` | Patient directory, registration, profile management, and history |
 | Appointments | `/appointments` | Online requests, walk-ins, approval, rescheduling, cancellation, and status transitions |
@@ -68,7 +78,7 @@ The database enforces unique email addresses, patient numbers, service names, RF
 ### Appointment and payment flow
 
 1. A patient requests an online appointment; its initial status is `pending`. Staff or the administrator approves or rejects it.
-2. New appointment bookings are available Monday through Saturday, 10:00 AM–5:00 PM, in 10-minute increments; the clinic is closed Sundays. Staff create walk-ins for existing or newly registered patients; walk-ins are immediately placed in the day's queue. An approved appointment can also be checked in with the patient's RFID UID.
+2. New appointment bookings are available Monday through Saturday, 9:00 AM–5:00 PM, in 10-minute increments; the clinic is closed Sundays. The patient calendar highlights dates with open slots and lists only available times. Appointment slot reservations prevent concurrent duplicate bookings and are released when an appointment is cancelled, rejected, completed, or marked as a no-show. Staff create walk-ins for existing or newly registered patients; walk-ins are immediately placed in the day's queue. An approved appointment can also be checked in with the patient's RFID UID.
 3. Staff use **Patient queue** to call a waiting patient, start the visit, or mark a checked-in patient as a no-show. During consultation, an administrator enters the dental record.
 4. Once a dental record exists, staff or the administrator can create the bill during consultation. The appointment becomes `billed`; its item snapshots the service price, and billing supports discounts and partial payments.
 5. Every successful payment creates a transaction and receipt in the same database transaction. The appointment remains `billed` after payment; staff or an administrator can mark it `completed` only when the bill is itemized and fully paid. A zero-balance bill is finalized as paid when created. Overpayment change is recorded for cash. Payment and receipt records have no delete endpoint.

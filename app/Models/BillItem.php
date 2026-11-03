@@ -8,7 +8,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['bill_id', 'service_id', 'service_name', 'quantity', 'unit_price', 'subtotal'])]
+/** @property int $id */
+#[Fillable(['bill_id', 'service_id', 'service_name', 'is_add_on', 'quantity', 'unit_price', 'subtotal'])]
 class BillItem extends Model
 {
     /** @use HasFactory<BillItemFactory> */
@@ -16,7 +17,11 @@ class BillItem extends Model
 
     protected function casts(): array
     {
-        return ['unit_price' => 'decimal:2', 'subtotal' => 'decimal:2'];
+        return [
+            'is_add_on' => 'boolean',
+            'unit_price' => 'decimal:2',
+            'subtotal' => 'decimal:2',
+        ];
     }
 
     public function bill(): BelongsTo

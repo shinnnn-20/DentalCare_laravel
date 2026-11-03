@@ -3,6 +3,7 @@
 namespace Database\Factories;
 
 use App\Models\Appointment;
+use App\Models\Branch;
 use App\Models\Patient;
 use App\Models\Service;
 use App\Models\User;
@@ -22,6 +23,7 @@ class AppointmentFactory extends Factory
     {
         return [
             'patient_id' => Patient::factory(),
+            'branch_id' => Branch::query()->where('slug', 'general-trias')->value('id'),
             'service_id' => Service::factory(),
             'created_by' => User::factory()->state(['role' => 'staff']),
             'type' => 'online',
