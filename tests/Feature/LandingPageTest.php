@@ -11,7 +11,7 @@ class LandingPageTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_public_homepage_displays_clinic_details_and_active_services(): void
+    public function test_public_homepage_displays_clinic_details_and_requested_services(): void
     {
         Service::factory()->create([
             'name' => 'Clinic Catalog Cleaning',
@@ -28,22 +28,43 @@ class LandingPageTest extends TestCase
             ->assertSee('Doc Brigs Dental Care')
             ->assertSee('Book an Appointment')
             ->assertSee('href="'.route('appointments.start').'"', false)
-            ->assertSee('Clinic Catalog Cleaning')
+            ->assertSee('Oral Prophylaxis')
+            ->assertSee('Restoration')
+            ->assertSee('Extraction')
+            ->assertSee('Dentures')
+            ->assertSee('Braces')
+            ->assertSee('Surgery')
+            ->assertSee('Root Canal Therapy')
+            ->assertSee('Jacket Crowns')
+            ->assertSee('Whitening')
+            ->assertSee('Implant')
             ->assertDontSee('Inactive Clinic Service')
+            ->assertDontSee('Clinic Catalog Cleaning')
             ->assertSee('0917 160 0541')
             ->assertSee('href="tel:+639171600541"', false)
             ->assertSee('Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107')
             ->assertSee('where1=14.313687869546%2C%20120.91615498066')
             ->assertSee('target="_blank" rel="noopener noreferrer"', false)
             ->assertSee('images/landing/doc-brigs-dental-care-logo.jpg')
+            ->assertDontSee('images/landing/dental-services.jpg')
+            ->assertSee('Three convenient branches')
             ->assertSee('General Trias Branch')
+            ->assertSee('Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107')
             ->assertSee('Trece Branch')
+            ->assertSee('Dasmariñas Branch')
+            ->assertSee('Unit 8 CITRINE Bldg., Brgy. Sampaloc I (opposite side of Philippine Christian University - PCU), Dasmariñas, Philippines, 4114')
+            ->assertSee('Monday–Saturday, 8 AM–7 PM; Sunday by appointment')
+            ->assertSee('0967 284 1871')
+            ->assertSee('href="tel:+639672841871"', false)
             ->assertSee('images/landing/general-trias-treatment-room.jpg')
             ->assertSee('images/landing/general-trias-clinic-room.jpg')
             ->assertSee('images/landing/general-trias-waiting-area.jpg')
             ->assertSee('images/landing/trece-treatment-room.jpg')
             ->assertSee('images/landing/trece-clinic-team.jpg')
             ->assertSee('images/landing/trece-reception.jpg')
+            ->assertSee('images/landing/dasmarinas-exterior.jpg')
+            ->assertSee('images/landing/dasmarinas-reception.jpg')
+            ->assertSee('images/landing/dasmarinas-treatment-room.jpg')
             ->assertSee('© '.now()->year.' Doc Brigs Dental Care. All rights reserved.');
     }
 

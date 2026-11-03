@@ -16,18 +16,10 @@ use App\Http\Controllers\PayMongoTestWebhookController;
 use App\Http\Controllers\RfidController;
 use App\Http\Controllers\ServiceController;
 use App\Http\Controllers\StaffController;
-use App\Models\Service;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
-    $services = Service::query()
-        ->where('is_active', true)
-        ->orderBy('category')
-        ->orderBy('name')
-        ->limit(8)
-        ->get(['name', 'category', 'description']);
-
-    return view('landing', ['services' => $services]);
+    return view('landing');
 })->name('home');
 
 Route::get('/email/verify', [EmailVerificationController::class, 'notice'])->name('verification.notice');
