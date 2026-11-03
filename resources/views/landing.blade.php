@@ -108,6 +108,7 @@
                                 <h3 class="mt-1 text-xl font-bold text-teal-950">General Trias Branch</h3>
                                 <p class="mt-2 text-sm leading-6 text-slate-600">A welcoming clinic in General Trias, Cavite.</p>
                                 <p class="mt-3 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-600">Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107</p>
+                                <a class="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-teal-800 hover:underline" href="tel:+639171600541">0917 160 0541</a>
                             </div>
                             <a class="btn-primary self-start rounded-full px-5" href="{{ route('appointments.start') }}">Book a Visit <span class="ml-2" aria-hidden="true">→</span></a>
                         </div>
@@ -141,7 +142,6 @@
                                 <h3 class="mt-1 text-xl font-bold text-teal-950">Dasmariñas Branch</h3>
                                 <p class="mt-2 text-sm leading-6 text-slate-600">Visit our Dasmariñas clinic in Cavite.</p>
                                 <p class="mt-3 border-t border-slate-100 pt-3 text-sm leading-6 text-slate-600">Unit 8 CITRINE Bldg., Brgy. Sampaloc I (opposite side of Philippine Christian University - PCU), Dasmariñas, Philippines, 4114</p>
-                                <p class="mt-3 text-sm leading-6 text-slate-600">Monday–Saturday, 8 AM–7 PM; Sunday by appointment</p>
                                 <a class="mt-2 inline-flex min-h-11 items-center text-sm font-semibold text-teal-800 hover:underline" href="tel:+639672841871">0967 284 1871</a>
                             </div>
                             <a class="btn-primary self-start rounded-full px-5" href="{{ route('appointments.start') }}">Book a Visit <span class="ml-2" aria-hidden="true">→</span></a>
@@ -189,7 +189,7 @@
                         <a class="min-h-11 leading-6 underline decoration-emerald-400 underline-offset-4 hover:text-emerald-200" href="https://www.bing.com/maps/default.aspx?v=2&amp;pc=FACEBK&amp;mid=8100&amp;where1=14.313687869546%2C%20120.91615498066&amp;FORM=FBKPL1&amp;name=Unit%20F%202nd%20Floor%2C%20QMRC%20Building%2C%20Brookeside%20Lane%2C%20General%20Trias%2C%20Philippines%2C%204107&amp;mkt=en-US" target="_blank" rel="noopener noreferrer">Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107</a>
                     </div>
                 </div>
-                <a class="relative inline-flex min-h-12 items-center justify-center rounded-full bg-white px-6 py-3 text-sm font-bold text-teal-900 shadow-lg transition hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-teal-950" href="{{ route('appointments.start') }}">Book an Appointment <span class="ml-2" aria-hidden="true">→</span></a>
+                <a class="btn-primary relative min-h-12 rounded-full px-6 py-3 shadow-lg" href="{{ route('appointments.start') }}">Book an Appointment <span class="ml-2" aria-hidden="true">→</span></a>
             </div>
         </section>
     </main>

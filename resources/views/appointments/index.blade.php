@@ -276,12 +276,12 @@
                         <td data-label="Queue">{{ $appointment->queueEntry?->queue_number ?? '—' }}</td>
                         <td data-label="Actions"><div class="flex flex-wrap gap-2">
                             @if (auth()->user()->role === 'patient' && in_array($appointment->status, ['pending', 'approved'], true))
-                                <form method="POST" action="{{ route('appointments.transition', [$appointment, 'cancel']) }}">@csrf<button class="btn-small text-rose-700">Cancel</button></form>
+                                <form method="POST" action="{{ route('appointments.transition', [$appointment, 'cancel']) }}">@csrf<button class="btn-small">Cancel</button></form>
                             @elseif (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                 @if (in_array($appointment->status, ['pending', 'approved'], true))
                                     @if (in_array($appointment->id, $reschedulableAppointmentIds, true))
                                         <details class="min-w-0">
-                                            <summary class="btn-small cursor-pointer list-none text-teal-800">Reschedule</summary>
+                                            <summary class="btn-small cursor-pointer list-none">Reschedule</summary>
                                             <form method="POST" action="{{ route('clinic.appointments.reschedule', $appointment) }}" class="mt-2 flex min-w-0 flex-wrap gap-1" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-exclude-appointment-id="{{ $appointment->id }}">
                                                 @csrf @method('PATCH')
                                                 <input type="hidden" name="service_id" value="{{ $appointment->service_id }}">
@@ -313,7 +313,7 @@
                                                     @endforeach
                                                     </select>
                                                 </span>
-                                                <button type="submit" class="btn-small text-teal-800">Save new time</button>
+                                                <button type="submit" class="btn-small">Save new time</button>
                                             </form>
                                             <p class="hidden mt-2 text-sm font-medium text-slate-600" data-availability-message role="status" aria-live="polite"></p>
                                             <p class="mt-2 text-xs text-slate-500">Choose a branch and 30-minute slot; clinic hours are 10:00 AM–5:00 PM, with lunch from 12:00 PM–1:00 PM.</p>
@@ -333,17 +333,17 @@
                                 @endif
                                 @if (auth()->user()->hasRole('admin', 'staff'))
                                     @if ($appointment->status === 'pending')
-                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}">@csrf<button class="btn-small text-teal-800">Approve</button></form>
-                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'reject']) }}">@csrf<button class="btn-small text-rose-700">Reject</button></form>
+                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}">@csrf<button class="btn-small">Approve</button></form>
+                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'reject']) }}">@csrf<button class="btn-small">Reject</button></form>
                                     @elseif ($appointment->status === 'in_consultation')
                                         @if (auth()->user()->hasRole('admin', 'staff') && ! $appointment->dentalRecord)
-                                            <a class="btn-small text-teal-800" href="{{ route('clinic.records.create', ['appointment' => $appointment->id, ...$appointmentListFilters]) }}">Dental record</a>
+                                            <a class="btn-small" href="{{ route('clinic.records.create', ['appointment' => $appointment->id, ...$appointmentListFilters]) }}">Dental record</a>
                                         @elseif (auth()->user()->hasRole('admin', 'staff') && $appointment->dentalRecord && ! $appointment->bill)
-                                            <a class="btn-small text-teal-800" href="{{ route('clinic.bills.create', $appointment) }}">Create bill</a>
+                                            <a class="btn-small" href="{{ route('clinic.bills.create', $appointment) }}">Create bill</a>
                                         @endif
                                     @endif
                                     @if ($appointment->bill)
-                                        <a class="btn-small text-teal-800" href="{{ route('clinic.billing.index', ['bill' => $appointment->bill->id]) }}#bill-{{ $appointment->bill->id }}">View bill</a>
+                                        <a class="btn-small" href="{{ route('clinic.billing.index', ['bill' => $appointment->bill->id]) }}#bill-{{ $appointment->bill->id }}">View bill</a>
                                     @endif
                                 @endif
                             @endif
@@ -1007,11 +1007,6 @@
                     if (selectedService?.value) {
                         url.searchParams.set('service_id', selectedService.value);
                     }
-                }
-
-                if (dateInput.value && !availability[dateInput.value]) {
-                    preferredTime = '';
-                    timeSelect.value = '';
                 }
 
                 try {

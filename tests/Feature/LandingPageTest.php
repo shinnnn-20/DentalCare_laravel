@@ -50,10 +50,10 @@ class LandingPageTest extends TestCase
             ->assertSee('Three convenient branches')
             ->assertSee('General Trias Branch')
             ->assertSee('Unit F 2nd Floor, QMRC Building, Brookeside Lane, General Trias, Philippines, 4107')
+            ->assertSee('href="tel:+639171600541">0917 160 0541</a>', false)
             ->assertSee('Trece Branch')
             ->assertSee('Dasmariñas Branch')
             ->assertSee('Unit 8 CITRINE Bldg., Brgy. Sampaloc I (opposite side of Philippine Christian University - PCU), Dasmariñas, Philippines, 4114')
-            ->assertSee('Monday–Saturday, 8 AM–7 PM; Sunday by appointment')
             ->assertSee('0967 284 1871')
             ->assertSee('href="tel:+639672841871"', false)
             ->assertSee('images/landing/general-trias-treatment-room.jpg')
@@ -78,7 +78,10 @@ class LandingPageTest extends TestCase
 
         $this->get(route('login'))
             ->assertOk()
-            ->assertSee('Sign in to continue to your clinic account.');
+            ->assertSee('Sign in to continue to your clinic account.')
+            ->assertSee('class="fixed left-4 top-4 z-10 sm:left-6 sm:top-6"', false)
+            ->assertSee('class="btn-primary" href="'.route('home').'"', false)
+            ->assertSee('Back to Home');
 
         $this->post(route('login.store'), [
             'email' => $user->email,

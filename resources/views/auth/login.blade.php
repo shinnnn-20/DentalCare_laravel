@@ -3,6 +3,9 @@
 @section('title', 'Sign in')
 
 @section('content')
+    <div class="fixed left-4 top-4 z-10 sm:left-6 sm:top-6">
+        <a class="btn-primary" href="{{ route('home') }}">Back to Home</a>
+    </div>
     <section class="mx-auto max-w-lg rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
         <div class="mb-8">
             <img class="h-20 w-14 object-contain" src="{{ asset('images/landing/doc-brigs-dental-care-logo.jpg') }}" alt="Doc Brigs Dental Care logo">
