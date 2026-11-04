@@ -3,7 +3,7 @@
 @section('title', 'Audit logs')
 
 @section('content')
-    <div class="mb-8"><p class="text-sm font-medium text-teal-700">Administration</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Audit logs</h1><p class="mt-2 text-slate-500">Important activity performed by clinic accounts.</p></div>
+    <div class="mb-8"><p class="text-sm font-medium text-teal-700">{{ $isReadOnly ? 'Branch records' : 'Administration' }}</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Audit logs</h1><p class="mt-2 text-slate-500">{{ $isReadOnly ? 'Activity connected to your assigned branch.' : 'Important activity performed by clinic accounts.' }}</p></div>
     <section class="rounded-2xl border border-slate-200 bg-white">
         <form method="GET" class="grid gap-3 border-b border-slate-100 bg-slate-50/60 p-4 sm:grid-cols-2 lg:grid-cols-3">
             <label class="form-label">Search activity<input class="form-input" type="search" name="search" value="{{ request('search') }}" placeholder="User, action, record or details"></label>

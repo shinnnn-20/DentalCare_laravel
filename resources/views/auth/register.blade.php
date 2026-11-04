@@ -12,7 +12,9 @@
         </div>
         <form method="POST" action="{{ route('register.store') }}" class="grid gap-5 sm:grid-cols-2">
             @csrf
-            <label class="form-label sm:col-span-2">Full name<input class="form-input" name="name" value="{{ old('name') }}" required autocomplete="name"></label>
+            <label class="form-label sm:col-span-2">Full name<input class="form-input" name="name" value="{{ old('name') }}" maxlength="255" pattern="[\p{L}\p{M} .'-]+" title="Use letters, spaces, apostrophes, periods, or hyphens." required autocomplete="name">
+                @error('name')<span class="text-xs font-normal text-rose-700">{{ $message }}</span>@enderror
+            </label>
             <label class="form-label">Date of birth<input class="form-input" type="date" name="date_of_birth" value="{{ old('date_of_birth') }}" required></label>
             <label class="form-label">Gender
                 <select class="form-input" name="gender" required>
@@ -22,33 +24,39 @@
                     @endforeach
                 </select>
             </label>
-            <label class="form-label">Contact number<input class="form-input" name="phone" value="{{ old('phone') }}" required autocomplete="tel"></label>
-            <label class="form-label">Email<input class="form-input" type="email" name="email" value="{{ old('email') }}" required autocomplete="email"></label>
+            <label class="form-label">Contact number<input class="form-input" name="phone" value="{{ old('phone') }}" maxlength="11" pattern="[0-9]{1,11}" inputmode="numeric" title="Enter up to 11 digits." required autocomplete="tel">
+                @error('phone')<span class="text-xs font-normal text-rose-700">{{ $message }}</span>@enderror
+            </label>
+            <label class="form-label">Email<input class="form-input" type="email" name="email" value="{{ old('email') }}" maxlength="255" required autocomplete="email">
+                @error('email')<span class="text-xs font-normal text-rose-700">{{ $message }}</span>@enderror
+            </label>
             <label class="form-label sm:col-span-2">Address<textarea class="form-input" name="address" rows="2" required>{{ old('address') }}</textarea></label>
             <label class="form-label sm:col-span-2">Emergency contact <span class="font-normal text-slate-400">(optional)</span><input class="form-input" name="emergency_contact" value="{{ old('emergency_contact') }}"></label>
-            <label class="form-label">Password
-                <div class="password-input-wrap">
-                    <input class="form-input" type="password" name="password" minlength="12" required autocomplete="new-password">
-                    <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
-                            <circle cx="12" cy="12" r="3"/>
-                        </svg>
-                    </button>
-                </div>
-                <span class="text-xs font-normal text-slate-500">At least 12 characters.</span>
-            </label>
-            <label class="form-label">Confirm password
-                <div class="password-input-wrap">
-                    <input class="form-input" type="password" name="password_confirmation" required autocomplete="new-password">
-                    <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
-                            <circle cx="12" cy="12" r="3"/>
-                        </svg>
-                    </button>
-                </div>
-            </label>
+            <div class="grid gap-2 sm:col-span-2 sm:grid-cols-2">
+                <label class="form-label">Password
+                    <div class="password-input-wrap">
+                        <input class="form-input" type="password" name="password" minlength="8" required autocomplete="new-password">
+                        <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                    </div>
+                </label>
+                <label class="form-label">Confirm password
+                    <div class="password-input-wrap">
+                        <input class="form-input" type="password" name="password_confirmation" minlength="8" required autocomplete="new-password">
+                        <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                    </div>
+                </label>
+                <p class="text-xs font-normal text-slate-500 sm:col-span-2">At least 8 characters, one capital letter, and one special character.</p>
+            </div>
             <button class="btn-primary sm:col-span-2">Create patient account</button>
         </form>
     </section>

@@ -113,7 +113,7 @@ class AdditionalAppointmentServicesTest extends TestCase
         $this->assertStringContainsString('Additional Fluoride (#'.$anotherService->id.') at ₱150.00', $audit->description);
     }
 
-    public function test_add_on_service_recalculates_percentage_discount_without_changing_payment_history(): void
+    public function test_add_on_service_keeps_the_original_percentage_discount_and_full_price_without_changing_payment_history(): void
     {
         $staff = User::factory()->create(['role' => 'staff']);
         $patient = Patient::factory()->create();
@@ -147,8 +147,8 @@ class AdditionalAppointmentServicesTest extends TestCase
             'subtotal' => '1250.50',
             'discount_type' => 'percentage',
             'discount_value' => '10.00',
-            'discount' => '125.05',
-            'total' => '1125.45',
+            'discount' => '100.00',
+            'total' => '1150.50',
             'payment_status' => 'partially_paid',
         ]);
         $this->assertDatabaseHas('payments', [

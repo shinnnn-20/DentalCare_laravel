@@ -22,45 +22,30 @@ class RfidController extends Controller
         return view('rfid.patient', ['card' => $patient->rfidCard]);
     }
 
-    public function registerPatientCard(Request $request, AuditTrail $auditTrail): RedirectResponse
+    public function index(Request $request): View
     {
-        $patient = $request->user()->patient()->firstOrFail();
-        $request->merge([
-            'uid' => mb_strtoupper(trim((string) $request->input('uid'))),
-        ]);
-        $existingCard = $patient->rfidCard;
-        $data = $request->validate([
-            'uid' => ['required', 'string', 'max:100', Rule::unique('rfid_cards', 'uid')->ignore($existingCard?->id)],
-        ]);
+        $user = $request->user();
+        $isBranchDoctor = $user->hasRole('doctor');
+        abort_if($isBranchDoctor && $user->branch_id === null, 403);
 
-        DB::transaction(function () use ($request, $patient, $existingCard, $data, $auditTrail): void {
-            $card = RfidCard::updateOrCreate(
-                ['patient_id' => $patient->id],
-                [
-                    'uid' => $data['uid'],
-                    'is_active' => $existingCard?->is_active ?? true,
-                ],
-            );
-            $auditTrail->record(
-                $request->user(),
-                $existingCard === null ? 'rfid_assigned' : 'rfid_card_updated',
-                'rfid',
-                $card,
-            );
-        });
-
-        return back()->with('status', 'RFID card registered.');
-    }
-
-    public function index(): View
-    {
         return view('rfid.index', [
-            'patients' => Patient::with(['user', 'rfidCard'])->orderBy('patient_number')->paginate(20),
+            'patients' => Patient::query()
+                ->with(['user', 'rfidCard'])
+                ->when(
+                    $isBranchDoctor,
+                    fn ($query) => $query->forBranch((int) $user->branch_id),
+                )
+                ->orderBy('patient_number')
+                ->paginate(20),
+            'isReadOnly' => $isBranchDoctor,
         ]);
     }
 
     public function assign(Request $request, Patient $patient, AuditTrail $auditTrail): RedirectResponse
     {
+        $user = $request->user();
+        abort_unless($user->hasRole('admin', 'staff'), 403);
+
         $request->merge([
             'uid' => mb_strtoupper(trim((string) $request->input('uid'))),
         ]);
@@ -68,11 +53,11 @@ class RfidController extends Controller
         $wasAssigned = $card !== null;
         $data = $request->validate([
             'uid' => ['required', 'string', 'max:100', Rule::unique('rfid_cards', 'uid')->ignore($card?->id)],
-            'valid_from' => ['sometimes', 'nullable', 'date_format:Y-m-d\TH:i'],
+            'valid_from' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
             'valid_until' => [
                 'sometimes',
                 'nullable',
-                'date_format:Y-m-d\TH:i',
+                'date_format:Y-m-d',
                 Rule::when($request->filled('valid_from'), ['after:valid_from']),
             ],
             'is_active' => ['sometimes', 'boolean'],
@@ -89,7 +74,7 @@ class RfidController extends Controller
                 $cardAttributes[$validityField] = $data[$validityField] === null
                     ? null
                     : Carbon::createFromFormat(
-                        '!Y-m-d\TH:i',
+                        '!Y-m-d',
                         $data[$validityField],
                         config('clinic.timezone'),
                     );
@@ -108,8 +93,10 @@ class RfidController extends Controller
                 $card,
                 $wasAssigned
                     ? 'Status: '.$card->validityStatus().'; valid from: '
-                        .($card->valid_from?->format('Y-m-d H:i') ?? 'unrestricted')
-                        .'; valid until: '.($card->valid_until?->format('Y-m-d H:i') ?? 'no expiry')
+                        .($card->valid_from?->format('Y-m-d') ?? 'unrestricted')
+                        .'; valid until: '.($card->valid_until
+                            ? $card->valid_until->format('Y-m-d').' 00:00'
+                            : 'no expiry')
                     : null,
             );
         });
@@ -140,7 +127,21 @@ class RfidController extends Controller
 
     private function scanResult(Request $request, string $uid, bool $logScan = false): View
     {
-        $card = RfidCard::query()->with(['patient.user'])->where('uid', $uid)->first();
+        $user = $request->user();
+        $isBranchDoctor = $user->hasRole('doctor');
+        abort_if($isBranchDoctor && $user->branch_id === null, 403);
+
+        $card = RfidCard::query()
+            ->with(['patient.user'])
+            ->where('uid', $uid)
+            ->when(
+                $isBranchDoctor,
+                fn ($query) => $query->whereHas(
+                    'patient',
+                    fn ($patientQuery) => $patientQuery->forBranch((int) $user->branch_id),
+                ),
+            )
+            ->first();
         $now = now(config('clinic.timezone'));
         $cardStatus = $card?->validityStatus($now) ?? 'not_registered';
         $patient = $cardStatus === 'active' ? $card?->patient : null;
@@ -210,6 +211,13 @@ class RfidController extends Controller
             'paginationQuery' => $paginationQuery,
             'dentalRecords' => $patient?->dentalRecords()
                 ->with(['appointment.service', 'appointment.services'])
+                ->when(
+                    $isBranchDoctor,
+                    fn ($query) => $query->whereHas(
+                        'appointment',
+                        fn ($appointmentQuery) => $appointmentQuery->where('branch_id', $user->branch_id),
+                    ),
+                )
                 ->when($filters['record_search'] ?? null, function ($query, string $search): void {
                     $query->where(function ($query) use ($search): void {
                         $query->where('diagnosis', 'like', '%'.$search.'%')

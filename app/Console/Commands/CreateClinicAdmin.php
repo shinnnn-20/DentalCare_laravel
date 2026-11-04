@@ -7,6 +7,7 @@ use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rules\Password;
 
 #[Signature('clinic:create-admin {name} {email}')]
 #[Description('Create the clinic owner account when no administrator exists')]
@@ -32,10 +33,14 @@ class CreateClinicAdmin extends Command
             return self::FAILURE;
         }
 
-        $password = $this->secret('Administrator password (minimum 12 characters)');
+        $password = $this->secret('Administrator password (minimum 8 characters, one capital letter, and one special character)');
+        $passwordValidator = Validator::make(
+            ['password' => $password],
+            ['password' => ['required', 'string', Password::defaults()]],
+        );
 
-        if (! is_string($password) || mb_strlen($password) < 12) {
-            $this->components->error('The administrator password must be at least 12 characters.');
+        if ($passwordValidator->fails()) {
+            $this->components->error($passwordValidator->errors()->first('password'));
 
             return self::FAILURE;
         }

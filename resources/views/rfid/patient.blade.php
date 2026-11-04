@@ -6,7 +6,7 @@
     <div class="mb-8">
         <p class="text-sm font-medium text-teal-700">Patient portal</p>
         <h1 class="mt-1 text-3xl font-bold tracking-tight">My RFID card</h1>
-        <p class="mt-2 text-slate-500">Register your card UID so clinic staff can identify you at check-in.</p>
+        <p class="mt-2 text-slate-500">View the RFID card linked to your account.</p>
     </div>
 
     <section class="max-w-2xl rounded-2xl border border-slate-200 bg-white p-6">
@@ -20,17 +20,9 @@
                     <p class="mt-1 text-sm text-slate-600">Valid until: {{ $card->valid_until->format('M j, Y g:i A') }}</p>
                 @endif
             </div>
-            <p class="mb-4 text-sm text-slate-600">Registering a replacement UID immediately changes which card is linked to your account. The clinic manages card validity and activation.</p>
+            <p class="text-sm text-slate-600">Card registration, replacement, and activation are managed by clinic staff. Contact the clinic if you need assistance.</p>
         @else
-            <p class="mb-4 text-sm text-slate-600">No RFID card is linked to your account yet. Scan or enter the UID printed on your card.</p>
+            <p class="text-sm text-slate-600">No RFID card is currently linked to your account. Contact clinic staff if you need a card registered.</p>
         @endif
-
-        <form method="POST" action="{{ route('patient.rfid.store') }}" class="grid gap-4">
-            @csrf
-            <label class="form-label">RFID UID
-                <input class="form-input" name="uid" value="{{ old('uid', $card?->uid) }}" maxlength="100" placeholder="Scan or enter UID" autocomplete="off" required>
-            </label>
-            <button class="btn-primary w-full sm:w-auto">{{ $card ? 'Update registered card' : 'Register RFID card' }}</button>
-        </form>
     </section>
 @endsection

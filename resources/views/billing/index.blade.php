@@ -3,11 +3,8 @@
 @section('title', 'Billing and payments')
 
 @section('content')
-    @if ($errors->has('checkout'))
-        <div class="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800" role="alert">{{ $errors->first('checkout') }}</div>
-    @endif
     <div class="mb-8 flex flex-wrap items-end justify-between gap-4 print-hidden">
-        <div><p class="text-sm font-medium text-teal-700">Clinic operations</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Billing & payments</h1><p class="mt-2 text-slate-500">Record transactions and issue an acknowledgement receipt for each payment.</p></div>
+        <div><p class="text-sm font-medium text-teal-700">{{ $isReadOnly ? 'Branch records' : 'Clinic operations' }}</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Billing & payments</h1><p class="mt-2 text-slate-500">{{ $isReadOnly ? 'View bills and payment history for appointments at your assigned branch.' : 'Record transactions and issue an acknowledgement receipt for each payment.' }}</p></div>
         <button class="btn-secondary gap-2" type="button" data-print-all-bills>
             🖨 Print All
         </button>
@@ -17,7 +14,7 @@
         ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.
     </p>
     <section class="rounded-2xl border border-slate-200 bg-white">
-        <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Bill</th><th>Patient</th><th>Services</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Action</th><th>Record payment</th></tr></thead><tbody>
+        <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Bill</th><th>Patient</th><th>Services</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th>@unless ($isReadOnly)<th>Action</th>@endunless<th>{{ $isReadOnly ? 'Payment history' : 'Record payment' }}</th></tr></thead><tbody>
             @forelse ($bills as $bill)
                 @php($paid = (float) $bill->payments->sum('applied_amount'))
                 @php($balance = max(0, (float) $bill->total - $paid))
@@ -48,13 +45,16 @@
                     </td>
                     <td data-label="Total">₱{{ number_format((float) $bill->total, 2) }}<span class="mt-1 block text-xs text-slate-500">{{ $bill->discountLabel() }}: ₱{{ number_format((float) $bill->discount, 2) }}</span></td><td data-label="Paid">₱{{ number_format($paid, 2) }}</td><td data-label="Balance">₱{{ number_format($balance, 2) }}</td>
                     <td data-label="Status"><span class="status-badge capitalize">{{ str_replace('_', ' ', $bill->payment_status) }}</span></td>
+                    @unless ($isReadOnly)
                     <td data-label="Action">
                         <button class="btn-small whitespace-nowrap" type="button" data-print-bill="bill-print-{{ $bill->id }}">🖨 Print Bill</button>
                         @if ($bill->appointment && in_array($bill->appointment->status, ['billed', 'completed'], true))
                             <a class="btn-small mt-2 whitespace-nowrap" href="{{ route('clinic.bills.additional-services.create', $bill) }}">Add services</a>
                         @endif
                     </td>
-                    <td data-label="Record payment" class="min-w-80">
+                    @endunless
+                    <td data-label="{{ $isReadOnly ? 'Payment history' : 'Record payment' }}" class="min-w-80">
+                        @unless ($isReadOnly)
                         @if ($bill->payMongoBillCheckouts->contains('status', 'review'))
                             <p class="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
                                 A PayMongo test payment was confirmed, but could not be safely applied. Review this payment before starting another checkout.
@@ -90,6 +90,7 @@
                                 <button class="btn-secondary justify-self-start">Record payment</button>
                             </form>
                         @endif
+                        @endunless
                         @if ($bill->payments->isNotEmpty())
                             <div class="mt-3 space-y-2 border-t border-slate-100 pt-3">
                                 <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Payment history</p>
@@ -117,11 +118,13 @@
                         @endif
                     </td>
                 </tr>
-            @empty<tr><td colspan="9" class="py-10 text-center text-slate-500">No bills yet. Create a bill from an appointment during consultation.</td></tr>@endforelse
+            @empty<tr><td colspan="{{ $isReadOnly ? 8 : 9 }}" class="py-10 text-center text-slate-500">No bills yet. Create a bill from an appointment during consultation.</td></tr>@endforelse
         </tbody></table></div>
         <div class="p-4">{{ $bills->links() }}</div>
     </section>
-    <p class="mt-4 text-sm text-slate-500">Manual cash, GCash, and other entries do not charge an external payment. PayMongo test checkouts are available to staff and admins in local test mode only; confirmed test payments are included in bill balances and reports, and are labeled TEST MODE because no real money is transferred.</p>
+    @unless ($isReadOnly)
+        <p class="mt-4 text-sm text-slate-500">Manual cash, GCash, and other entries do not charge an external payment. PayMongo test checkouts are available to staff and admins in local test mode only; confirmed test payments are included in bill balances and reports, and are labeled TEST MODE because no real money is transferred.</p>
+    @endunless
 
     <section class="billing-print-report" data-billing-print-report data-print-all-page aria-label="Printable billing report">
         <header class="billing-print-header">
@@ -228,6 +231,7 @@
                 <div><span>Date</span><strong>{{ $bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y') }}</strong></div>
                 <div><span>Patient</span><strong>{{ $bill->patient->user->name }}</strong></div>
                 <div><span>Patient ID</span><strong>{{ $bill->patient->patient_number }}</strong></div>
+                <div><span>Bill processed by</span><strong>{{ $bill->creator?->name ?? 'Clinic system' }}</strong></div>
             </section>
 
             @if ($bill->items->isNotEmpty())
@@ -365,7 +369,10 @@
                 document.querySelectorAll('[data-print-bill], [data-print-all-bills]').forEach((button) => {
                     button.disabled = false;
                 });
-                window.alert('The clinic logo could not be loaded, so the document was not printed. Please try again.');
+                window.showAppAlert('The clinic logo could not be loaded, so the document was not printed. Please try again.', {
+                    title: 'Unable to print',
+                    variant: 'error',
+                });
             }
 
             return true;

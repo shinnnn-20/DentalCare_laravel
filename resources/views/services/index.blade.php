@@ -9,7 +9,7 @@
         <p class="mt-2 max-w-2xl text-slate-500">Review clinic treatments and pricing. Reference fees are estimates; treatments requiring confirmation need a final staff-confirmed amount before billing.</p>
     </div>
 
-    @if (auth()->user()->role === 'admin')
+    @if (auth()->user()->hasRole('admin'))
         <section class="mb-7 overflow-hidden rounded-3xl border border-teal-100 bg-white shadow-sm">
             <div class="flex items-start gap-3 border-b border-teal-100 bg-teal-50/70 px-5 py-4 sm:px-6">
                 <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-700 text-lg font-bold text-white" aria-hidden="true">+</span>
@@ -75,12 +75,12 @@
                 @foreach ($services as $service)
                     <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                         @php($displayPrice = $service->requires_price_confirmation && $service->price_display ? $service->price_display : config('clinic.currency_symbol').number_format((float) $service->price, 2))
-                        <div class="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
+                        <div class="grid min-w-0 gap-3 border-b border-slate-100 p-5">
                             <div class="min-w-0">
                                 <p class="text-xs font-semibold uppercase tracking-wide text-teal-700">Dental treatment</p>
                                 <h3 class="mt-1 break-words text-lg font-semibold text-slate-900">{{ $service->name }}</h3>
                             </div>
-                            <span class="shrink-0 rounded-xl bg-teal-50 px-3 py-2 text-sm font-bold text-teal-900">{{ $service->requires_price_confirmation ? 'Reference: ' : '' }}{{ $displayPrice }}</span>
+                            <span class="inline-flex max-w-full whitespace-normal break-words rounded-xl bg-teal-50 px-3 py-2 text-sm font-bold text-teal-900">{{ $service->requires_price_confirmation ? 'Reference: ' : '' }}{{ $displayPrice }}</span>
                         </div>
                         <div class="grid gap-4 p-5">
                             <div class="flex items-center justify-between gap-3">
@@ -96,7 +96,7 @@
                                 <p class="text-xs font-medium text-amber-800">Final amount must be confirmed by staff when the bill is created.</p>
                             @endif
 
-                            @if (auth()->user()->role === 'admin')
+                            @if (auth()->user()->hasRole('admin'))
                                 <details class="border-t border-slate-100 pt-4">
                                     <summary class="cursor-pointer text-sm font-semibold text-teal-800 hover:text-teal-950">Edit service details</summary>
                                     <form method="POST" action="{{ route('admin.services.update', $service) }}" class="mt-4 grid gap-3">

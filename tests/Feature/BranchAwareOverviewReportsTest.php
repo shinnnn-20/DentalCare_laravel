@@ -86,7 +86,7 @@ class BranchAwareOverviewReportsTest extends TestCase
             ->assertJsonPath('revenue_total', '₱0.00');
     }
 
-    public function test_doctors_can_view_revenue_reports_limited_to_their_assigned_branch(): void
+    public function test_doctors_cannot_view_today_revenue_or_reports(): void
     {
         $this->travelTo(Carbon::parse('2026-11-03 12:00:00', config('clinic.timezone')));
         $branch = Branch::factory()->create(['name' => 'Doctor Branch']);
@@ -118,57 +118,36 @@ class BranchAwareOverviewReportsTest extends TestCase
         $this->actingAs($doctor)
             ->get(route('dashboard'))
             ->assertOk()
-            ->assertSee("Today's revenue")
-            ->assertSee('Filter by Branch')
-            ->assertSee('Patient name or ID');
+            ->assertDontSee("Today's revenue");
 
         $this->get(route('dashboard.details', ['metric' => 'today_revenue']))
-            ->assertOk()
-            ->assertJsonPath('total', 1)
-            ->assertJsonPath('revenue_total', '₱125.00')
-            ->assertJsonPath('records.0.branch', 'Doctor Branch');
-        $this->getJson(route('dashboard.details', [
-            'metric' => 'today_revenue',
-            'branch_id' => $otherBranch->id,
-        ]))
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('branch_id');
+            ->assertForbidden();
 
         $this->get(route('admin.reports', [
             'from' => '2026-11-03',
             'to' => '2026-11-03',
-        ]))
-            ->assertOk()
-            ->assertSee('Reports')
-            ->assertSee('Patient name or ID')
-            ->assertDontSee('Other Branch')
-            ->assertViewHas('selectedBranchName', 'Doctor Branch')
-            ->assertViewHas('revenue', 125);
+        ]))->assertForbidden();
 
         $this->get(route('admin.reports', [
             'from' => '2026-11-03',
             'to' => '2026-11-03',
             'branch_id' => $otherBranch->id,
-        ]))
-            ->assertSessionHasErrors('branch_id');
+        ]))->assertForbidden();
 
         $this->get(route('admin.reports.details', [
             'metric' => 'revenue',
             'from' => '2026-11-03',
             'to' => '2026-11-03',
-        ]))
-            ->assertOk()
-            ->assertJsonPath('total', 1)
-            ->assertJsonPath('records.0.branch', 'Doctor Branch');
+        ]))->assertForbidden();
 
         $this->getJson(route('admin.reports.details', [
             'metric' => 'revenue',
             'from' => '2026-11-03',
             'to' => '2026-11-03',
             'branch_id' => $otherBranch->id,
-        ]))
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('branch_id');
+        ]))->assertForbidden();
+
+        $this->get(route('admin.audit-logs'))->assertForbidden();
     }
 
     public function test_overview_and_reports_filter_appointments_revenue_and_print_branch_context(): void

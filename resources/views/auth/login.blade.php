@@ -30,6 +30,9 @@
                         </button>
                     </div>
                 </label>
+                <div class="-mt-3 text-right">
+                    <a class="text-sm font-semibold text-teal-800 hover:underline" href="{{ route('password.request') }}">Forgot password?</a>
+                </div>
                 <button class="btn-primary w-full">Sign in</button>
             </form>
             <p class="mt-6 text-center text-sm text-slate-500">New patient? <a class="font-semibold text-teal-800 hover:underline" href="{{ route('register') }}">Create an account</a></p>

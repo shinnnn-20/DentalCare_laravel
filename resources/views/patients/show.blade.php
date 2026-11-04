@@ -20,7 +20,25 @@
     <div class="mt-5 grid gap-5 lg:grid-cols-[1fr_2fr]">
         <section class="rounded-2xl border border-slate-200 bg-white p-5">
             <h2 class="font-semibold">Patient information</h2>
-            @if ($patient->user->is_active)
+            <dl class="mt-4 grid gap-4 text-sm sm:grid-cols-2">
+                <div>
+                    <dt class="font-medium text-slate-500">Date of birth</dt>
+                    <dd class="mt-1">{{ $patient->date_of_birth?->format('M j, Y') ?? 'Not provided' }}</dd>
+                </div>
+                <div>
+                    <dt class="font-medium text-slate-500">Gender</dt>
+                    <dd class="mt-1">{{ ucfirst(str_replace('_', ' ', $patient->gender ?? 'Not provided')) }}</dd>
+                </div>
+                <div>
+                    <dt class="font-medium text-slate-500">Address</dt>
+                    <dd class="mt-1 break-words">{{ $patient->address ?: 'Not provided' }}</dd>
+                </div>
+                <div>
+                    <dt class="font-medium text-slate-500">Emergency contact</dt>
+                    <dd class="mt-1">{{ $patient->emergency_contact ?: 'Not provided' }}</dd>
+                </div>
+            </dl>
+            @if ($patient->user->is_active && auth()->user()->hasRole('admin', 'staff', 'doctor'))
                 <form method="POST" action="{{ route('clinic.patients.update', $patient) }}" class="mt-4 grid gap-3">
                 @csrf @method('PUT')
                 <label class="form-label">Full name<input class="form-input" name="name" value="{{ $patient->user->name }}" required></label>
@@ -36,14 +54,14 @@
                     <form method="POST" action="{{ route('clinic.patients.password', $patient) }}" class="mt-6 grid gap-3 border-t border-slate-100 pt-5">
                         @csrf @method('PUT')
                         <h3 class="font-semibold">Reset patient password</h3>
-                        <p class="text-sm text-slate-500">Choose a new password of at least 12 characters and share it with the patient securely.</p>
-                        <label class="form-label">New password<input class="form-input" type="password" name="password" minlength="12" autocomplete="new-password" required></label>
+                        <p class="text-sm text-slate-500">Choose a password with at least 8 characters, one capital letter, and one special character, then share it with the patient securely.</p>
+                        <label class="form-label">New password<input class="form-input" type="password" name="password" minlength="8" autocomplete="new-password" required></label>
                         <label class="form-label">Confirm new password<input class="form-input" type="password" name="password_confirmation" autocomplete="new-password" required></label>
                         <button class="btn-secondary justify-self-start">Reset password</button>
                     </form>
                 @endif
             @endif
-            @if ($patient->user->is_active)
+            @if ($patient->user->is_active && auth()->user()->hasRole('admin', 'staff'))
                 <form method="POST" action="{{ route('clinic.patients.destroy', $patient) }}" class="mt-6 grid gap-3 border-t border-rose-100 pt-5">
                     @csrf @method('DELETE')
                     <h3 class="font-semibold text-rose-800">Remove patient access</h3>

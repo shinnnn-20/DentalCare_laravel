@@ -97,7 +97,7 @@
                         <label class="form-label">To date
                             <input class="form-input date-time-input" type="date" name="record_until" value="{{ $filters['record_until'] ?? '' }}">
                         </label>
-                        <div class="flex flex-wrap items-end gap-3 sm:col-span-2">
+                        <div class="flex flex-wrap items-center gap-3 sm:col-span-2">
                             <button class="btn-secondary">Filter records</button>
                             <a class="text-sm font-semibold text-teal-800 hover:underline" href="{{ route('clinic.rfid.scan', array_filter([
                                 'uid' => $uid,
@@ -159,7 +159,7 @@
                         <label class="form-label">To date
                             <input class="form-input date-time-input" type="date" name="appointment_until" value="{{ $filters['appointment_until'] ?? '' }}">
                         </label>
-                        <div class="flex flex-wrap items-end gap-3 sm:col-span-2">
+                        <div class="flex flex-wrap items-center gap-3 sm:col-span-2">
                             <button class="btn-secondary">Filter appointments</button>
                             <a class="text-sm font-semibold text-teal-800 hover:underline" href="{{ route('clinic.rfid.scan', array_filter([
                                 'uid' => $uid,
@@ -200,7 +200,7 @@
                     @endif
                     @endif
                     <p class="mt-3 text-sm text-slate-600">Use Check in on an approved appointment to add the patient to the clinic queue.</p>
-                    @if (auth()->user()->hasRole('admin', 'staff'))
+                    @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                         <a class="mt-4 inline-flex text-sm font-semibold text-teal-800 hover:underline" href="{{ route('clinic.patients.show', $patient) }}">Open patient profile →</a>
                     @endif
                 </div>

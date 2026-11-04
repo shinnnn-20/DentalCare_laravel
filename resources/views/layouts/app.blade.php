@@ -42,18 +42,9 @@
             </aside>
             <main class="min-w-0 px-4 py-5 sm:px-8 sm:py-6 lg:px-10">
                 <div class="mx-auto w-full max-w-screen-2xl">
-                @if (auth()->user()->hasRole('admin', 'staff'))
+                @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                     <div @class(['mb-5 flex justify-end', 'print-hidden' => request()->routeIs('admin.reports')])>
                         @include('layouts.clinic-notifications')
-                    </div>
-                @endif
-                @if (session('status'))
-                    <div class="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800" role="status">{{ session('status') }}</div>
-                @endif
-                @if ($errors->any())
-                    <div class="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800" role="alert">
-                        <p class="font-semibold">Please correct the following:</p>
-                        <ul class="mt-2 list-inside list-disc">@foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul>
                     </div>
                 @endif
                 @yield('content')
@@ -62,16 +53,41 @@
         </div>
     @else
         <main class="min-h-screen px-4 py-10">
-            @if (session('status'))
-                <div class="mx-auto mb-6 max-w-lg rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{{ session('status') }}</div>
-            @endif
-            @if ($errors->any())
-                <div class="mx-auto mb-6 max-w-lg rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800" role="alert">
-                    <ul class="list-inside list-disc">@foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul>
-                </div>
-            @endif
             @yield('content')
         </main>
     @endauth
+
+    @if ($errors->any())
+        <template data-app-initial-modal data-modal-title="Please correct the following" data-modal-variant="error">
+            <ul class="list-inside list-disc space-y-1">
+                @foreach ($errors->all() as $error)
+                    <li>{{ $error }}</li>
+                @endforeach
+            </ul>
+        </template>
+    @elseif (session('status'))
+        <template data-app-initial-modal data-modal-title="Notification" data-modal-variant="success">
+            <p>{{ session('status') }}</p>
+        </template>
+    @endif
+
+    <dialog
+        id="app-message-modal"
+        class="m-auto w-[min(28rem,calc(100vw-2rem))] max-w-none rounded-2xl border border-slate-200 bg-white p-0 text-slate-800 shadow-2xl backdrop:bg-slate-950/50 backdrop:backdrop-blur-sm"
+        aria-labelledby="app-modal-title"
+        aria-describedby="app-modal-message"
+    >
+        <div class="flex items-start gap-4 p-6">
+            <span class="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-teal-50 text-lg font-bold text-teal-800" aria-hidden="true" data-modal-icon>i</span>
+            <div class="min-w-0 flex-1">
+                <h2 class="text-lg font-semibold text-slate-900" id="app-modal-title" data-modal-title>Notice</h2>
+                <div class="mt-2 max-h-[50vh] overflow-y-auto text-sm leading-6 text-slate-600" id="app-modal-message" data-modal-message></div>
+            </div>
+        </div>
+        <div class="flex justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
+            <button class="btn-secondary" type="button" data-modal-cancel hidden>Cancel</button>
+            <button class="btn-primary min-w-20 justify-center" type="button" data-modal-confirm>OK</button>
+        </div>
+    </dialog>
 </body>
 </html>

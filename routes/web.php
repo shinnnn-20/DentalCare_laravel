@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AccountPasswordController;
 use App\Http\Controllers\AdditionalServiceController;
 use App\Http\Controllers\AppointmentAvailabilityController;
 use App\Http\Controllers\AppointmentController;
@@ -59,6 +60,14 @@ Route::middleware('guest')->group(function (): void {
     Route::post('/login', [AuthController::class, 'authenticate'])->middleware('throttle:5,1')->name('login.store');
     Route::get('/register', [AuthController::class, 'register'])->name('register');
     Route::post('/register', [AuthController::class, 'storePatient'])->middleware('throttle:5,1')->name('register.store');
+    Route::get('/forgot-password', [AuthController::class, 'requestPasswordReset'])->name('password.request');
+    Route::post('/forgot-password', [AuthController::class, 'sendPasswordResetLink'])
+        ->middleware('throttle:5,1')
+        ->name('password.email');
+    Route::get('/reset-password/{token}', [AuthController::class, 'resetPasswordForm'])->name('password.reset');
+    Route::post('/reset-password', [AuthController::class, 'resetPassword'])
+        ->middleware('throttle:5,1')
+        ->name('password.update');
 });
 
 Route::get('/appointments/start', [AuthController::class, 'appointmentBooking'])->name('appointments.start');
@@ -82,7 +91,6 @@ Route::middleware(['auth', 'active'])->group(function (): void {
 
     Route::middleware('role:patient')->group(function (): void {
         Route::get('/my/rfid', [RfidController::class, 'patientCard'])->name('patient.rfid.index');
-        Route::post('/my/rfid', [RfidController::class, 'registerPatientCard'])->name('patient.rfid.store');
         Route::get('/my/dental-records', [ClinicWorkflowController::class, 'records'])->name('patient.records');
         Route::get('/my/billing', [ClinicWorkflowController::class, 'patientBilling'])->name('patient.billing');
         Route::get('/my/billing/{bill}/receipts/{receipt}/preview', [PaymentController::class, 'showPatientReceiptPreview'])
@@ -90,22 +98,30 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::get('/my/notifications', [ClinicWorkflowController::class, 'patientNotifications'])->name('patient.notifications');
     });
 
-    Route::prefix('clinic')->name('clinic.')->middleware('role:admin,staff')->group(function (): void {
+    Route::prefix('clinic')->name('clinic.')->middleware('role:admin,staff,doctor')->group(function (): void {
+        Route::get('/appointment-records', [AppointmentController::class, 'index'])->name('appointment-records');
+        Route::get('/patients', [PatientController::class, 'index'])->name('patients.index');
+        Route::get('/patients/create', [PatientController::class, 'create'])
+            ->middleware('role:admin,staff,doctor')
+            ->name('patients.create');
+        Route::get('/patients/{patient}', [PatientController::class, 'show'])->name('patients.show');
+        Route::get('/services', [ServiceController::class, 'index'])->name('services.index');
+        Route::get('/billing', [ClinicWorkflowController::class, 'billing'])->name('billing.index');
+        Route::get('/rfid', [RfidController::class, 'index'])->name('rfid.index');
+    });
+
+    Route::prefix('clinic')->name('clinic.')->middleware('role:admin,staff,doctor')->group(function (): void {
         Route::get('/notifications', [ClinicNotificationController::class, 'index'])->name('notifications.index');
         Route::post('/notifications/read-all', [ClinicNotificationController::class, 'markAllAsRead'])->name('notifications.read-all');
         Route::post('/notifications/{notification}/open', [ClinicNotificationController::class, 'open'])->name('notifications.open');
-        Route::get('/appointment-records', [AppointmentController::class, 'index'])->name('appointment-records');
-        Route::get('/patients/create', [PatientController::class, 'create'])->name('patients.create');
         Route::post('/patients', [PatientController::class, 'store'])->name('patients.store');
-        Route::get('/patients', [PatientController::class, 'index'])->name('patients.index');
-        Route::get('/patients/{patient}', [PatientController::class, 'show'])->name('patients.show');
         Route::put('/patients/{patient}', [PatientController::class, 'update'])->name('patients.update');
-        Route::delete('/patients/{patient}', [PatientController::class, 'destroy'])->name('patients.destroy');
+        Route::delete('/patients/{patient}', [PatientController::class, 'destroy'])
+            ->middleware('role:admin,staff')
+            ->name('patients.destroy');
         Route::put('/patients/{patient}/password', [PatientController::class, 'resetPassword'])
             ->middleware('role:admin')
             ->name('patients.password');
-        Route::get('/services', [ServiceController::class, 'index'])->name('services.index');
-        Route::get('/billing', [ClinicWorkflowController::class, 'billing'])->name('billing.index');
         Route::get('/bills/{bill}/additional-services', [AdditionalServiceController::class, 'create'])
             ->name('bills.additional-services.create');
         Route::post('/bills/{bill}/additional-services', [AdditionalServiceController::class, 'store'])
@@ -117,8 +133,9 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/paymongo-bill-checkouts/{checkout}/reconcile', [PayMongoBillCheckoutController::class, 'reconcile'])
             ->middleware('throttle:5,1')
             ->name('billing.paymongo.reconcile');
-        Route::get('/rfid', [RfidController::class, 'index'])->name('rfid.index');
-        Route::post('/patients/{patient}/rfid', [RfidController::class, 'assign'])->name('rfid.assign');
+        Route::post('/patients/{patient}/rfid', [RfidController::class, 'assign'])
+            ->middleware('role:admin,staff')
+            ->name('rfid.assign');
         Route::get('/appointments/{appointment}/bill', [ClinicWorkflowController::class, 'createBill'])->name('bills.create');
         Route::post('/appointments/{appointment}/bill', [ClinicWorkflowController::class, 'storeBill'])->name('bills.store');
     });
@@ -140,24 +157,46 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::patch('/appointment-availability/{availabilityBlock}', [AppointmentAvailabilityController::class, 'update'])
             ->name('availability.update');
         Route::delete('/appointment-availability/{availabilityBlock}', [AppointmentAvailabilityController::class, 'destroy'])
-            ->middleware('role:admin,staff')
+            ->middleware('role:admin,staff,doctor')
             ->name('availability.destroy');
     });
 
-    Route::prefix('admin')->name('admin.')->middleware('role:admin,doctor')->group(function (): void {
+    Route::prefix('admin')->name('admin.')->middleware('role:admin')->group(function (): void {
         Route::get('/reports', [ClinicWorkflowController::class, 'reports'])->name('reports');
         Route::get('/reports/details', [ClinicWorkflowController::class, 'reportDetails'])->name('reports.details');
     });
 
-    Route::prefix('admin')->name('admin.')->middleware('role:admin')->group(function (): void {
+    Route::middleware('role:staff,doctor')->prefix('account')->name('account.')->group(function (): void {
+        Route::get('/password', [AccountPasswordController::class, 'edit'])->name('password.edit');
+        Route::put('/password', [AccountPasswordController::class, 'update'])
+            ->middleware('throttle:5,1')
+            ->name('password.update');
+    });
+
+    Route::prefix('admin')->name('admin.')->middleware('role:admin,doctor')->group(function (): void {
         Route::get('/staff', [StaffController::class, 'index'])->name('staff.index');
-        Route::post('/staff', [StaffController::class, 'store'])->name('staff.store');
-        Route::patch('/staff/{staff}/branch', [StaffController::class, 'updateBranch'])->name('staff.branch.update');
         Route::patch('/staff/{staff}/toggle', [StaffController::class, 'toggle'])->name('staff.toggle');
+        Route::patch('/staff/{staff}', [StaffController::class, 'update'])->name('staff.update');
         Route::put('/staff/{staff}/password', [StaffController::class, 'resetPassword'])->name('staff.password');
+    });
+
+    Route::prefix('admin')->name('admin.')->middleware('role:admin')->group(function (): void {
+        Route::get('/audit-logs', [ClinicWorkflowController::class, 'auditLogs'])->name('audit-logs');
+    });
+
+    Route::prefix('admin')->name('admin.')->middleware('role:admin,doctor')->group(function (): void {
+        Route::get('/sms-logs', [ClinicWorkflowController::class, 'smsLogs'])->name('sms-logs');
+    });
+
+    Route::prefix('admin')->name('admin.')->middleware('role:admin,doctor')->group(function (): void {
+        Route::post('/staff', [StaffController::class, 'store'])->name('staff.store');
+    });
+
+    Route::prefix('admin')->name('admin.')->middleware('role:admin')->group(function (): void {
         Route::post('/services', [ServiceController::class, 'store'])->name('services.store');
         Route::put('/services/{service}', [ServiceController::class, 'update'])->name('services.update');
-        Route::get('/audit-logs', [ClinicWorkflowController::class, 'auditLogs'])->name('audit-logs');
-        Route::get('/sms-logs', [ClinicWorkflowController::class, 'smsLogs'])->name('sms-logs');
+    });
+    Route::prefix('admin')->name('admin.')->middleware('role:admin')->group(function (): void {
+        Route::patch('/staff/{staff}/branch', [StaffController::class, 'updateBranch'])->name('staff.branch.update');
     });
 });

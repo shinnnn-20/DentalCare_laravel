@@ -1,4 +1,112 @@
 document.addEventListener('DOMContentLoaded', () => {
+    const modal = document.querySelector('#app-message-modal');
+    const modalTitle = modal.querySelector('[data-modal-title]');
+    const modalMessage = modal.querySelector('[data-modal-message]');
+    const modalIcon = modal.querySelector('[data-modal-icon]');
+    const modalCancel = modal.querySelector('[data-modal-cancel]');
+    const modalConfirm = modal.querySelector('[data-modal-confirm]');
+    let resolveModal;
+    let modalQueue = Promise.resolve();
+
+    modal.addEventListener('close', () => {
+        if (resolveModal) {
+            resolveModal(modal.returnValue === 'confirm');
+            resolveModal = null;
+        }
+    });
+
+    modalConfirm.addEventListener('click', () => modal.close('confirm'));
+    modalCancel.addEventListener('click', () => modal.close('cancel'));
+
+    const showModal = ({
+        title = 'Notice',
+        message = '',
+        variant = 'info',
+        confirmation = false,
+        confirmLabel = 'OK',
+        cancelLabel = 'Cancel',
+        content = null,
+    }) => {
+        const result = modalQueue.then(() => new Promise((resolve) => {
+            modal.dataset.variant = variant;
+            modal.dataset.confirmation = confirmation ? 'true' : 'false';
+            modalTitle.textContent = title;
+            modalIcon.textContent = variant === 'success' ? '+' : variant === 'error' ? '!' : confirmation ? '?' : 'i';
+            modalMessage.replaceChildren();
+            if (content) {
+                modalMessage.append(content.cloneNode(true));
+            } else {
+                modalMessage.textContent = message;
+            }
+            modalCancel.hidden = !confirmation;
+            modalCancel.textContent = cancelLabel;
+            modalConfirm.textContent = confirmLabel;
+            modal.setAttribute('role', confirmation || variant === 'error' ? 'alertdialog' : 'dialog');
+            resolveModal = resolve;
+            modal.showModal();
+            modalConfirm.focus();
+        }));
+
+        modalQueue = result.then(() => undefined, () => undefined);
+
+        return result;
+    };
+
+    window.showAppAlert = (message, options = {}) => showModal({
+        ...options,
+        message,
+    });
+    window.showAppConfirm = (message, options = {}) => showModal({
+        ...options,
+        message,
+        confirmation: true,
+        confirmLabel: options.confirmLabel ?? 'Confirm',
+    });
+
+    document.addEventListener('submit', (event) => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || !form.hasAttribute('data-confirm')) {
+            return;
+        }
+
+        if (form.dataset.confirmSkip === 'true') {
+            delete form.dataset.confirmSkip;
+            return;
+        }
+
+        event.preventDefault();
+        if (form.dataset.confirmPending === 'true') {
+            return;
+        }
+
+        form.dataset.confirmPending = 'true';
+        window.showAppConfirm(form.dataset.confirm, {
+            title: form.dataset.confirmTitle ?? 'Please confirm',
+            confirmLabel: form.dataset.confirmAccept ?? 'Confirm',
+            variant: form.dataset.confirmVariant ?? 'warning',
+        }).then((confirmed) => {
+            delete form.dataset.confirmPending;
+
+            if (confirmed && form.isConnected) {
+                form.dataset.confirmSkip = 'true';
+                if (event.submitter) {
+                    form.requestSubmit(event.submitter);
+                } else {
+                    form.requestSubmit();
+                }
+            }
+        });
+    });
+
+    const initialModal = document.querySelector('template[data-app-initial-modal]');
+    if (initialModal) {
+        showModal({
+            title: initialModal.dataset.modalTitle,
+            variant: initialModal.dataset.modalVariant,
+            content: initialModal.content,
+        });
+    }
+
     const moneyInputs = Array.from(document.querySelectorAll('[data-money-input]'));
 
     const formatMoneyInput = (input) => {

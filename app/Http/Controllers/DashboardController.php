@@ -43,9 +43,11 @@ class DashboardController extends Controller
             ]);
         }
 
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
+
         $today = today(config('clinic.timezone'));
-        $isAdmin = $user->role === 'admin';
-        $canViewRevenue = $user->hasRole('admin', 'doctor');
+        $hasAdminDashboard = $user->hasRole('admin', 'doctor');
+        $canViewRevenue = $user->hasRole('admin');
         $branches = Branch::query()->orderBy('name')->get(['id', 'name']);
         $hasAssignedBranch = $user->hasRole('staff', 'doctor') && $user->branch_id !== null;
 
@@ -58,7 +60,7 @@ class DashboardController extends Controller
                 ...($hasAssignedBranch ? [] : ['unassigned']),
                 ...$branches->map(fn (Branch $branch): string => (string) $branch->id)->all(),
             ])],
-            ...($isAdmin ? ['statistics_period' => ['nullable', 'in:week,month,year']] : []),
+            ...($hasAdminDashboard ? ['statistics_period' => ['nullable', 'in:week,month,year']] : []),
         ]);
         $branchId = $hasAssignedBranch
             ? (string) $user->branch_id
@@ -74,26 +76,20 @@ class DashboardController extends Controller
         );
         $patientsForBranch = Patient::query();
         if ($branchId !== null) {
-            $patientsForBranch->whereHas('appointments', fn (Builder $query): Builder => $this->applyAppointmentBranchFilter(
-                $query,
-                $branchId,
-            ));
+            if ($user->hasRole('doctor')) {
+                $patientsForBranch->forBranch((int) $user->branch_id);
+            } else {
+                $patientsForBranch->whereHas('appointments', fn (Builder $query): Builder => $this->applyAppointmentBranchFilter(
+                    $query,
+                    $branchId,
+                ));
+            }
         }
         $paymentsForBranch = fn (): Builder => $this->applyPaymentBranchFilter(Payment::query(), $branchId);
         $queueEntriesForBranch = fn (): Builder => QueueEntry::query()->whereHas(
             'appointment',
             fn (Builder $query): Builder => $this->applyAppointmentBranchFilter($query, $branchId),
         );
-        [$todayStartUtc, $todayEndUtc] = $revenueReport->utcRange(
-            $today->copy()->startOfDay(),
-            $today->copy()->endOfDay(),
-        );
-        $todayPayments = fn (): Builder => $paymentsForBranch()
-            ->whereBetween('created_at', [$todayStartUtc, $todayEndUtc]);
-        $hasTestPaymentsToday = $todayPayments()
-            ->where('provider', 'paymongo')
-            ->where('is_test', true)
-            ->exists();
         $appointments = $appointmentsForBranch()
             ->with(['patient.user', 'service', 'services', 'queueEntry'])
             ->whereDate('starts_at', $today)
@@ -104,8 +100,11 @@ class DashboardController extends Controller
         $activeStaff = User::query()
             ->whereIn('role', ['staff', 'doctor'])
             ->where('is_active', true);
+        if ($user->hasRole('doctor')) {
+            $activeStaff->where('branch_id', $user->branch_id);
+        }
         $metrics = [];
-        if ($user->hasRole('admin', 'staff')) {
+        if ($user->hasRole('admin', 'staff', 'doctor')) {
             $metrics[] = ['Patients', number_format($patientsForBranch->count()), $branchId === null ? 'Registered patient accounts' : 'Patients seen at this branch', 'patients'];
         }
         $metrics = [
@@ -116,17 +115,27 @@ class DashboardController extends Controller
             ['Completed today', number_format($appointmentsForBranch()->whereDate('starts_at', $today)->where('status', 'completed')->count()), 'Appointments completed', 'completed_today'],
         ];
         if ($canViewRevenue) {
-            $metrics[] = ["Today's revenue", '₱'.number_format((float) $todayPayments()->sum('applied_amount'), 2), $hasTestPaymentsToday ? 'Includes PayMongo TEST MODE payments' : 'Payments applied today', 'today_revenue'];
+            [$todayStartUtc, $todayEndUtc] = $revenueReport->utcRange(
+                $today->copy()->startOfDay(),
+                $today->copy()->endOfDay(),
+            );
+            $todayPayments = $paymentsForBranch()
+                ->whereBetween('created_at', [$todayStartUtc, $todayEndUtc]);
+            $hasTestPaymentsToday = (clone $todayPayments)
+                ->where('provider', 'paymongo')
+                ->where('is_test', true)
+                ->exists();
+            $metrics[] = ["Today's revenue", '₱'.number_format((float) $todayPayments->sum('applied_amount'), 2), $hasTestPaymentsToday ? 'Includes PayMongo TEST MODE payments' : 'Payments applied today', 'today_revenue'];
         }
-        if ($user->hasRole('admin', 'staff')) {
+        if ($user->hasRole('admin', 'staff', 'doctor')) {
             $metrics[] = ['Unpaid bills', number_format($this->outstandingBillsForBranch($branchId)->count()), 'Including partial balances', 'unpaid_bills'];
         }
-        if ($isAdmin) {
-            $metrics[] = ['Active staff', number_format($activeStaff->count()), 'Clinic-wide staff and doctors', 'active_staff'];
+        if ($hasAdminDashboard) {
+            $metrics[] = ['Active staff', number_format($activeStaff->count()), $user->hasRole('doctor') ? 'Staff and doctors at this branch' : 'Clinic-wide staff and doctors', 'active_staff'];
         }
 
         $statistics = [];
-        if ($isAdmin) {
+        if ($hasAdminDashboard) {
             $statistics = $this->dashboardStatistics(
                 $filters['statistics_period'] ?? 'week',
                 $today,
@@ -137,7 +146,7 @@ class DashboardController extends Controller
 
         return view('dashboard.clinic', [
             'metrics' => $metrics,
-            'isAdmin' => $isAdmin,
+            'isAdmin' => $hasAdminDashboard,
             'appointments' => $appointments,
             'statistics' => $statistics,
             'branches' => $branches,
@@ -150,6 +159,7 @@ class DashboardController extends Controller
     {
         $user = $request->user();
         abort_unless($user->hasRole('admin', 'staff', 'doctor'), 403);
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
 
         $branches = Branch::query()->get(['id']);
         $hasAssignedBranch = $user->hasRole('staff', 'doctor') && $user->branch_id !== null;
@@ -195,13 +205,10 @@ class DashboardController extends Controller
             'patient_search' => ['nullable', 'string', 'max:120'],
             'page' => ['nullable', 'integer', 'min:1'],
         ]);
-        if ($user->role === 'doctor' && in_array($filters['metric'], ['patients', 'unpaid_bills', 'active_staff'], true)) {
-            abort(403);
-        }
         if ($user->role === 'staff' && $filters['metric'] === 'active_staff') {
             abort(403);
         }
-        if ($filters['metric'] === 'today_revenue' && ! $user->hasRole('admin', 'doctor')) {
+        if ($filters['metric'] === 'today_revenue' && ! $user->hasRole('admin')) {
             abort(403);
         }
 
@@ -259,17 +266,24 @@ class DashboardController extends Controller
                 isset($filters['patient_search']) ? trim($filters['patient_search']) : null,
             ),
             'unpaid_bills' => $this->billDetails($branchId, $filters['page'] ?? 1),
-            'active_staff' => $this->staffDetails($filters['page'] ?? 1),
+            'active_staff' => $this->staffDetails($filters['page'] ?? 1, $hasAssignedBranch ? (string) $user->branch_id : null),
         };
     }
 
     private function patientDetails(?string $branchId, int $page): JsonResponse
     {
         $query = Patient::query()
-            ->when($branchId !== null, fn (Builder $query): Builder => $query->whereHas(
-                'appointments',
-                fn (Builder $appointmentsQuery): Builder => $this->applyAppointmentBranchFilter($appointmentsQuery, $branchId),
-            ))
+            ->when(
+                $branchId !== null && ctype_digit($branchId),
+                fn (Builder $query): Builder => $query->forBranch((int) $branchId),
+            )
+            ->when(
+                $branchId === 'unassigned',
+                fn (Builder $query): Builder => $query->whereHas(
+                    'appointments',
+                    fn (Builder $appointmentsQuery): Builder => $appointmentsQuery->whereNull('branch_id'),
+                ),
+            )
             ->with('user')
             ->orderBy('id');
         $paginator = $query->paginate(20, ['*'], 'page', $page);
@@ -476,12 +490,13 @@ class DashboardController extends Controller
         );
     }
 
-    private function staffDetails(int $page): JsonResponse
+    private function staffDetails(int $page, ?string $branchId): JsonResponse
     {
         $paginator = User::query()
             ->with('branch')
             ->whereIn('role', ['staff', 'doctor'])
             ->where('is_active', true)
+            ->when($branchId !== null, fn (Builder $query): Builder => $query->where('branch_id', $branchId))
             ->orderBy('role')
             ->orderBy('name')
             ->paginate(20, ['*'], 'page', $page);

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Appointment;
+use App\Models\AppointmentAvailabilityBlock;
 use App\Models\AuditLog;
 use App\Models\Bill;
 use App\Models\Branch;
@@ -10,7 +11,9 @@ use App\Models\DentalRecord;
 use App\Models\Patient;
 use App\Models\Payment;
 use App\Models\QueueEntry;
+use App\Models\RfidCard;
 use App\Models\SmsLog;
+use App\Models\User;
 use App\Services\AppointmentCompletionService;
 use App\Services\AuditTrail;
 use App\Services\ClinicNotificationService;
@@ -33,6 +36,7 @@ class ClinicWorkflowController extends Controller
     public function queue(Request $request): View
     {
         $user = $request->user();
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
         $hasAssignedBranch = $user->hasRole('staff', 'doctor') && $user->branch_id !== null;
 
         return view('queue.index', [
@@ -316,18 +320,21 @@ class ClinicWorkflowController extends Controller
 
     public function billing(Request $request): View
     {
+        $user = $request->user();
+        $isBranchDoctor = $user->hasRole('doctor');
+        abort_if($isBranchDoctor && $user->branch_id === null, 403);
         $filters = $request->validate([
-            'bill' => ['nullable', 'integer', 'exists:bills,id'],
+            'bill' => ['nullable', 'integer'],
         ]);
 
         return view('billing.index', [
             'bills' => Bill::query()
-                ->with(['patient.user', 'appointment', 'items', 'payments.receipt', 'payMongoBillCheckouts'])
+                ->with(['creator', 'patient.user', 'appointment', 'items', 'payments.receipt', 'payMongoBillCheckouts'])
                 ->when(
-                    $request->user()->hasRole('staff', 'doctor') && $request->user()->branch_id !== null,
+                    $user->hasRole('staff', 'doctor') && $user->branch_id !== null,
                     fn (Builder $query): Builder => $query->whereHas(
                         'appointment',
-                        fn (Builder $appointmentsQuery): Builder => $appointmentsQuery->where('branch_id', $request->user()->branch_id),
+                        fn (Builder $appointmentsQuery): Builder => $appointmentsQuery->where('branch_id', $user->branch_id),
                     ),
                 )
                 ->when(
@@ -338,6 +345,7 @@ class ClinicWorkflowController extends Controller
                 ->paginate(20),
             'selectedBillId' => isset($filters['bill']) ? (int) $filters['bill'] : null,
             'paymongoTestCheckoutAvailable' => $this->paymongoTestCheckoutAvailable(),
+            'isReadOnly' => false,
         ]);
     }
 
@@ -383,6 +391,7 @@ class ClinicWorkflowController extends Controller
     private function authorizeAssignedBranch(Request $request, Appointment $appointment): void
     {
         $user = $request->user();
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
 
         if ($user->hasRole('admin') || $user->branch_id === null) {
             return;
@@ -407,6 +416,7 @@ class ClinicWorkflowController extends Controller
     public function reports(Request $request, ClinicRevenueReport $revenueReport): View
     {
         $user = $request->user();
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
         $hasAssignedBranch = $user->role === 'doctor' && $user->branch_id !== null;
         $branches = Branch::query()
             ->when($hasAssignedBranch, fn (Builder $query): Builder => $query->whereKey($user->branch_id))
@@ -533,10 +543,14 @@ class ClinicWorkflowController extends Controller
 
         $newPatientsQuery = Patient::query()->whereBetween('created_at', [$rangeStartUtc, $rangeEndUtc]);
         if ($branchId !== null) {
-            $newPatientsQuery->whereHas('appointments', fn (Builder $query): Builder => $this->applyReportBranchFilter(
-                $query,
-                $branchId,
-            ));
+            if ($hasAssignedBranch) {
+                $newPatientsQuery->forBranch((int) $branchId);
+            } else {
+                $newPatientsQuery->whereHas('appointments', fn (Builder $query): Builder => $this->applyReportBranchFilter(
+                    $query,
+                    $branchId,
+                ));
+            }
         }
 
         return view('reports.index', [
@@ -564,6 +578,7 @@ class ClinicWorkflowController extends Controller
     public function reportDetails(Request $request, ClinicRevenueReport $revenueReport): JsonResponse
     {
         $user = $request->user();
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
         $hasAssignedBranch = $user->role === 'doctor' && $user->branch_id !== null;
         $branches = Branch::query()
             ->when($hasAssignedBranch, fn (Builder $query): Builder => $query->whereKey($user->branch_id))
@@ -595,10 +610,17 @@ class ClinicWorkflowController extends Controller
         if ($filters['metric'] === 'new_patients') {
             $query = Patient::query()
                 ->whereBetween('created_at', [$rangeStartUtc, $rangeEndUtc])
-                ->when($branchId !== null, fn (Builder $query): Builder => $query->whereHas(
-                    'appointments',
-                    fn (Builder $appointmentsQuery): Builder => $this->applyReportBranchFilter($appointmentsQuery, $branchId),
-                ))
+                ->when(
+                    $branchId !== null && $hasAssignedBranch,
+                    fn (Builder $query): Builder => $query->forBranch((int) $branchId),
+                )
+                ->when(
+                    $branchId !== null && ! $hasAssignedBranch,
+                    fn (Builder $query): Builder => $query->whereHas(
+                        'appointments',
+                        fn (Builder $appointmentsQuery): Builder => $this->applyReportBranchFilter($appointmentsQuery, $branchId),
+                    ),
+                )
                 ->with('user')
                 ->orderBy('id');
             $paginator = $query->paginate(20, ['*'], 'page', $page);
@@ -756,6 +778,9 @@ class ClinicWorkflowController extends Controller
 
     public function auditLogs(Request $request): View
     {
+        $user = $request->user();
+        $isBranchDoctor = $user->hasRole('doctor');
+        abort_if($isBranchDoctor && $user->branch_id === null, 403);
         $filters = $request->validate([
             'search' => ['nullable', 'string', 'max:120'],
             'module' => ['nullable', 'string', 'max:80'],
@@ -765,39 +790,123 @@ class ClinicWorkflowController extends Controller
             'sort' => ['nullable', 'in:newest,oldest'],
         ]);
 
-        return view('logs.audit', [
-            'logs' => AuditLog::query()
-                ->with('user')
-                ->when($filters['module'] ?? null, fn ($query, $module) => $query->where('module', $module))
-                ->when($filters['action'] ?? null, fn ($query, $action) => $query->where('action', $action))
-                ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('created_at', '>=', $from))
-                ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('created_at', '<=', $to))
-                ->when($filters['search'] ?? null, function ($query, $search): void {
-                    $query->where(function ($query) use ($search): void {
-                        $query->where('action', 'like', '%'.$search.'%')
-                            ->orWhere('module', 'like', '%'.$search.'%')
-                            ->orWhere('record_type', 'like', '%'.$search.'%')
-                            ->orWhere('record_id', 'like', '%'.$search.'%')
-                            ->orWhere('description', 'like', '%'.$search.'%')
-                            ->orWhereHas('user', fn ($userQuery) => $userQuery->where('name', 'like', '%'.$search.'%'));
-                    });
+        $scopedLogs = AuditLog::query();
+
+        if ($isBranchDoctor) {
+            $branchId = $user->branch_id;
+            $scopedLogs->where(function (Builder $query) use ($branchId, $user): void {
+                $query->where(function (Builder $query) use ($user): void {
+                    $query->where('user_id', $user->id)->whereNull('record_type');
                 })
-                ->orderBy('created_at', ($filters['sort'] ?? 'newest') === 'oldest' ? 'asc' : 'desc')
-                ->orderBy('id', ($filters['sort'] ?? 'newest') === 'oldest' ? 'asc' : 'desc')
-                ->paginate(40)
-                ->withQueryString(),
-            'modules' => AuditLog::query()->select('module')->distinct()->orderBy('module')->pluck('module'),
-            'actions' => AuditLog::query()->select('action')->distinct()->orderBy('action')->pluck('action'),
+                    ->orWhere(function (Builder $query) use ($branchId): void {
+                        $query->where('record_type', 'Appointment')
+                            ->whereIn('record_id', Appointment::query()->select('id')->where('branch_id', $branchId));
+                    })
+                    ->orWhere(function (Builder $query) use ($branchId): void {
+                        $query->where('record_type', 'Patient')
+                            ->whereIn('record_id', Patient::query()
+                                ->forBranch((int) $branchId)
+                                ->select('patients.id'));
+                    })
+                    ->orWhere(function (Builder $query) use ($branchId): void {
+                        $query->where('record_type', 'Bill')
+                            ->whereIn('record_id', Bill::query()
+                                ->select('bills.id')
+                                ->whereHas('appointment', fn (Builder $appointmentQuery): Builder => $appointmentQuery
+                                    ->where('branch_id', $branchId)));
+                    })
+                    ->orWhere(function (Builder $query) use ($branchId): void {
+                        $query->where('record_type', 'Payment')
+                            ->whereIn('record_id', Payment::query()
+                                ->select('payments.id')
+                                ->whereHas('bill.appointment', fn (Builder $appointmentQuery): Builder => $appointmentQuery
+                                    ->where('branch_id', $branchId)));
+                    })
+                    ->orWhere(function (Builder $query) use ($branchId): void {
+                        $query->where('record_type', 'QueueEntry')
+                            ->whereIn('record_id', QueueEntry::query()
+                                ->select('queue_entries.id')
+                                ->whereHas('appointment', fn (Builder $appointmentQuery): Builder => $appointmentQuery
+                                    ->where('branch_id', $branchId)));
+                    })
+                    ->orWhere(function (Builder $query) use ($branchId): void {
+                        $query->where('record_type', 'RfidCard')
+                            ->whereIn('record_id', RfidCard::query()
+                                ->select('rfid_cards.id')
+                                ->whereHas('patient.appointments', fn (Builder $appointmentQuery): Builder => $appointmentQuery
+                                    ->where('branch_id', $branchId)));
+                    })
+                    ->orWhere(function (Builder $query) use ($branchId): void {
+                        $query->where('record_type', 'AppointmentAvailabilityBlock')
+                            ->whereIn('record_id', AppointmentAvailabilityBlock::query()
+                                ->select('id')
+                                ->where('branch_id', $branchId));
+                    })
+                    ->orWhere(function (Builder $query) use ($branchId): void {
+                        $query->where('record_type', 'DentalRecord')
+                            ->whereIn('record_id', DentalRecord::query()
+                                ->select('id')
+                                ->whereHas('appointment', fn (Builder $appointmentQuery): Builder => $appointmentQuery
+                                    ->where('branch_id', $branchId)));
+                    })
+                    ->orWhere(function (Builder $query) use ($branchId): void {
+                        $query->where('record_type', 'User')
+                            ->whereIn('record_id', User::query()
+                                ->select('id')
+                                ->where('branch_id', $branchId)
+                                ->whereIn('role', ['staff', 'doctor']));
+                    });
+            });
+        }
+
+        $logs = (clone $scopedLogs)
+            ->with('user')
+            ->when($filters['module'] ?? null, fn ($query, $module) => $query->where('module', $module))
+            ->when($filters['action'] ?? null, fn ($query, $action) => $query->where('action', $action))
+            ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('created_at', '>=', $from))
+            ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('created_at', '<=', $to))
+            ->when($filters['search'] ?? null, function ($query, $search): void {
+                $query->where(function ($query) use ($search): void {
+                    $query->where('action', 'like', '%'.$search.'%')
+                        ->orWhere('module', 'like', '%'.$search.'%')
+                        ->orWhere('record_type', 'like', '%'.$search.'%')
+                        ->orWhere('record_id', 'like', '%'.$search.'%')
+                        ->orWhere('description', 'like', '%'.$search.'%')
+                        ->orWhereHas('user', fn ($userQuery) => $userQuery->where('name', 'like', '%'.$search.'%'));
+                });
+            })
+            ->orderBy('created_at', ($filters['sort'] ?? 'newest') === 'oldest' ? 'asc' : 'desc')
+            ->orderBy('id', ($filters['sort'] ?? 'newest') === 'oldest' ? 'asc' : 'desc')
+            ->paginate(40)
+            ->withQueryString();
+
+        return view('logs.audit', [
+            'logs' => $logs,
+            'modules' => (clone $scopedLogs)->select('module')->distinct()->orderBy('module')->pluck('module'),
+            'actions' => (clone $scopedLogs)->select('action')->distinct()->orderBy('action')->pluck('action'),
+            'isReadOnly' => $isBranchDoctor,
         ]);
     }
 
-    public function smsLogs(): View
+    public function smsLogs(Request $request): View
     {
+        $user = $request->user();
+        $isBranchDoctor = $user->hasRole('doctor');
+        abort_if($isBranchDoctor && $user->branch_id === null, 403);
+
         return view('logs.sms', [
             'logs' => SmsLog::with('patient.user')
                 ->whereIn('type', SmsNotifier::ALLOWED_TYPES)
+                ->when(
+                    $isBranchDoctor,
+                    fn (Builder $query): Builder => $query->whereHas(
+                        'appointment',
+                        fn (Builder $appointmentQuery): Builder => $appointmentQuery->where('branch_id', $user->branch_id),
+                    ),
+                )
                 ->latest()
                 ->paginate(40),
+            'isReadOnly' => $isBranchDoctor,
         ]);
     }
 }

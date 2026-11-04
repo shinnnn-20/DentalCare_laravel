@@ -4,11 +4,11 @@
 
 @section('content')
     <div class="mb-8 flex flex-wrap items-end justify-between gap-4">
-        <div><p class="text-sm font-medium text-teal-700">Patient identification</p><h1 class="mt-1 text-3xl font-bold tracking-tight">RFID cards</h1><p class="mt-2 text-slate-500">Assign a unique RFID UID and validity period to each patient.</p></div>
+        <div><p class="text-sm font-medium text-teal-700">Patient identification</p><h1 class="mt-1 text-3xl font-bold tracking-tight">RFID cards</h1><p class="mt-2 text-slate-500">{{ $isReadOnly ? 'View RFID card details for patients at your assigned branch.' : 'Assign a unique RFID UID and validity period to each patient.' }}</p></div>
         <a class="btn-primary" href="{{ route('clinic.rfid.scan') }}">Open check-in station</a>
     </div>
     <section class="rounded-2xl border border-slate-200 bg-white">
-        <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Patient</th><th>Number</th><th>Current UID</th><th>Valid from</th><th>Valid until</th><th>Card status</th><th>Assign / update card</th></tr></thead><tbody>
+        <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Patient</th><th>Number</th><th>Current UID</th><th>Valid from</th><th>Valid until</th><th>Card status</th>@unless ($isReadOnly)<th>Assign / update card</th>@endunless</tr></thead><tbody>
             @forelse ($patients as $patient)
                 @php($card = $patient->rfidCard)
                 @php($cardStatus = $card?->validityStatus())
@@ -16,7 +16,7 @@
                     <td data-label="Patient" class="font-semibold">{{ $patient->user->name }}</td>
                     <td data-label="Number">{{ $patient->patient_number }}</td>
                     <td data-label="Current UID">{{ $card?->uid ?? 'Not assigned' }}</td>
-                    <td data-label="Valid from">{{ $card?->valid_from?->format('M j, Y g:i A') ?? 'No start limit' }}</td>
+                    <td data-label="Valid from">{{ $card?->valid_from?->format('M j, Y') ?? 'No start limit' }}</td>
                     <td data-label="Valid until">{{ $card?->valid_until?->format('M j, Y g:i A') ?? 'No expiry' }}</td>
                     <td data-label="Card status">
                         <span @class([
@@ -27,16 +27,17 @@
                             'bg-slate-100 text-slate-600' => $cardStatus === null,
                         ])>{{ $cardStatus ? str_replace('_', ' ', $cardStatus) : 'Not assigned' }}</span>
                     </td>
+                    @unless ($isReadOnly)
                     <td data-label="Assign / update card">
                         <form method="POST" action="{{ route('clinic.rfid.assign', $patient) }}" class="grid min-w-72 gap-2 sm:min-w-96 sm:grid-cols-2">@csrf
                             <label class="form-label sm:col-span-2">RFID UID
                                 <input class="form-input" name="uid" value="{{ $card?->uid }}" maxlength="100" placeholder="Scan or enter UID" required>
                             </label>
                             <label class="form-label">Valid from <span class="font-normal text-slate-400">(optional)</span>
-                                <input class="form-input date-time-input" type="datetime-local" name="valid_from" value="{{ $card?->valid_from?->format('Y-m-d\TH:i') }}" data-rfid-validity-picker data-clinic-today="{{ now(config('clinic.timezone'))->toDateString() }}" aria-label="Valid from date and time">
+                                <input class="form-input date-time-input" type="date" name="valid_from" value="{{ $card?->valid_from?->format('Y-m-d') }}" data-rfid-validity-picker data-clinic-today="{{ now(config('clinic.timezone'))->toDateString() }}" aria-label="Valid from date">
                             </label>
                             <label class="form-label">Valid until <span class="font-normal text-slate-400">(optional)</span>
-                                <input class="form-input date-time-input" type="datetime-local" name="valid_until" value="{{ $card?->valid_until?->format('Y-m-d\TH:i') }}" data-rfid-validity-picker data-clinic-today="{{ now(config('clinic.timezone'))->toDateString() }}" aria-label="Valid until date and time">
+                                <input class="form-input date-time-input" type="date" name="valid_until" value="{{ $card?->valid_until?->format('Y-m-d') }}" data-rfid-validity-picker data-clinic-today="{{ now(config('clinic.timezone'))->toDateString() }}" aria-label="Valid until date">
                             </label>
                             <label class="form-label">Status
                                 <select class="form-input" name="is_active">
@@ -49,12 +50,14 @@
                             </div>
                         </form>
                     </td>
+                    @endunless
                 </tr>
-            @empty<tr><td colspan="7" class="py-10 text-center text-slate-500">No patient accounts yet.</td></tr>@endforelse
+            @empty<tr><td colspan="{{ $isReadOnly ? 6 : 7 }}" class="py-10 text-center text-slate-500">No patient accounts yet.</td></tr>@endforelse
         </tbody></table></div>
         <div class="p-4">{{ $patients->links() }}</div>
     </section>
     <p class="mt-4 text-sm text-slate-500">RFID identifies the patient for staff; it does not grant access to a patient account. Check-in is completed from the Patient Queue tab.</p>
+    @unless ($isReadOnly)
     <script>
         document.querySelectorAll('[data-rfid-validity-picker]').forEach((input, index) => {
             const picker = document.createElement('div');
@@ -62,20 +65,7 @@
             const panel = document.createElement('section');
             const pickerId = `rfid-validity-picker-${index}`;
             const today = input.dataset.clinicToday;
-            const parseValue = (value) => {
-                const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
-
-                return match ? {
-                    date: `${match[1]}-${match[2]}-${match[3]}`,
-                    hour: Number(match[4]),
-                    minute: match[5],
-                } : null;
-            };
-            const existingValue = parseValue(input.value);
-            let selectedDate = existingValue?.date || '';
-            let selectedTime = existingValue
-                ? { hour: existingValue.hour, minute: existingValue.minute }
-                : null;
+            let selectedDate = input.value;
             let visibleMonth = (selectedDate || today).slice(0, 7);
             const weekdayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
@@ -117,7 +107,6 @@
                 const icon = document.createElement('span');
                 const labels = document.createElement('span');
                 const dateLabel = document.createElement('span');
-                const timeLabel = document.createElement('span');
                 const chevron = document.createElement('span');
 
                 content.className = 'rfid-validity-trigger-content';
@@ -126,30 +115,16 @@
                 icon.textContent = '▦';
                 labels.className = 'grid min-w-0 gap-0.5';
                 dateLabel.className = 'truncate';
-                dateLabel.textContent = selectedDate ? formatDate(selectedDate) : 'Choose date and time';
-                timeLabel.className = 'text-xs font-normal text-slate-500';
-                if (selectedTime) {
-                    const displayHour = selectedTime.hour % 12 || 12;
-                    const period = selectedTime.hour < 12 ? 'AM' : 'PM';
-                    timeLabel.textContent = `${displayHour}:${String(selectedTime.minute).padStart(2, '0')} ${period}`;
-                } else if (selectedDate) {
-                    timeLabel.textContent = 'Choose a time';
-                } else {
-                    timeLabel.textContent = 'Optional validity limit';
-                }
+                dateLabel.textContent = selectedDate ? formatDate(selectedDate) : 'Choose date';
                 chevron.className = 'availability-time-chevron';
                 chevron.setAttribute('aria-hidden', 'true');
-                labels.append(dateLabel, timeLabel);
+                labels.append(dateLabel);
                 content.append(icon, labels);
                 trigger.replaceChildren(content, chevron);
             };
 
             const updateInput = () => {
-                if (selectedDate && selectedTime) {
-                    input.value = `${selectedDate}T${String(selectedTime.hour).padStart(2, '0')}:${String(selectedTime.minute).padStart(2, '0')}`;
-                } else {
-                    input.value = '';
-                }
+                input.value = selectedDate;
 
                 input.dispatchEvent(new Event('input', { bubbles: true }));
                 input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -167,11 +142,6 @@
                 const nextMonth = document.createElement('button');
                 const weekdays = document.createElement('div');
                 const days = document.createElement('div');
-                const timeSection = document.createElement('div');
-                const timeHeading = document.createElement('p');
-                const timePicker = document.createElement('div');
-                const timeTrigger = document.createElement('button');
-                const timeMenu = document.createElement('div');
                 const footer = document.createElement('div');
                 const clearButton = document.createElement('button');
                 const doneButton = document.createElement('button');
@@ -227,92 +197,12 @@
                     days.append(dayButton);
                 }
 
-                timeSection.className = 'mt-3 border-t border-slate-100 pt-3';
-                timeHeading.className = 'mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500';
-                timeHeading.textContent = 'Validity time';
-                timePicker.className = 'relative';
-                timeTrigger.type = 'button';
-                timeTrigger.className = 'availability-time-trigger';
-                timeTrigger.setAttribute('aria-haspopup', 'listbox');
-                timeTrigger.setAttribute('aria-expanded', 'false');
-                timeTrigger.setAttribute('aria-label', 'Choose validity time');
-                timeMenu.className = 'rfid-validity-time-menu hidden';
-                timeMenu.setAttribute('role', 'listbox');
-                timeMenu.setAttribute('aria-label', 'Validity times in 30-minute intervals');
-
-                const formatTime = (hour, minute) => {
-                    const displayHour = hour % 12 || 12;
-                    const period = hour < 12 ? 'AM' : 'PM';
-
-                    return `${displayHour}:${String(minute).padStart(2, '0')} ${period}`;
-                };
-                const updateTimeTrigger = () => {
-                    const label = document.createElement('span');
-                    const icon = document.createElement('span');
-
-                    label.className = selectedTime ? '' : 'text-slate-500';
-                    label.textContent = selectedTime
-                        ? formatTime(selectedTime.hour, selectedTime.minute)
-                        : 'Choose time';
-                    icon.className = 'availability-time-chevron';
-                    icon.setAttribute('aria-hidden', 'true');
-                    timeTrigger.replaceChildren(label, icon);
-                };
-                const renderTimeMenu = () => {
-                    timeMenu.replaceChildren();
-                    for (let minutes = 0; minutes < 24 * 60; minutes += 30) {
-                        const hour = Math.floor(minutes / 60);
-                        const minute = minutes % 60;
-                        const option = document.createElement('button');
-                        const label = document.createElement('span');
-                        const interval = document.createElement('span');
-                        const isSelected = selectedTime?.hour === hour && selectedTime?.minute === minute;
-
-                        option.type = 'button';
-                        option.className = 'availability-time-option';
-                        option.setAttribute('role', 'option');
-                        option.setAttribute('aria-selected', String(isSelected));
-                        label.textContent = formatTime(hour, minute);
-                        interval.className = 'availability-time-interval';
-                        interval.textContent = '30 min';
-                        option.append(label, interval);
-                        option.addEventListener('click', () => {
-                            selectedTime = { hour, minute };
-                            updateInput();
-                            updateTimeTrigger();
-                            timeMenu.classList.add('hidden');
-                            timeTrigger.setAttribute('aria-expanded', 'false');
-                            timeTrigger.focus();
-                        });
-                        timeMenu.append(option);
-                    }
-                };
-                timeTrigger.addEventListener('click', () => {
-                    const isOpen = timeTrigger.getAttribute('aria-expanded') === 'true';
-                    renderTimeMenu();
-                    timeMenu.classList.toggle('hidden', isOpen);
-                    timeTrigger.setAttribute('aria-expanded', String(!isOpen));
-                    if (!isOpen) {
-                        timeMenu.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
-                    }
-                });
-                timeMenu.addEventListener('keydown', (event) => {
-                    if (event.key === 'Escape') {
-                        timeMenu.classList.add('hidden');
-                        timeTrigger.setAttribute('aria-expanded', 'false');
-                        timeTrigger.focus();
-                    }
-                });
-                timePicker.append(timeTrigger, timeMenu);
-                timeSection.append(timeHeading, timePicker);
-                updateTimeTrigger();
                 footer.className = 'rfid-validity-panel-footer mt-3 border-t border-slate-100 pt-3';
                 clearButton.type = 'button';
                 clearButton.className = 'text-sm font-semibold text-slate-500 hover:text-rose-700';
                 clearButton.textContent = 'Clear limit';
                 clearButton.addEventListener('click', () => {
                     selectedDate = '';
-                    selectedTime = null;
                     visibleMonth = today.slice(0, 7);
                     updateInput();
                     closePanel(true);
@@ -336,7 +226,7 @@
                 footerActions.className = 'flex items-center gap-4';
                 footerActions.append(clearButton, todayButton);
                 footer.append(footerActions, doneButton);
-                panel.append(header, weekdays, days, timeSection, footer);
+                panel.append(header, weekdays, days, footer);
             };
 
             const positionPanel = () => {
@@ -399,4 +289,5 @@
             formatTrigger();
         });
     </script>
+    @endunless
 @endsection

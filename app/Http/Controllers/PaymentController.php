@@ -131,6 +131,7 @@ class PaymentController extends Controller
     private function authorizeBillBranch(Request $request, Bill $bill): void
     {
         $user = $request->user();
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
 
         if ($user->hasRole('admin') || $user->branch_id === null) {
             return;

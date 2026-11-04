@@ -38,8 +38,10 @@
                     <select class="form-input" name="starts_at" data-availability-time="start" required>
                         <option value="">Select time</option>
                         @for ($minutes = 600; $minutes <= 990; $minutes += 30)
-                            @php($timeValue = sprintf('%02d:%02d', intdiv($minutes, 60), $minutes % 60))
-                            <option value="{{ $timeValue }}" @selected(old('starts_at') === $timeValue)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeValue)->format('g:i A') }}</option>
+                            @if (! in_array($minutes, [720, 750], true))
+                                @php($timeValue = sprintf('%02d:%02d', intdiv($minutes, 60), $minutes % 60))
+                                <option value="{{ $timeValue }}" @selected(old('starts_at') === $timeValue)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeValue)->format('g:i A') }}</option>
+                            @endif
                         @endfor
                     </select>
                 </span>
@@ -49,8 +51,10 @@
                     <select class="form-input" name="ends_at" data-availability-time="end" required>
                         <option value="">Select time</option>
                         @for ($minutes = 630; $minutes <= 1020; $minutes += 30)
-                            @php($timeValue = sprintf('%02d:%02d', intdiv($minutes, 60), $minutes % 60))
-                            <option value="{{ $timeValue }}" @selected(old('ends_at') === $timeValue)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeValue)->format('g:i A') }}</option>
+                            @if (! in_array($minutes, [720, 750], true))
+                                @php($timeValue = sprintf('%02d:%02d', intdiv($minutes, 60), $minutes % 60))
+                                <option value="{{ $timeValue }}" @selected(old('ends_at') === $timeValue)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeValue)->format('g:i A') }}</option>
+                            @endif
                         @endfor
                     </select>
                 </span>
@@ -61,7 +65,7 @@
             </label>
             <label class="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 sm:col-span-2 xl:col-span-3">
                 <input class="mt-1" type="checkbox" name="confirm_existing_appointments" value="1" @checked(old('confirm_existing_appointments'))>
-                <span>Confirm blocking even if existing appointments overlap. Those appointments will remain booked and must be handled separately.</span>
+                <span>Confirm blocking this availability. If existing appointments overlap, they will remain booked and must be handled separately.</span>
             </label>
             <div class="sm:col-span-2 xl:col-span-3">
                 <button class="btn-primary">Block appointment availability</button>
@@ -122,8 +126,8 @@
                                     @endif
                                     <button class="btn-small {{ $availabilityBlock->is_active ? 'text-rose-700' : 'text-teal-800' }}">{{ $availabilityBlock->is_active ? 'Enable time again' : 'Re-enable block' }}</button>
                                 </form>
-                                @if (auth()->user()->hasRole('admin', 'staff'))
-                                    <form method="POST" action="{{ route('clinic.availability.destroy', $availabilityBlock) }}" class="mt-2" onsubmit="return confirm('Permanently delete this availability block?')">
+                                @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
+                                    <form method="POST" action="{{ route('clinic.availability.destroy', $availabilityBlock) }}" class="mt-2" data-confirm="Permanently delete this availability block?" data-confirm-title="Delete availability block" data-confirm-accept="Delete block" data-confirm-variant="danger">
                                         @csrf
                                         @method('DELETE')
                                         <button class="btn-small w-full text-rose-700">Delete block</button>
@@ -200,7 +204,6 @@
                 Array.from(select.options).filter((option) => option.value !== '').forEach((option) => {
                     const item = document.createElement('button');
                     const label = document.createElement('span');
-                    const interval = document.createElement('span');
 
                     item.type = 'button';
                     item.className = 'availability-time-option';
@@ -208,9 +211,7 @@
                     item.setAttribute('aria-selected', String(option.value === selectedValue));
                     item.disabled = option.disabled;
                     label.textContent = option.textContent;
-                    interval.className = 'availability-time-interval';
-                    interval.textContent = '30 min';
-                    item.append(label, interval);
+                    item.append(label);
                     item.addEventListener('click', () => {
                         select.value = option.value;
                         select.dispatchEvent(new Event('change', { bubbles: true }));
