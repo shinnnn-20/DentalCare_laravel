@@ -36,6 +36,11 @@ class DashboardController extends Controller
                     ->whereNotIn('status', ['cancelled', 'rejected', 'completed', 'no_show', 'billed'])
                     ->orderBy('starts_at')
                     ->first(),
+                'nextFollowUp' => $patient->dentalRecords()
+                    ->whereNotNull('follow_up_date')
+                    ->whereDate('follow_up_date', '>=', today(config('clinic.timezone')))
+                    ->orderBy('follow_up_date')
+                    ->first(),
                 'recentRecords' => $patient->dentalRecords()->latest()->limit(5)->get(),
                 'unpaidBills' => $patient->appointments()->with('bill')
                     ->whereHas('bill', fn ($query) => $query->whereIn('payment_status', ['unpaid', 'partially_paid']))
