@@ -8,7 +8,15 @@
         <div class="divide-y divide-slate-100">
             @forelse ($records as $record)
                 <article class="grid gap-3 p-5 sm:grid-cols-[150px_1fr]">
-                    <div class="text-sm text-slate-500">{{ $record->created_at->format('F j, Y') }}@if ($record->follow_up_date)<p class="mt-2 text-xs text-teal-700">Follow-up: {{ $record->follow_up_date->format('M j, Y') }}</p>@endif</div>
+                    <div class="text-sm text-slate-500">
+                        {{ $record->created_at->format('F j, Y') }}
+                        @if ($record->follow_up_date)
+                            <p class="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+                                Follow-up date
+                                <time class="mt-1 block" datetime="{{ $record->follow_up_date->toDateString() }}">{{ $record->follow_up_date->format('M j, Y') }}</time>
+                            </p>
+                        @endif
+                    </div>
                     <div>
                         <h2 class="font-semibold">{{ $record->treatment }}</h2>
                         <p class="mt-2 text-sm"><span class="font-medium">Diagnosis:</span> {{ $record->diagnosis }}</p>

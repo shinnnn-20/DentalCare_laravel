@@ -10,6 +10,7 @@ use App\Models\QueueEntry;
 use App\Models\Service;
 use App\Services\AuditTrail;
 use App\Services\ClinicNotificationService;
+use App\Services\PhilippineHolidayCalendar;
 use App\Services\SmsNotifier;
 use Carbon\CarbonInterface;
 use Carbon\Constants\UnitValue;
@@ -30,10 +31,13 @@ class AppointmentController extends Controller
 
     private const ONGOING_APPOINTMENT_STATUSES = ['checked_in', 'waiting', 'in_consultation', 'billed'];
 
+    public function __construct(private PhilippineHolidayCalendar $holidayCalendar) {}
+
     public function index(Request $request): View
     {
         $isAppointmentRecordsPage = $request->routeIs('clinic.appointment-records');
         $user = $request->user();
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
         $hasAssignedBranch = $user->hasRole('staff', 'doctor') && $user->branch_id !== null;
         $branches = Branch::query()
             ->when($hasAssignedBranch, fn ($query) => $query->whereKey($user->branch_id))
@@ -50,7 +54,7 @@ class AppointmentController extends Controller
             'search' => ['nullable', 'string', 'max:100'],
         ]);
         if (isset($filters['appointment_id'])) {
-            abort_unless($request->user()->hasRole('admin', 'staff'), 404);
+            abort_unless($request->user()->hasRole('admin', 'staff', 'doctor'), 404);
         }
 
         $appointments = Appointment::query()
@@ -58,7 +62,7 @@ class AppointmentController extends Controller
             ->when($filters['appointment_id'] ?? null, fn ($query, $appointmentId) => $query->whereKey($appointmentId))
             ->when($request->user()->role === 'patient', fn ($query) => $query->whereBelongsTo($request->user()->patient()->firstOrFail()))
             ->when($hasAssignedBranch, fn ($query) => $query->where('branch_id', $user->branch_id))
-            ->when($request->user()->role === 'doctor', fn ($query) => $query
+            ->when($request->user()->role === 'doctor' && ! $isAppointmentRecordsPage, fn ($query) => $query
                 ->whereIn('status', ['pending', 'approved'])
                 ->whereDate('starts_at', '>', today(config('clinic.timezone'))->toDateString()))
             ->when($filters['date'] ?? null, fn ($query, $date) => $query->whereDate('starts_at', $date))
@@ -92,19 +96,31 @@ class AppointmentController extends Controller
             ->paginate(20)
             ->withQueryString();
         $appointmentCollection = $appointments->getCollection();
-        $appointmentSections = $isAppointmentRecordsPage
-            ? [
-                'Ongoing Appointments' => $appointmentCollection->whereIn('status', self::ONGOING_APPOINTMENT_STATUSES),
-                'Pending Appointments' => $appointmentCollection->where('status', 'pending'),
+        if ($isAppointmentRecordsPage) {
+            $followUpAppointments = $appointmentCollection->filter(
+                fn (Appointment $appointment): bool => $appointment->dentalRecord?->follow_up_date !== null,
+            );
+            $followUpAppointmentIds = $followUpAppointments->modelKeys();
+            $appointmentSections = [
+                'Ongoing Appointments' => $appointmentCollection
+                    ->whereIn('status', self::ONGOING_APPOINTMENT_STATUSES)
+                    ->whereNotIn('id', $followUpAppointmentIds),
+                'Pending Appointments' => $appointmentCollection
+                    ->where('status', 'pending')
+                    ->whereNotIn('id', $followUpAppointmentIds),
+                'Follow-up appointments' => $followUpAppointments,
                 'Other Appointments' => $appointmentCollection->reject(fn (Appointment $appointment): bool => in_array(
                     $appointment->status,
                     [...self::ONGOING_APPOINTMENT_STATUSES, 'pending'],
                     true,
-                )),
-            ]
-            : ['Appointments' => $appointmentCollection];
+                ) || $followUpAppointments->contains('id', $appointment->id)),
+            ];
+        } else {
+            $appointmentSections = ['Appointments' => $appointmentCollection];
+        }
         $clinicNow = now(config('clinic.timezone'));
-        $canRescheduleOnAppointmentDate = $request->user()->hasRole('admin', 'staff');
+        $canRescheduleOnAppointmentDate = $request->user()->hasRole('admin', 'staff')
+            || ($request->user()->hasRole('doctor') && $request->user()->branch_id !== null);
         $reschedulableAppointmentIds = $appointments->getCollection()
             ->filter(function (Appointment $appointment) use ($clinicNow, $canRescheduleOnAppointmentDate): bool {
                 $appointmentStart = $this->clinicDateTime($appointment->starts_at);
@@ -124,8 +140,15 @@ class AppointmentController extends Controller
             ->when(Schema::hasColumn('services', 'category'), fn ($query) => $query->orderBy('category'))
             ->orderBy('name')
             ->get();
-        $patients = $request->user()->hasRole('admin', 'staff')
-            ? Patient::with('user')->orderBy('patient_number')->get()
+        $patients = $request->user()->hasRole('admin', 'staff', 'doctor')
+            ? Patient::query()
+                ->when(
+                    $user->hasRole('doctor'),
+                    fn ($query) => $query->forBranch((int) $user->branch_id),
+                )
+                ->with('user')
+                ->orderBy('patient_number')
+                ->get()
             : collect();
         $appointmentTimes = $this->appointmentTimeOptions();
 
@@ -172,6 +195,11 @@ class AppointmentController extends Controller
         $month = Carbon::createFromFormat('!Y-m', $data['month'], $timezone);
         $monthStart = $month->copy()->startOfMonth();
         $monthEnd = $month->copy()->endOfMonth();
+        $holidays = array_filter(
+            $this->holidayCalendar->forYear((int) $month->year),
+            fn (string $date): bool => str_starts_with($date, $month->format('Y-m-')),
+            ARRAY_FILTER_USE_KEY,
+        );
         $excludedAppointmentId = $request->user()->hasRole('admin', 'staff', 'doctor')
             ? ($data['exclude_appointment_id'] ?? null)
             : null;
@@ -232,7 +260,7 @@ class AppointmentController extends Controller
             $dateKey = $date->toDateString();
             $availableTimes = [];
 
-            if ($date->dayOfWeekIso !== 7) {
+            if ($date->dayOfWeekIso !== 7 && ! isset($holidays[$dateKey])) {
                 foreach ($this->appointmentTimeOptions() as $time) {
                     $startsAt = $date->copy()->setTimeFromTimeString($time);
                     $slotKeys = $this->appointmentSlotKeys($startsAt, $durationMinutes);
@@ -259,6 +287,7 @@ class AppointmentController extends Controller
         return response()->json([
             'month' => $month->format('Y-m'),
             'days' => $days,
+            'holidays' => $holidays,
         ]);
     }
 
@@ -269,7 +298,8 @@ class AppointmentController extends Controller
     ): RedirectResponse {
         $user = $request->user();
         $isPatient = $user->role === 'patient';
-        abort_unless($isPatient || $user->hasRole('admin', 'staff'), 403);
+        abort_unless($isPatient || $user->hasRole('admin', 'staff', 'doctor'), 403);
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
 
         $this->mergeAppointmentStart($request);
 
@@ -313,6 +343,12 @@ class AppointmentController extends Controller
         $patient = $isPatient
             ? $request->user()->patient()->firstOrFail()
             : Patient::query()->findOrFail($data['patient_id']);
+        if ($user->hasRole('doctor')) {
+            abort_unless(
+                Patient::query()->forBranch((int) $user->branch_id)->whereKey($patient->id)->exists(),
+                404,
+            );
+        }
         $durationMinutes = (int) $services->sum('duration_minutes');
         $durationMinutes = max(30, $durationMinutes);
         $startsAt = isset($data['starts_at'])
@@ -376,7 +412,8 @@ class AppointmentController extends Controller
         AuditTrail $auditTrail,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
-        abort_unless($request->user()->hasRole('admin', 'staff'), 403);
+        abort_unless($request->user()->hasRole('admin', 'staff', 'doctor'), 403);
+        abort_if($request->user()->hasRole('doctor') && $request->user()->branch_id === null, 403);
 
         DB::transaction(function () use ($appointment, $request, $auditTrail): void {
             $lockedAppointment = Appointment::query()
@@ -428,6 +465,23 @@ class AppointmentController extends Controller
         return redirect()->route('clinic.queue.index')->with('status', 'Appointment checked in and added to the queue.');
     }
 
+    private function addToQueue(Appointment $appointment): QueueEntry
+    {
+        if ($appointment->queueEntry !== null) {
+            return $appointment->queueEntry;
+        }
+
+        $queueEntry = QueueEntry::create([
+            'appointment_id' => $appointment->id,
+            'queue_date' => today(config('clinic.timezone')),
+            'queue_number' => 'Q-PENDING-'.str_pad((string) $appointment->id, 6, '0', STR_PAD_LEFT),
+            'status' => 'waiting',
+        ]);
+        $queueEntry->update(['queue_number' => sprintf('Q-%03d', $queueEntry->id)]);
+
+        return $queueEntry;
+    }
+
     public function transition(
         Request $request,
         Appointment $appointment,
@@ -437,7 +491,8 @@ class AppointmentController extends Controller
         ClinicNotificationService $notifications,
     ): RedirectResponse {
         $user = $request->user();
-        abort_unless($user->hasRole('patient', 'admin', 'staff'), 403);
+        abort_unless($user->hasRole('patient', 'admin', 'staff', 'doctor'), 403);
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
 
         if (
             $user->hasRole('staff', 'doctor')
@@ -463,7 +518,7 @@ class AppointmentController extends Controller
         abort_unless(isset($transitions[$action]), 404);
         [$from, $to] = $transitions[$action];
 
-        if ($action === 'cancel' && $user->role !== 'patient' && ! $user->hasRole('admin', 'staff')) {
+        if ($action === 'cancel' && $user->role !== 'patient' && ! $user->hasRole('admin', 'staff', 'doctor')) {
             abort(403);
         }
 
@@ -554,18 +609,17 @@ class AppointmentController extends Controller
             $appointment->id,
         );
 
-        if (in_array($action, ['approve', 'reject', 'cancel'], true)) {
+        if (in_array($action, ['approve', 'reject'], true)) {
             $message = match ($action) {
                 'approve' => 'Your dental appointment is confirmed for '.$appointment->starts_at->format('F j, Y \a\t g:i A').'.',
                 'reject' => 'Your dental appointment request was not approved. Please contact the clinic to reschedule.',
-                default => 'Your dental appointment on '.$appointment->starts_at->format('F j, Y \a\t g:i A').' has been cancelled.',
             };
             $smsNotifier->send($appointment->patient, 'appointment_'.$action, $message, $appointment);
         }
 
         $statusMessage = 'Appointment updated to '.str_replace('_', ' ', $appointment->status).'.';
 
-        if ($action === 'consult' && $user->hasRole('admin', 'staff')) {
+        if ($action === 'consult' && $user->hasRole('admin', 'staff', 'doctor')) {
             return $this->redirectToAppointment($request, $appointment, $statusMessage);
         }
 
@@ -612,7 +666,6 @@ class AppointmentController extends Controller
         Request $request,
         Appointment $appointment,
         AuditTrail $auditTrail,
-        SmsNotifier $smsNotifier,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
         $this->mergeAppointmentStart($request);
@@ -670,7 +723,8 @@ class AppointmentController extends Controller
             $currentSlotKey = $lockedAppointment->starts_at->format('Y-m-d H:i:s');
             $clinicToday = today(config('clinic.timezone'))->toDateString();
             $clinicAppointmentStart = $this->clinicDateTime($lockedAppointment->starts_at);
-            $canRescheduleOnAppointmentDate = $request->user()->hasRole('admin', 'staff');
+            $canRescheduleOnAppointmentDate = $request->user()->hasRole('admin', 'staff')
+                || ($request->user()->hasRole('doctor') && $request->user()->branch_id !== null);
             $appointmentDate = $clinicAppointmentStart->toDateString();
 
             if (
@@ -748,33 +802,7 @@ class AppointmentController extends Controller
             $appointment->id,
         );
 
-        if ($appointment->status === 'approved') {
-            $smsNotifier->send(
-                $appointment->patient,
-                'appointment_rescheduled',
-                'Your dental appointment has been rescheduled to '.$appointment->starts_at->format('F j, Y \a\t g:i A').'.',
-                $appointment,
-            );
-        }
-
         return back()->with('status', 'Appointment rescheduled to '.$appointment->starts_at->format('F j, Y \a\t g:i A').'.');
-    }
-
-    private function addToQueue(Appointment $appointment): QueueEntry
-    {
-        if ($appointment->queueEntry !== null) {
-            return $appointment->queueEntry;
-        }
-
-        $queueEntry = QueueEntry::create([
-            'appointment_id' => $appointment->id,
-            'queue_date' => today(config('clinic.timezone')),
-            'queue_number' => 'Q-PENDING-'.str_pad((string) $appointment->id, 6, '0', STR_PAD_LEFT),
-            'status' => 'waiting',
-        ]);
-        $queueEntry->update(['queue_number' => sprintf('Q-%03d', $queueEntry->id)]);
-
-        return $queueEntry;
     }
 
     private function mergeAppointmentStart(Request $request): void
@@ -943,6 +971,13 @@ class AppointmentController extends Controller
         int $branchId,
         ?int $ignoreAppointmentId = null,
     ): void {
+        $holidayName = $this->holidayCalendar->nameFor($startsAt);
+        if ($holidayName !== null) {
+            throw ValidationException::withMessages([
+                'starts_at' => "Appointments cannot be booked on {$holidayName}. Please select another date.",
+            ]);
+        }
+
         if ($startsAt->dayOfWeekIso === 7) {
             throw ValidationException::withMessages([
                 'starts_at' => 'The Dental Clinic is closed on Sundays. Please select another date.',

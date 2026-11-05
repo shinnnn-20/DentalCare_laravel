@@ -5,7 +5,7 @@
 @section('content')
     <div class="clinic-report-page">
         <div class="mb-8 flex flex-wrap items-end justify-between gap-4 print-hidden">
-            <div><p class="text-sm font-medium text-teal-700">Administration</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Clinic reports</h1><p class="mt-2 text-slate-500">Summary for {{ $from }} through {{ $to }} · {{ $selectedBranchName }}.</p></div>
+            <div><p class="text-sm font-medium text-teal-700">{{ auth()->user()->role === 'doctor' ? 'Doctor portal' : 'Administration' }}</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Clinic reports</h1><p class="mt-2 text-slate-500">Summary for {{ $from }} through {{ $to }} · {{ $selectedBranchName }}.</p></div>
             <button class="btn-secondary" onclick="window.print()">Print</button>
         </div>
         <form method="GET" class="mb-6 flex flex-wrap items-end gap-4 rounded-2xl border border-slate-200 bg-white p-5 print-hidden">
@@ -13,11 +13,15 @@
             <label class="form-label">To<input class="form-input" type="date" name="to" value="{{ $to }}" required></label>
             <label class="form-label">Branch
                 <select class="form-input min-w-48" name="branch_id">
-                    <option value="" @selected($selectedBranchId === null)>All branches</option>
+                    @unless ($hasAssignedBranch)
+                        <option value="" @selected($selectedBranchId === null)>All branches</option>
+                    @endunless
                     @foreach ($branches as $branch)
                         <option value="{{ $branch->id }}" @selected((string) $selectedBranchId === (string) $branch->id)>{{ $branch->name }}</option>
                     @endforeach
-                    <option value="unassigned" @selected($selectedBranchId === 'unassigned')>Unassigned appointments</option>
+                    @unless ($hasAssignedBranch)
+                        <option value="unassigned" @selected($selectedBranchId === 'unassigned')>Unassigned appointments</option>
+                    @endunless
                 </select>
             </label>
             <button class="btn-primary">Apply range</button>
@@ -58,6 +62,27 @@
                     </div>
                     <button class="btn-secondary shrink-0" type="button" data-report-detail-close>Close</button>
                 </header>
+                <div class="hidden grid gap-3 border-b border-slate-200 px-4 py-3 sm:grid-cols-2 sm:px-6" data-report-revenue-filters>
+                    <label class="form-label">Filter by Branch
+                        <select class="form-input" data-report-revenue-branch>
+                            @unless ($hasAssignedBranch)
+                                <option value="">All branches</option>
+                            @endunless
+                            @foreach ($branches as $branch)
+                                <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                            @endforeach
+                            @unless ($hasAssignedBranch)
+                                <option value="unassigned">Unassigned appointments</option>
+                            @endunless
+                        </select>
+                    </label>
+                    <form class="flex items-end gap-2" data-report-revenue-search-form>
+                        <label class="form-label min-w-0 flex-1">Patient name or ID
+                            <input class="form-input" type="search" maxlength="120" placeholder="Search payments" data-report-revenue-patient>
+                        </label>
+                        <button class="btn-secondary shrink-0" type="submit">Search</button>
+                    </form>
+                </div>
                 <div class="min-h-32 overflow-auto p-4 sm:p-6">
                     <p class="hidden rounded-lg bg-rose-50 p-4 text-sm text-rose-800" role="alert" data-report-detail-error></p>
                     <p class="py-8 text-center text-sm text-slate-500" data-report-detail-loading>Loading records…</p>
@@ -157,6 +182,10 @@
             const previous = dialog.querySelector('[data-report-detail-previous]');
             const next = dialog.querySelector('[data-report-detail-next]');
             const close = dialog.querySelector('[data-report-detail-close]');
+            const revenueFilters = dialog.querySelector('[data-report-revenue-filters]');
+            const revenueBranch = dialog.querySelector('[data-report-revenue-branch]');
+            const revenueSearch = dialog.querySelector('[data-report-revenue-patient]');
+            const revenueSearchForm = dialog.querySelector('[data-report-revenue-search-form]');
             let selectedMetric = '';
             let currentPage = 1;
             let lastPage = 1;
@@ -171,6 +200,9 @@
             const renderDetails = (payload) => {
                 title.textContent = payload.title;
                 count.textContent = `${payload.total} ${payload.total === 1 ? 'record' : 'records'}`;
+                if (payload.revenue_total !== undefined) {
+                    count.textContent += ` · ${payload.revenue_total} total collected`;
+                }
                 currentPage = payload.page;
                 lastPage = payload.last_page;
                 pageLabel.textContent = payload.total > 0 ? `Page ${currentPage} of ${lastPage}` : '';
@@ -208,6 +240,15 @@
                 if (cards.dataset.reportBranch) {
                     url.searchParams.set('branch_id', cards.dataset.reportBranch);
                 }
+                if (selectedMetric === 'revenue') {
+                    url.searchParams.delete('branch_id');
+                    if (revenueBranch.value) {
+                        url.searchParams.set('branch_id', revenueBranch.value);
+                    }
+                    if (revenueSearch.value.trim()) {
+                        url.searchParams.set('patient_search', revenueSearch.value.trim());
+                    }
+                }
 
                 try {
                     const response = await fetch(url, {
@@ -231,9 +272,20 @@
             document.querySelectorAll('[data-report-detail]').forEach((button) => {
                 button.addEventListener('click', () => {
                     selectedMetric = button.dataset.reportDetail;
+                    const isRevenue = selectedMetric === 'revenue';
+                    revenueFilters.classList.toggle('hidden', !isRevenue);
+                    if (isRevenue) {
+                        revenueBranch.value = cards.dataset.reportBranch || '';
+                        revenueSearch.value = '';
+                    }
                     dialog.showModal();
                     loadPage(1);
                 });
+            });
+            revenueBranch.addEventListener('change', () => loadPage(1));
+            revenueSearchForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                loadPage(1);
             });
             close.addEventListener('click', () => dialog.close());
             previous.addEventListener('click', () => loadPage(currentPage - 1));

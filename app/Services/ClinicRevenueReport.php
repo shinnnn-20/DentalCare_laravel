@@ -9,6 +9,23 @@ use Illuminate\Support\Carbon;
 class ClinicRevenueReport
 {
     /**
+     * @param  Builder<Payment>  $payments
+     * @return Builder<Payment>
+     */
+    public function filterPaymentsByPatient(Builder $payments, ?string $search): Builder
+    {
+        if ($search === null || $search === '') {
+            return $payments;
+        }
+
+        return $payments->whereHas('bill.patient', function (Builder $patientQuery) use ($search): void {
+            $patientQuery
+                ->where('patient_number', 'like', '%'.$search.'%')
+                ->orWhereHas('user', fn (Builder $userQuery): Builder => $userQuery->where('name', 'like', '%'.$search.'%'));
+        });
+    }
+
+    /**
      * @return array{string, string}
      */
     public function utcRange(Carbon $startsAt, Carbon $endsAt): array

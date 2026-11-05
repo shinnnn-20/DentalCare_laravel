@@ -3,7 +3,7 @@
 @section('title', 'SMS logs')
 
 @section('content')
-    <div class="mb-8"><p class="text-sm font-medium text-teal-700">Administration</p><h1 class="mt-1 text-3xl font-bold tracking-tight">SMS logs</h1><p class="mt-2 text-slate-500">Delivery attempts and errors from the configured SMS gateway.</p></div>
+    <div class="mb-8"><p class="text-sm font-medium text-teal-700">{{ $isReadOnly ? 'Branch records' : 'Administration' }}</p><h1 class="mt-1 text-3xl font-bold tracking-tight">SMS logs</h1><p class="mt-2 text-slate-500">{{ $isReadOnly ? 'Delivery attempts and errors for appointments at your assigned branch.' : 'Delivery attempts and errors for appointment approvals and rejections.' }}</p></div>
     <section class="rounded-2xl border border-slate-200 bg-white">
         <div class="overflow-x-auto"><table class="data-table"><thead><tr><th>Date</th><th>Patient</th><th>Phone</th><th>Type</th><th>Message</th><th>Status</th><th>Error</th></tr></thead><tbody>
             @forelse ($logs as $log)

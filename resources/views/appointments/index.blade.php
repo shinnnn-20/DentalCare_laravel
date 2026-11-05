@@ -6,10 +6,10 @@
     <div class="mb-8">
         <p class="text-sm font-medium text-teal-700">{{ auth()->user()->role === 'patient' ? 'Patient portal' : 'Clinic operations' }}</p>
         <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">{{ $isAppointmentRecordsPage ? 'Appointment Records' : 'Appointments' }}</h1>
-        <p class="mt-2 text-slate-500">{{ $isAppointmentRecordsPage ? 'Review ongoing visits, pending requests, and appointment history.' : (auth()->user()->role === 'patient' ? 'Request an appointment and track its approval status.' : (auth()->user()->hasRole('admin', 'staff') ? 'Schedule appointments and register walk-ins. Manage existing records in Appointment Records.' : 'Review online bookings, add walk-ins, and manage the clinic schedule.')) }}</p>
+        <p class="mt-2 text-slate-500">{{ $isAppointmentRecordsPage ? 'Review ongoing visits, pending requests, and appointment history.' : (auth()->user()->role === 'patient' ? 'Request an appointment and track its approval status.' : 'Schedule appointments and register walk-ins. Manage existing records in Appointment Records.') }}</p>
     </div>
 
-    @if (! $isAppointmentRecordsPage && (auth()->user()->role === 'patient' || auth()->user()->hasRole('admin', 'staff')))
+    @if (! $isAppointmentRecordsPage && (auth()->user()->role === 'patient' || auth()->user()->hasRole('admin', 'staff', 'doctor')))
         <section class="mb-8 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div class="border-b border-slate-100 bg-gradient-to-r from-teal-50 via-white to-white px-5 py-5 sm:px-7">
                 <div class="flex items-start gap-3">
@@ -30,7 +30,7 @@
                         @endforeach
                     </select>
                 </label>
-                @if (auth()->user()->hasRole('admin', 'staff'))
+                @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                     <label class="form-label sm:col-span-2 xl:col-span-4">Patient
                         <select name="patient_id" class="form-input" required>
                             <option value="">Choose a patient</option>
@@ -140,6 +140,7 @@
                         <div class="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t border-slate-200 pt-3 text-xs text-slate-500">
                             <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-teal-600"></span>Available</span>
                             <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-slate-300"></span>Unavailable</span>
+                            <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-amber-400"></span>Holiday</span>
                         </div>
                     </div>
                 </div>
@@ -193,7 +194,7 @@
     @if (! auth()->user()->hasRole('admin', 'staff') || $isAppointmentRecordsPage)
         @if ($highlightedAppointmentId !== null)
             <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                <p>This visit is highlighted. Open its dental record or create a bill from the appointment actions.</p>
+                <p>{{ auth()->user()->role === 'doctor' ? 'This visit is highlighted. Review the appointment and its clinical history.' : 'This visit is highlighted. Open its dental record or create a bill from the appointment actions.' }}</p>
                 <a class="font-semibold text-amber-900 underline underline-offset-2" href="{{ route($isAppointmentRecordsPage ? 'clinic.appointment-records' : 'appointments.index', collect(request()->query())->except(['appointment_id', 'page'])->all()) }}">Dismiss highlight</a>
             </div>
         @endif
@@ -231,7 +232,7 @@
             @endif
             <div class="overflow-x-auto">
             <table class="data-table">
-                <thead><tr><th>Date & time</th>@if (auth()->user()->hasRole('admin', 'staff', 'doctor'))<th>Patient</th>@endif<th>Branch</th><th>Service</th><th>Type</th><th>Status</th><th>Queue</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Date & time</th>@if (auth()->user()->hasRole('admin', 'staff', 'doctor'))<th>Patient</th>@endif @if ($isAppointmentRecordsPage)<th>Follow-up date</th>@endif<th>Branch</th><th>Service</th><th>Type</th><th>Status</th><th>Queue</th><th>Actions</th></tr></thead>
                 <tbody>
                 @forelse ($sectionAppointments as $appointment)
                     <tr id="appointment-{{ $appointment->id }}" @class(['bg-amber-50 outline outline-2 outline-amber-400 outline-offset-[-2px]' => $highlightedAppointmentId === $appointment->id]) @if ($highlightedAppointmentId === $appointment->id) aria-current="true" @endif>
@@ -243,13 +244,16 @@
                         </td>
                         @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                             <td data-label="Patient">
-                                @if (auth()->user()->hasRole('admin', 'staff'))
+                                @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                     <a class="font-semibold text-teal-800 hover:underline" href="{{ route('clinic.patients.show', $appointment->patient) }}">{{ $appointment->patient->user->name }}</a>
                                 @else
                                     <span class="font-semibold">{{ $appointment->patient->user->name }}</span>
                                 @endif
                                 <div class="text-xs text-slate-400">{{ $appointment->patient->patient_number }}</div>
                             </td>
+                        @endif
+                        @if ($isAppointmentRecordsPage)
+                            <td data-label="Follow-up date">{{ $appointment->dentalRecord?->follow_up_date?->format('M j, Y') ?? '—' }}</td>
                         @endif
                         <td data-label="Branch"><span class="inline-flex max-w-full rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ $appointment->branch?->name ?? 'Not Assigned' }}</span></td>
                         <td data-label="Service">
@@ -285,7 +289,7 @@
                                             <form method="POST" action="{{ route('clinic.appointments.reschedule', $appointment) }}" class="mt-2 flex min-w-0 flex-wrap gap-1" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-exclude-appointment-id="{{ $appointment->id }}">
                                                 @csrf @method('PATCH')
                                                 <input type="hidden" name="service_id" value="{{ $appointment->service_id }}">
-                                                @if (auth()->user()->hasRole('admin', 'staff'))
+                                                @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                                     <label class="form-label w-full">Branch
                                                         <select class="form-input" name="branch_id" data-branch-select required>
                                                             <option value="">Choose a branch</option>
@@ -320,7 +324,7 @@
                                             <p class="hidden mt-2 text-sm font-medium text-rose-700" data-sunday-error role="alert">The Dental Clinic is closed on Sundays. Please select another date.</p>
                                         </details>
                                     @else
-                                        @if (auth()->user()->hasRole('admin', 'staff'))
+                                        @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                             @if ($appointment->starts_at->toDateString() < today(config('clinic.timezone'))->toDateString())
                                                 <p class="text-xs font-medium text-slate-500">Past appointments cannot be rescheduled.</p>
                                             @else
@@ -331,7 +335,7 @@
                                         @endif
                                     @endif
                                 @endif
-                                @if (auth()->user()->hasRole('admin', 'staff'))
+                                @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                     @if ($appointment->status === 'pending')
                                         <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}">@csrf<button class="btn-small">Approve</button></form>
                                         <form method="POST" action="{{ route('appointments.transition', [$appointment, 'reject']) }}">@csrf<button class="btn-small">Reject</button></form>
@@ -384,6 +388,7 @@
                 .filter((option) => option.value !== '')
                 .map((option) => ({ value: option.value, label: option.textContent }));
             let availability = {};
+            let holidays = {};
             let currentMonth = dateInput.value
                 ? dateInput.value.slice(0, 7)
                 : form.dataset.currentMonth;
@@ -632,7 +637,9 @@
                         ? 'Select a highlighted date to see available times.'
                         : 'Select a date to see available times.';
                 } else if (availableTimes.length === 0) {
-                    availabilityMessage.textContent = 'No appointment times are available on this date.';
+                    availabilityMessage.textContent = holidays[dateInput.value]
+                        ? `The clinic is closed for ${holidays[dateInput.value]}. Choose another date.`
+                        : 'No appointment times are available on this date.';
                 } else {
                     const unavailableCount = appointmentTimeOptions.length - availableTimes.length;
                     availabilityMessage.textContent = `${availableTimes.length} times available; ${unavailableCount} unavailable.`;
@@ -942,6 +949,7 @@
                 for (let day = 1; day <= daysInMonth; day += 1) {
                     const date = `${currentMonth}-${String(day).padStart(2, '0')}`;
                     const times = availability[date] || [];
+                    const holidayName = holidays[date];
                     const isAvailable = times.length > 0;
                     const button = document.createElement('button');
                     const isSelected = dateInput.value === date;
@@ -949,7 +957,9 @@
                     button.disabled = !isAvailable;
                     button.className = isAvailable
                         ? 'calendar-day calendar-day-available'
-                        : 'calendar-day calendar-day-unavailable';
+                        : holidayName
+                            ? 'calendar-day calendar-day-holiday'
+                            : 'calendar-day calendar-day-unavailable';
                     if (isAvailable && isSelected) {
                         button.classList.add('calendar-day-selected');
                     }
@@ -957,8 +967,11 @@
                     button.setAttribute('aria-pressed', String(isSelected));
                     button.setAttribute(
                         'aria-label',
-                        `${new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(new Date(`${date}T12:00:00`))}: ${isAvailable ? `${times.length} available times` : 'unavailable'}`,
+                        `${new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(new Date(`${date}T12:00:00`))}: ${holidayName ? `${holidayName}; clinic closed` : isAvailable ? `${times.length} available times` : 'unavailable'}`,
                     );
+                    if (holidayName) {
+                        button.title = `${holidayName} — clinic closed`;
+                    }
                     button.addEventListener('click', () => {
                         dateInput.value = date;
                         dateInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -975,6 +988,7 @@
                 closeTimeMenu();
                 currentMonth = month;
                 availability = {};
+                holidays = {};
                 form.dataset.availabilityLoaded = 'false';
                 timeSelect.disabled = true;
                 if (availabilityMessage) {
@@ -1023,6 +1037,7 @@
                         return;
                     }
                     availability = result.days;
+                    holidays = result.holidays || {};
                     currentMonth = result.month;
                     form.dataset.availabilityLoaded = 'true';
                     if (dateInput.value && (!availability[dateInput.value] || availability[dateInput.value].length === 0)) {

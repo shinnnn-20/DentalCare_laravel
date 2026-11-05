@@ -46,6 +46,22 @@
 }
 
 @layer components {
+    #app-message-modal[data-variant='success'] [data-modal-icon] {
+        @apply bg-emerald-50 text-emerald-700;
+    }
+
+    #app-message-modal[data-variant='warning'] [data-modal-icon] {
+        @apply bg-amber-50 text-amber-700;
+    }
+
+    #app-message-modal[data-variant='error'] [data-modal-icon] {
+        @apply bg-rose-50 text-rose-700;
+    }
+
+    #app-message-modal[data-confirmation='true'][data-variant='danger'] [data-modal-confirm] {
+        @apply bg-rose-700 text-white hover:bg-rose-800 focus:ring-rose-200;
+    }
+
     .nav-link {
         @apply rounded-xl px-3 py-2.5 font-medium text-slate-600 transition hover:bg-sky-50 hover:text-sky-900;
     }
@@ -139,10 +155,6 @@
         @apply cursor-not-allowed text-slate-400 hover:bg-white hover:text-slate-400;
     }
 
-    .availability-time-interval {
-        @apply shrink-0 rounded-full bg-teal-50 px-2 py-0.5 text-[0.65rem] font-semibold text-teal-800;
-    }
-
     .rfid-validity-picker {
         @apply relative block w-full min-w-0;
     }
@@ -193,10 +205,6 @@
 
     .rfid-validity-day-selected {
         @apply bg-teal-700 font-semibold text-white hover:bg-teal-800 hover:text-white;
-    }
-
-    .rfid-validity-time-menu {
-        @apply absolute left-0 right-0 top-[calc(100%+0.25rem)] z-[120] max-h-48 overflow-y-auto overscroll-contain rounded-xl border border-slate-200 bg-white p-1 shadow-xl;
     }
 
     .time-picker {
@@ -329,6 +337,10 @@
 
     .calendar-day-unavailable {
         @apply cursor-not-allowed border-transparent bg-slate-100 text-slate-300;
+    }
+
+    .calendar-day-holiday {
+        @apply cursor-not-allowed border-amber-200 bg-amber-50 font-medium text-amber-700;
     }
 
     .calendar-day-selected {

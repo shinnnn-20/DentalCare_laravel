@@ -17,6 +17,139 @@ class BranchAwareOverviewReportsTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_revenue_details_filter_by_branch_and_patient_on_overview_and_reports(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-03 12:00:00', config('clinic.timezone')));
+        $northBranch = Branch::factory()->create(['name' => 'North Branch']);
+        $southBranch = Branch::factory()->create(['name' => 'South Branch']);
+        $service = Service::factory()->create();
+        $northPatient = Patient::factory()->for(User::factory()->state([
+            'role' => 'patient',
+            'name' => 'Maria North',
+        ]))->create(['patient_number' => 'P-NORTH-001']);
+        $southPatient = Patient::factory()->for(User::factory()->state([
+            'role' => 'patient',
+            'name' => 'Jose South',
+        ]))->create(['patient_number' => 'P-SOUTH-001']);
+        $northAppointment = Appointment::factory()->for($northPatient)->for($northBranch)->for($service)->create([
+            'starts_at' => '2026-11-03 10:00:00',
+        ]);
+        $southAppointment = Appointment::factory()->for($southPatient)->for($southBranch)->for($service)->create([
+            'starts_at' => '2026-11-03 11:00:00',
+        ]);
+        $northBill = Bill::factory()->for($northPatient)->for($northAppointment)->create();
+        $southBill = Bill::factory()->for($southPatient)->for($southAppointment)->create();
+        Payment::factory()->for($northBill)->create([
+            'applied_amount' => '125.00',
+            'created_at' => '2026-11-03 04:00:00',
+        ]);
+        Payment::factory()->for($southBill)->create([
+            'applied_amount' => '475.00',
+            'created_at' => '2026-11-03 04:30:00',
+        ]);
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAs($admin)
+            ->get(route('dashboard.details', [
+                'metric' => 'today_revenue',
+                'branch_id' => $northBranch->id,
+                'patient_search' => 'P-NORTH-001',
+            ]))
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('revenue_total', '₱125.00')
+            ->assertJsonPath('records.0.name', 'Maria North')
+            ->assertJsonPath('records.0.branch', 'North Branch')
+            ->assertJsonPath('records.0.amount', '₱125.00');
+
+        $this->get(route('admin.reports.details', [
+            'metric' => 'revenue',
+            'from' => '2026-11-03',
+            'to' => '2026-11-03',
+            'branch_id' => $southBranch->id,
+            'patient_search' => 'Jose South',
+        ]))
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('revenue_total', '₱475.00')
+            ->assertJsonPath('records.0.name', 'Jose South')
+            ->assertJsonPath('records.0.branch', 'South Branch')
+            ->assertJsonPath('records.0.amount', '₱475.00');
+
+        $this->get(route('dashboard.details', [
+            'metric' => 'today_revenue',
+            'branch_id' => $northBranch->id,
+            'patient_search' => 'Jose South',
+        ]))
+            ->assertOk()
+            ->assertJsonPath('total', 0)
+            ->assertJsonPath('revenue_total', '₱0.00');
+    }
+
+    public function test_doctors_cannot_view_today_revenue_or_reports(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-03 12:00:00', config('clinic.timezone')));
+        $branch = Branch::factory()->create(['name' => 'Doctor Branch']);
+        $otherBranch = Branch::factory()->create(['name' => 'Other Branch']);
+        $service = Service::factory()->create();
+        $patient = Patient::factory()->for(User::factory()->state(['role' => 'patient']))->create();
+        $otherPatient = Patient::factory()->for(User::factory()->state(['role' => 'patient']))->create();
+        $appointment = Appointment::factory()->for($patient)->for($branch)->for($service)->create([
+            'starts_at' => '2026-11-03 10:00:00',
+        ]);
+        $otherAppointment = Appointment::factory()->for($otherPatient)->for($otherBranch)->for($service)->create([
+            'starts_at' => '2026-11-03 11:00:00',
+        ]);
+        $bill = Bill::factory()->for($patient)->for($appointment)->create();
+        $otherBill = Bill::factory()->for($otherPatient)->for($otherAppointment)->create();
+        Payment::factory()->for($bill)->create([
+            'applied_amount' => '125.00',
+            'created_at' => '2026-11-03 04:00:00',
+        ]);
+        Payment::factory()->for($otherBill)->create([
+            'applied_amount' => '475.00',
+            'created_at' => '2026-11-03 04:30:00',
+        ]);
+        $doctor = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $branch->id,
+        ]);
+
+        $this->actingAs($doctor)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertDontSee("Today's revenue");
+
+        $this->get(route('dashboard.details', ['metric' => 'today_revenue']))
+            ->assertForbidden();
+
+        $this->get(route('admin.reports', [
+            'from' => '2026-11-03',
+            'to' => '2026-11-03',
+        ]))->assertForbidden();
+
+        $this->get(route('admin.reports', [
+            'from' => '2026-11-03',
+            'to' => '2026-11-03',
+            'branch_id' => $otherBranch->id,
+        ]))->assertForbidden();
+
+        $this->get(route('admin.reports.details', [
+            'metric' => 'revenue',
+            'from' => '2026-11-03',
+            'to' => '2026-11-03',
+        ]))->assertForbidden();
+
+        $this->getJson(route('admin.reports.details', [
+            'metric' => 'revenue',
+            'from' => '2026-11-03',
+            'to' => '2026-11-03',
+            'branch_id' => $otherBranch->id,
+        ]))->assertForbidden();
+
+        $this->get(route('admin.audit-logs'))->assertForbidden();
+    }
+
     public function test_overview_and_reports_filter_appointments_revenue_and_print_branch_context(): void
     {
         $this->travelTo(Carbon::parse('2026-10-30 12:00:00', config('clinic.timezone')));

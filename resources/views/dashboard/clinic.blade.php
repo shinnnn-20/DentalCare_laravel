@@ -95,6 +95,27 @@
                     </select>
                 </label>
             </div>
+            <div class="hidden grid gap-3 border-b border-slate-200 px-4 py-3 sm:grid-cols-2 sm:px-6" data-revenue-filters>
+                <label class="form-label">Filter by Branch
+                    <select class="form-input" data-revenue-branch>
+                        @unless (auth()->user()->hasRole('staff', 'doctor') && auth()->user()->branch_id !== null)
+                            <option value="">All branches</option>
+                        @endunless
+                        @foreach ($branches as $branch)
+                            <option value="{{ $branch->id }}">{{ $branch->name }}</option>
+                        @endforeach
+                        @unless (auth()->user()->hasRole('staff', 'doctor') && auth()->user()->branch_id !== null)
+                            <option value="unassigned">Unassigned appointments</option>
+                        @endunless
+                    </select>
+                </label>
+                <form class="flex items-end gap-2" data-revenue-search-form>
+                    <label class="form-label min-w-0 flex-1">Patient name or ID
+                        <input class="form-input" type="search" maxlength="120" placeholder="Search payments" data-revenue-patient>
+                    </label>
+                    <button class="btn-secondary shrink-0" type="submit">Search</button>
+                </form>
+            </div>
             <div class="min-h-32 overflow-auto p-4 sm:p-6">
                 <p class="hidden rounded-lg bg-rose-50 p-4 text-sm text-rose-800" role="alert" data-details-error></p>
                 <p class="py-8 text-center text-sm text-slate-500" data-details-loading>Loading records…</p>
@@ -217,6 +238,10 @@
             const appointmentFilters = dialog.querySelector('[data-appointment-filters]');
             const appointmentStatus = dialog.querySelector('[data-appointment-status]');
             const appointmentBranch = dialog.querySelector('[data-appointment-branch]');
+            const revenueFilters = dialog.querySelector('[data-revenue-filters]');
+            const revenueBranch = dialog.querySelector('[data-revenue-branch]');
+            const revenueSearch = dialog.querySelector('[data-revenue-patient]');
+            const revenueSearchForm = dialog.querySelector('[data-revenue-search-form]');
             let selectedMetric = '';
             let currentPage = 1;
             let lastPage = 1;
@@ -231,6 +256,9 @@
             const renderDetails = (payload) => {
                 title.textContent = payload.title;
                 count.textContent = `${payload.total} ${payload.total === 1 ? 'record' : 'records'}`;
+                if (payload.revenue_total !== undefined) {
+                    count.textContent += ` · ${payload.revenue_total} total collected`;
+                }
                 currentPage = payload.page;
                 lastPage = payload.last_page;
                 pageLabel.textContent = payload.total > 0 ? `Page ${currentPage} of ${lastPage}` : '';
@@ -273,6 +301,15 @@
                     url.searchParams.set('appointment_status', appointmentStatus.value);
                     url.searchParams.set('appointment_branch_id', appointmentBranch.value);
                 }
+                if (selectedMetric === 'today_revenue') {
+                    url.searchParams.delete('branch_id');
+                    if (revenueBranch.value) {
+                        url.searchParams.set('branch_id', revenueBranch.value);
+                    }
+                    if (revenueSearch.value.trim()) {
+                        url.searchParams.set('patient_search', revenueSearch.value.trim());
+                    }
+                }
 
                 try {
                     const response = await fetch(url, {
@@ -297,10 +334,16 @@
                 button.addEventListener('click', () => {
                     selectedMetric = button.dataset.dashboardDetail;
                     const isTodayAppointments = selectedMetric === 'today_appointments';
+                    const isTodayRevenue = selectedMetric === 'today_revenue';
                     appointmentFilters.classList.toggle('hidden', !isTodayAppointments);
+                    revenueFilters.classList.toggle('hidden', !isTodayRevenue);
                     if (isTodayAppointments) {
                         appointmentStatus.value = 'all';
                         appointmentBranch.value = dialog.dataset.defaultAppointmentBranch || 'all';
+                    }
+                    if (isTodayRevenue) {
+                        revenueBranch.value = dialog.dataset.branch || '';
+                        revenueSearch.value = '';
                     }
                     dialog.showModal();
                     loadPage(1);
@@ -308,6 +351,11 @@
             });
             appointmentStatus.addEventListener('change', () => loadPage(1));
             appointmentBranch.addEventListener('change', () => loadPage(1));
+            revenueBranch.addEventListener('change', () => loadPage(1));
+            revenueSearchForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                loadPage(1);
+            });
             close.addEventListener('click', () => dialog.close());
             previous.addEventListener('click', () => loadPage(currentPage - 1));
             next.addEventListener('click', () => loadPage(currentPage + 1));

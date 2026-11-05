@@ -33,8 +33,11 @@ class AppointmentAvailabilityTest extends TestCase
     public function test_authorized_clinic_users_can_create_and_view_a_branch_availability_block(string $role): void
     {
         $this->travelTo('2026-10-25 09:00:00');
-        $user = User::factory()->create(['role' => $role]);
         $branch = Branch::query()->where('slug', 'general-trias')->firstOrFail();
+        $user = User::factory()->create([
+            'role' => $role,
+            'branch_id' => $role === 'doctor' ? $branch->id : null,
+        ]);
 
         $this->actingAs($user)
             ->post(route('clinic.availability.store'), [
@@ -44,6 +47,7 @@ class AppointmentAvailabilityTest extends TestCase
                 'ends_at' => '12:00',
                 'reason' => 'Long dental procedure',
                 'description' => 'Reserve the treatment room.',
+                'confirm_existing_appointments' => '1',
             ])
             ->assertRedirectToRoute('clinic.availability.index')
             ->assertSessionHas('status', 'Appointment availability blocked.');
@@ -59,21 +63,33 @@ class AppointmentAvailabilityTest extends TestCase
             'record_id' => (string) $block->id,
         ]);
 
-        $this->get(route('clinic.availability.index'))
+        $response = $this->get(route('clinic.availability.index'));
+
+        $response
             ->assertOk()
             ->assertSee($branch->name)
             ->assertSee('Long dental procedure')
+            ->assertSee('data-modal-variant="success"', false)
+            ->assertSee('Appointment availability blocked.')
+            ->assertDontSee('onsubmit="return confirm(', false)
             ->assertSee('Enable time again')
             ->assertSee('data-availability-form', false)
             ->assertSee('data-availability-time="start"', false)
             ->assertSee('data-availability-time="end"', false)
             ->assertSee('value="10:00"', false)
             ->assertSee('10:00 AM')
+            ->assertDontSee('value="12:00"', false)
+            ->assertDontSee('value="12:30"', false)
             ->assertSee('value="17:00"', false)
+            ->assertDontSee("interval.textContent = '30 min';", false)
             ->assertSee('5:00 PM')
             ->assertSee("label.textContent = selectedOption?.textContent || 'Select time';", false)
             ->assertSee('Choose an end time after the start time.')
             ->assertSeeInOrder(['<!DOCTYPE html>', 'data-availability-form', "document.querySelectorAll('[data-availability-time]')"], false);
+
+        if ($role !== 'doctor') {
+            $response->assertSee('data-confirm="Permanently delete this availability block?"', false);
+        }
     }
 
     #[DataProvider('availabilityBlockingRoles')]
@@ -90,6 +106,7 @@ class AppointmentAvailabilityTest extends TestCase
                 'starts_at' => '11:00',
                 'ends_at' => '12:00',
                 'reason' => 'Other',
+                'confirm_existing_appointments' => '1',
             ])
             ->assertRedirectToRoute('clinic.availability.index')
             ->assertSessionHas('status', 'Appointment availability blocked.');
@@ -146,9 +163,7 @@ class AppointmentAvailabilityTest extends TestCase
         $this->actingAs($staff)
             ->from(route('clinic.availability.index'))
             ->post(route('clinic.availability.store'), $blockData)
-            ->assertSessionHasErrors([
-                'confirm_existing_appointments' => 'This time overlaps 1 existing appointment(s). Confirm to block availability; existing appointments will remain booked.',
-            ]);
+            ->assertSessionHasErrors('confirm_existing_appointments');
 
         $this->assertDatabaseCount('appointment_availability_blocks', 0);
         $this->assertDatabaseHas('appointments', ['id' => $appointment->id, 'status' => $status]);
@@ -185,6 +200,7 @@ class AppointmentAvailabilityTest extends TestCase
             'starts_at' => '10:00',
             'ends_at' => '11:00',
             'reason' => 'Dentist unavailable',
+            'confirm_existing_appointments' => '1',
         ])->assertRedirectToRoute('clinic.availability.index');
 
         $generalAvailability = $this->actingAs($patient->user)->getJson(route('appointments.availability', [
@@ -278,7 +294,9 @@ class AppointmentAvailabilityTest extends TestCase
     public function test_only_authorized_roles_can_manage_appointment_availability(): void
     {
         $patient = User::factory()->create(['role' => 'patient']);
-        $doctor = User::factory()->create(['role' => 'doctor']);
+        $branch = Branch::query()->where('slug', 'general-trias')->firstOrFail();
+        $doctor = User::factory()->create(['role' => 'doctor', 'branch_id' => $branch->id]);
+        $unassignedDoctor = User::factory()->create(['role' => 'doctor']);
 
         $this->actingAs($patient)
             ->get(route('clinic.availability.index'))
@@ -287,6 +305,10 @@ class AppointmentAvailabilityTest extends TestCase
         $this->actingAs($doctor)
             ->get(route('clinic.availability.index'))
             ->assertOk();
+
+        $this->actingAs($unassignedDoctor)
+            ->get(route('clinic.availability.index'))
+            ->assertForbidden();
     }
 
     #[DataProvider('availabilityBlockingRoles')]
@@ -346,6 +368,7 @@ class AppointmentAvailabilityTest extends TestCase
             'starts_at' => '10:15',
             'ends_at' => '10:45',
             'reason' => 'Other',
+            'confirm_existing_appointments' => '1',
         ])->assertSessionHasErrors('starts_at');
 
         $this->post(route('clinic.availability.store'), [
@@ -354,6 +377,7 @@ class AppointmentAvailabilityTest extends TestCase
             'starts_at' => '10:00',
             'ends_at' => '11:00',
             'reason' => 'Other',
+            'confirm_existing_appointments' => '1',
         ])->assertSessionHasErrors([
             'date' => 'The Dental Clinic is closed on Sundays. Choose another date.',
         ]);
@@ -378,6 +402,7 @@ class AppointmentAvailabilityTest extends TestCase
             ->post(route('clinic.availability.store'), [
                 ...$validData,
                 'date' => '2026-10-29',
+                'confirm_existing_appointments' => '1',
             ])
             ->assertSessionHasErrors([
                 'date' => 'Choose today or a future date to block availability.',
@@ -386,11 +411,41 @@ class AppointmentAvailabilityTest extends TestCase
         $this->post(route('clinic.availability.store'), [
             ...$validData,
             'date' => '2026-10-30',
+            'confirm_existing_appointments' => '1',
         ])->assertSessionHasErrors([
             'starts_at' => 'Choose a future time to block.',
         ]);
 
         $this->assertDatabaseCount('appointment_availability_blocks', 0);
+    }
+
+    #[DataProvider('uncheckedConfirmationValues')]
+    public function test_blocking_does_not_create_a_block_without_confirmation(array $confirmationData): void
+    {
+        $this->travelTo('2026-10-25 09:00:00');
+        $staff = User::factory()->create(['role' => 'staff']);
+        $branch = Branch::query()->where('slug', 'general-trias')->firstOrFail();
+
+        $this->actingAs($staff)
+            ->post(route('clinic.availability.store'), [
+                'branch_id' => $branch->id,
+                'date' => '2026-10-26',
+                'starts_at' => '10:00',
+                'ends_at' => '11:00',
+                'reason' => 'Other',
+                ...$confirmationData,
+            ])
+            ->assertSessionHasErrors('confirm_existing_appointments');
+
+        $this->assertDatabaseCount('appointment_availability_blocks', 0);
+    }
+
+    public static function uncheckedConfirmationValues(): array
+    {
+        return [
+            'checkbox omitted' => [[]],
+            'checkbox unchecked' => [['confirm_existing_appointments' => '0']],
+        ];
     }
 
     public function test_availability_picker_uses_clinic_date_and_disables_elapsed_slots(): void

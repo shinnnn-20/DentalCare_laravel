@@ -6,15 +6,110 @@ use App\Enums\EmailVerificationResult;
 use App\Mail\VerifyPatientEmail;
 use App\Models\Patient;
 use App\Models\User;
+use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Password;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\TestCase;
 
 class EmailVerificationTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_patient_can_request_a_reset_link_and_reset_their_password(): void
+    {
+        Notification::fake();
+        $user = User::factory()->create([
+            'email' => 'patient@example.test',
+            'password' => 'Old-password-123!',
+        ]);
+        $oldRememberToken = $user->remember_token;
+
+        $this->get(route('login'))
+            ->assertSee(route('password.request'), false);
+
+        $this->post(route('password.email'), ['email' => 'PATIENT@example.test'])
+            ->assertSessionHas('status', 'If an account exists for that email address, a password reset link will be sent.');
+
+        $token = null;
+        Notification::assertSentTo($user, ResetPassword::class, function (ResetPassword $notification) use (&$token): bool {
+            $token = $notification->token;
+
+            return true;
+        });
+        $this->assertIsString($token);
+        $this->get(route('password.reset', ['token' => $token, 'email' => $user->email]))
+            ->assertOk()
+            ->assertSee('Choose a new password')
+            ->assertSee('name="token"', false);
+
+        $this->post(route('password.update'), [
+            'token' => $token,
+            'email' => $user->email,
+            'password' => 'New-password-123!',
+            'password_confirmation' => 'New-password-123!',
+        ])->assertRedirectToRoute('login')
+            ->assertSessionHas('status', 'Your password has been reset. You can now sign in.');
+
+        $this->assertTrue(Hash::check('New-password-123!', $user->fresh()->password));
+        $this->assertNotSame($oldRememberToken, $user->fresh()->remember_token);
+        $this->assertDatabaseMissing('password_reset_tokens', ['email' => $user->email]);
+    }
+
+    public function test_password_reset_request_does_not_disclose_unknown_emails(): void
+    {
+        Notification::fake();
+
+        $this->post(route('password.email'), ['email' => 'unknown@example.test'])
+            ->assertSessionHas('status', 'If an account exists for that email address, a password reset link will be sent.');
+
+        Notification::assertNothingSent();
+    }
+
+    public function test_password_reset_rejects_an_invalid_token_without_changing_the_password(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'patient@example.test',
+            'password' => 'Old-password-123!',
+        ]);
+        $originalPassword = $user->password;
+
+        $this->post(route('password.update'), [
+            'token' => 'invalid-reset-token',
+            'email' => $user->email,
+            'password' => 'New-password-123!',
+            'password_confirmation' => 'New-password-123!',
+        ])->assertSessionHasErrors([
+            'email' => 'This password reset link is invalid or has expired. Request a new one and try again.',
+        ]);
+
+        $this->assertSame($originalPassword, $user->fresh()->password);
+    }
+
+    public function test_password_reset_enforces_password_requirements(): void
+    {
+        Notification::fake();
+        $user = User::factory()->create([
+            'email' => 'patient@example.test',
+            'password' => 'Old-password-123!',
+        ]);
+        $token = Password::createToken($user);
+        $originalPassword = $user->password;
+
+        $this->post(route('password.update'), [
+            'token' => $token,
+            'email' => $user->email,
+            'password' => 'new-password-123!',
+            'password_confirmation' => 'new-password-123!',
+        ])->assertSessionHasErrors('password');
+
+        $this->assertSame($originalPassword, $user->fresh()->password);
+    }
 
     public function test_registration_sends_a_hashed_six_digit_code_and_shows_the_verification_screen(): void
     {
@@ -44,6 +139,71 @@ class EmailVerificationTest extends TestCase
         });
     }
 
+    #[DataProvider('invalidRegistrationIdentityFields')]
+    public function test_registration_rejects_invalid_name_email_and_contact_number(
+        string $field,
+        string $value,
+        string $errorMessage,
+    ): void {
+        $this->post(route('register.store'), [
+            ...$this->registrationData(),
+            $field => $value,
+        ])->assertSessionHasErrors([$field => $errorMessage]);
+
+        $this->assertDatabaseMissing('users', ['email' => 'patient@example.test']);
+    }
+
+    public static function invalidRegistrationIdentityFields(): array
+    {
+        return [
+            'name contains digits' => ['name', 'Jamie Patient 2', 'The name field format is invalid.'],
+            'email has invalid format' => ['email', 'not-an-email', 'The email field must be a valid email address.'],
+            'phone exceeds eleven digits' => [
+                'phone',
+                '091700000001',
+                'The phone field must not be greater than 11 characters.',
+            ],
+            'phone contains non-digits' => ['phone', '0917-000-000', 'The phone field format is invalid.'],
+        ];
+    }
+
+    #[DataProvider('invalidRegistrationPasswords')]
+    public function test_registration_rejects_passwords_shorter_than_eight_or_without_a_special_character(
+        string $password,
+        string $errorMessage,
+    ): void {
+        $this->post(route('register.store'), [
+            ...$this->registrationData(),
+            'password' => $password,
+            'password_confirmation' => $password,
+        ])->assertSessionHasErrors(['password' => $errorMessage]);
+
+        $this->assertDatabaseMissing('users', ['email' => 'patient@example.test']);
+    }
+
+    public static function invalidRegistrationPasswords(): array
+    {
+        return [
+            'short password' => ['Abc1!xy', 'The password field must be at least 8 characters.'],
+            'no special character' => ['Abcdef12', 'The password field must contain at least one symbol.'],
+            'no capital letter' => ['abcdef1!', 'The password field format is invalid.'],
+            'space is not a special character' => ['Abcdef 1', 'The password field format is invalid.'],
+        ];
+    }
+
+    public function test_registration_accepts_an_eight_character_password_with_a_capital_letter_and_special_character(): void
+    {
+        Mail::fake();
+
+        $this->post(route('register.store'), [
+            ...$this->registrationData(),
+            'password' => 'Abcdef1!',
+            'password_confirmation' => 'Abcdef1!',
+        ])->assertRedirectToRoute('verification.notice');
+
+        $this->assertDatabaseHas('users', ['email' => 'patient@example.test']);
+    }
+
     public function test_correct_code_verifies_once_and_patient_can_log_in_normally(): void
     {
         Mail::fake();
@@ -59,7 +219,7 @@ class EmailVerificationTest extends TestCase
 
         $this->post(route('login.store'), [
             'email' => 'patient@example.test',
-            'password' => 'secure-password-123',
+            'password' => 'Secure-password-123!',
         ])->assertRedirectToRoute('dashboard');
         $this->assertAuthenticatedAs($user);
 
@@ -137,14 +297,14 @@ class EmailVerificationTest extends TestCase
     {
         $user = User::factory()->unverified()->create([
             'email' => 'unverified@example.test',
-            'password' => 'secure-password-123',
+            'password' => 'Secure-password-123!',
             'role' => 'patient',
         ]);
         Patient::factory()->create(['user_id' => $user->id]);
 
         $this->post(route('login.store'), [
             'email' => $user->email,
-            'password' => 'secure-password-123',
+            'password' => 'Secure-password-123!',
         ])->assertRedirectToRoute('dashboard');
         $this->assertAuthenticatedAs($user);
         $this->get(route('dashboard'))->assertOk()->assertDontSee('Verify Your Email');
@@ -155,13 +315,13 @@ class EmailVerificationTest extends TestCase
         foreach (['admin', 'staff'] as $role) {
             $user = User::factory()->unverified()->create([
                 'email' => $role.'@example.test',
-                'password' => 'secure-password-123',
+                'password' => 'Secure-password-123!',
                 'role' => $role,
             ]);
 
             $this->post(route('login.store'), [
                 'email' => $user->email,
-                'password' => 'secure-password-123',
+                'password' => 'Secure-password-123!',
             ])->assertRedirectToRoute('dashboard');
 
             $this->assertAuthenticatedAs($user);
@@ -207,8 +367,8 @@ class EmailVerificationTest extends TestCase
             'phone' => '09170000000',
             'email' => 'patient@example.test',
             'address' => 'Clinic Street',
-            'password' => 'secure-password-123',
-            'password_confirmation' => 'secure-password-123',
+            'password' => 'Secure-password-123!',
+            'password_confirmation' => 'Secure-password-123!',
         ];
     }
 

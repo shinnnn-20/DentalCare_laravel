@@ -151,15 +151,7 @@ class AdditionalServiceController extends Controller
 
             $subtotalCents = (int) round((float) $lockedBill->subtotal * 100) + $additionalCents;
             $discountCents = (int) round((float) $lockedBill->discount * 100);
-
-            if ($lockedBill->discount_type === 'percentage') {
-                $discountBasisPoints = (int) round((float) $lockedBill->discount_value * 100);
-                $discountCents = intdiv($subtotalCents * $discountBasisPoints + 5000, 10000);
-            }
-
-            $totalCents = $lockedBill->discount_type === 'percentage'
-                ? $subtotalCents - $discountCents
-                : (int) round((float) $lockedBill->total * 100) + $additionalCents;
+            $totalCents = (int) round((float) $lockedBill->total * 100) + $additionalCents;
             $paidCents = (int) round((float) $lockedBill->payments()->sum('applied_amount') * 100);
 
             foreach ($itemRows as $itemRow) {
@@ -210,6 +202,7 @@ class AdditionalServiceController extends Controller
     private function authorizeBillBranch(Request $request, Bill $bill): void
     {
         $user = $request->user();
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
 
         if ($user->hasRole('admin') || $user->branch_id === null) {
             return;

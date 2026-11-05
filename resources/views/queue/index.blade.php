@@ -37,7 +37,10 @@
                     @elseif ($entry->status === 'called')
                         <form class="w-full sm:w-auto" method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'consult']) }}">@csrf<button class="btn-primary w-full sm:w-auto">Start visit</button></form>
                     @endif
-                    @if (in_array($entry->status, ['waiting', 'called'], true))
+                    @if (auth()->user()->hasRole('doctor') && $entry->status === 'in_consultation' && ! $entry->appointment->dentalRecord)
+                        <a class="btn-secondary w-full sm:w-auto" href="{{ route('clinic.records.create', $entry->appointment) }}">Dental record</a>
+                    @endif
+                    @if (in_array($entry->status, ['waiting', 'called'], true) && auth()->user()->hasRole('admin', 'staff', 'doctor'))
                         <form class="w-full sm:w-auto" method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'no-show']) }}">@csrf<button class="btn-small w-full text-rose-700 sm:w-auto">No show</button></form>
                     @endif
                 </div>

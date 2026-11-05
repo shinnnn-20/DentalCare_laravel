@@ -21,6 +21,7 @@ class ServiceController extends Controller
 
     public function store(Request $request, AuditTrail $auditTrail): RedirectResponse
     {
+        abort_unless($request->user()->hasRole('admin'), 403);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255', 'unique:services,name'],
             'category' => ['nullable', 'string', 'max:100'],
@@ -47,6 +48,7 @@ class ServiceController extends Controller
 
     public function update(Request $request, Service $service, AuditTrail $auditTrail): RedirectResponse
     {
+        abort_unless($request->user()->hasRole('admin'), 403);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255', Rule::unique('services', 'name')->ignore($service->id)],
             'category' => ['nullable', 'string', 'max:100'],

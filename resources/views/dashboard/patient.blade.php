@@ -8,6 +8,23 @@
         <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Hello, {{ auth()->user()->name }}</h1>
         <p class="mt-2 text-slate-500">Your appointments, treatment history, and billing in one place.</p>
     </div>
+    @if ($nextFollowUp)
+        <section aria-labelledby="follow-up-heading" class="mb-6 flex flex-col gap-4 rounded-2xl border-2 border-amber-300 bg-amber-50 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <div class="flex items-start gap-4">
+                <span class="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-amber-100 text-xl text-amber-800" aria-hidden="true">▦</span>
+                <div>
+                    <p class="text-sm font-bold uppercase tracking-wide text-amber-800">Upcoming follow-up</p>
+                    <h2 id="follow-up-heading" class="mt-1 text-xl font-bold text-slate-900">
+                        {{ $nextFollowUp->follow_up_date->format('l, F j, Y') }}
+                    </h2>
+                    <p class="mt-1 text-sm text-slate-700">Scheduled after: {{ $nextFollowUp->treatment }}</p>
+                </div>
+            </div>
+            <a class="inline-flex min-h-11 items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-amber-900 ring-1 ring-amber-300 transition hover:bg-amber-100" href="{{ route('patient.records') }}">
+                View dental records
+            </a>
+        </section>
+    @endif
     <div class="grid gap-5 xl:grid-cols-3">
         <section class="rounded-2xl bg-teal-800 p-6 text-white xl:col-span-2">
             <p class="text-sm font-medium text-teal-100">Next appointment</p>

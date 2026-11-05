@@ -175,10 +175,10 @@ class DashboardStatisticsDetailsTest extends TestCase
     public function test_dashboard_details_respect_selected_branch_and_doctors_can_access_overview(): void
     {
         $this->travelTo(Carbon::parse('2026-10-30 12:00:00', config('clinic.timezone')));
-        $doctor = User::factory()->create(['role' => 'doctor']);
+        $branch = Branch::query()->where('slug', 'trece')->firstOrFail();
+        $doctor = User::factory()->create(['role' => 'doctor', 'branch_id' => $branch->id]);
         $patient = Patient::factory()->create();
         $service = Service::factory()->create();
-        $branch = Branch::query()->where('slug', 'trece')->firstOrFail();
         $otherBranch = Branch::query()->where('slug', 'dasmarinas')->firstOrFail();
         Appointment::factory()->for($patient)->for($branch)->for($service)->create([
             'created_by' => $doctor->id,
@@ -195,9 +195,9 @@ class DashboardStatisticsDetailsTest extends TestCase
             ->get(route('dashboard', ['branch_id' => $branch->id]))
             ->assertOk()
             ->assertSee('Clinic overview')
-            ->assertDontSee('data-dashboard-detail="patients"', false)
-            ->assertDontSee('data-dashboard-detail="unpaid_bills"', false)
-            ->assertDontSee('data-dashboard-detail="active_staff"', false);
+            ->assertSee('data-dashboard-detail="patients"', false)
+            ->assertSee('data-dashboard-detail="unpaid_bills"', false)
+            ->assertSee('data-dashboard-detail="active_staff"', false);
 
         $this->get(route('dashboard.details', [
             'metric' => 'today_appointments',
@@ -208,11 +208,15 @@ class DashboardStatisticsDetailsTest extends TestCase
             ->assertJsonPath('records.0.branch', 'Trece Branch');
 
         $this->get(route('dashboard.details', ['metric' => 'patients']))
-            ->assertForbidden();
+            ->assertOk()
+            ->assertJsonPath('total', 1);
         $this->get(route('dashboard.details', ['metric' => 'unpaid_bills']))
-            ->assertForbidden();
+            ->assertOk()
+            ->assertJsonPath('total', 0);
         $this->get(route('dashboard.details', ['metric' => 'active_staff']))
-            ->assertForbidden();
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('records.0.name', $doctor->name);
     }
 
     public function test_today_appointment_details_filter_by_actual_status_and_branch(): void

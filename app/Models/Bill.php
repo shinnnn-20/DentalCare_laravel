@@ -53,6 +53,11 @@ class Bill extends Model
         return $this->belongsTo(Patient::class);
     }
 
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
     public function appointment(): BelongsTo
     {
         return $this->belongsTo(Appointment::class);

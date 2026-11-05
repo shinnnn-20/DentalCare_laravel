@@ -13,7 +13,9 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Password as PasswordBroker;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Throwable;
@@ -66,6 +68,65 @@ class AuthController extends Controller
         return view('auth.register');
     }
 
+    public function requestPasswordReset(): View
+    {
+        return view('auth.forgot-password');
+    }
+
+    public function sendPasswordResetLink(Request $request): RedirectResponse
+    {
+        $credentials = $request->validate([
+            'email' => ['required', 'email:rfc', 'max:255'],
+        ]);
+
+        PasswordBroker::sendResetLink([
+            'email' => mb_strtolower($credentials['email']),
+        ]);
+
+        return back()->with(
+            'status',
+            'If an account exists for that email address, a password reset link will be sent.',
+        );
+    }
+
+    public function resetPasswordForm(Request $request, string $token): View
+    {
+        return view('auth.reset-password', [
+            'email' => $request->query('email', ''),
+            'token' => $token,
+        ]);
+    }
+
+    public function resetPassword(Request $request): RedirectResponse
+    {
+        $data = $request->validate([
+            'token' => ['required', 'string'],
+            'email' => ['required', 'email:rfc', 'max:255'],
+            'password' => ['required', 'string', Password::defaults(), 'confirmed'],
+        ]);
+
+        $status = PasswordBroker::reset(
+            [
+                ...$data,
+                'email' => mb_strtolower($data['email']),
+            ],
+            function (User $user, string $password): void {
+                $user->forceFill([
+                    'password' => $password,
+                    'remember_token' => Str::random(60),
+                ])->save();
+            },
+        );
+
+        if ($status === PasswordBroker::PasswordReset) {
+            return redirect()->route('login')->with('status', 'Your password has been reset. You can now sign in.');
+        }
+
+        return back()->withErrors([
+            'email' => 'This password reset link is invalid or has expired. Request a new one and try again.',
+        ]);
+    }
+
     public function storePatient(
         Request $request,
         AuditTrail $auditTrail,
@@ -73,14 +134,14 @@ class AuthController extends Controller
         EmailVerificationService $emailVerification,
     ): RedirectResponse {
         $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
+            'name' => ['required', 'string', 'max:255', 'regex:/^[\pL\pM\s.\'-]+$/u'],
             'date_of_birth' => ['required', 'date', 'before:today'],
             'gender' => ['required', 'in:female,male,other,prefer_not_to_say'],
-            'phone' => ['required', 'string', 'max:30'],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
+            'phone' => ['required', 'string', 'max:11', 'regex:/^[0-9]+$/'],
+            'email' => ['required', 'email:rfc', 'max:255', 'unique:users,email'],
             'address' => ['required', 'string', 'max:2000'],
             'emergency_contact' => ['nullable', 'string', 'max:100'],
-            'password' => ['required', 'string', 'min:12', 'confirmed'],
+            'password' => ['required', 'string', Password::defaults(), 'confirmed'],
         ]);
 
         $user = DB::transaction(function () use ($data, $auditTrail): User {

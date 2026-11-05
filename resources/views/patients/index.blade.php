@@ -6,7 +6,9 @@
     <div class="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div><p class="text-sm font-medium text-teal-700">Clinic directory</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Patients</h1><p class="mt-2 text-slate-500">Search patient profiles, appointments, and clinical history.</p></div>
         <div class="flex flex-wrap gap-2">
-        <a class="btn-primary" href="{{ route('clinic.patients.create') }}">Register patient</a>
+        @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
+            <a class="btn-primary" href="{{ route('clinic.patients.create') }}">Register patient</a>
+        @endif
         <form method="GET" class="flex gap-2">
             <input class="form-input min-w-56" name="search" value="{{ request('search') }}" placeholder="Name, number, email or phone">
             <button class="btn-secondary">Search</button>

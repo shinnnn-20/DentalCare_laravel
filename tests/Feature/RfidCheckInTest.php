@@ -19,7 +19,72 @@ class RfidCheckInTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_scan_shows_only_the_matched_patient_with_newest_records_and_upcoming_appointments_first(): void
+    public function test_patient_can_view_card_details_without_edit_controls(): void
+    {
+        $patient = $this->createPatient('P-2026-00061', 'RFID Portal Patient', '09170000061');
+        RfidCard::factory()->for($patient)->create([
+            'uid' => 'PATIENT-CARD-61',
+            'is_active' => false,
+            'valid_until' => '2026-12-31 23:59:00',
+        ]);
+
+        $this->actingAs($patient->user)
+            ->get(route('patient.rfid.index'))
+            ->assertOk()
+            ->assertSee('PATIENT-CARD-61')
+            ->assertSee('Status: disabled')
+            ->assertSee('Dec 31, 2026 11:59 PM')
+            ->assertDontSee('name="uid"', false)
+            ->assertDontSee('Register RFID card')
+            ->assertDontSee('Update registered card');
+    }
+
+    public function test_patient_cannot_replace_their_registered_card(): void
+    {
+        $patient = $this->createPatient('P-2026-00063', 'RFID Replacement Patient', '09170000063');
+        $card = RfidCard::factory()->for($patient)->create([
+            'uid' => 'OLD-PATIENT-CARD',
+            'is_active' => false,
+        ]);
+
+        $this->actingAs($patient->user)
+            ->post('/my/rfid', ['uid' => 'NEW-PATIENT-CARD'])
+            ->assertMethodNotAllowed();
+
+        $this->assertDatabaseHas('rfid_cards', [
+            'id' => $card->id,
+            'patient_id' => $patient->id,
+            'uid' => 'OLD-PATIENT-CARD',
+            'is_active' => false,
+        ]);
+        $this->assertDatabaseMissing('audit_logs', ['user_id' => $patient->user_id, 'module' => 'rfid']);
+    }
+
+    public function test_patient_cannot_register_a_card_from_their_portal(): void
+    {
+        $patient = $this->createPatient('P-2026-00064', 'RFID New Patient', '09170000064');
+
+        $this->actingAs($patient->user)
+            ->post('/my/rfid', ['uid' => 'NEW-PATIENT-CARD'])
+            ->assertMethodNotAllowed();
+
+        $this->assertDatabaseMissing('rfid_cards', ['patient_id' => $patient->id]);
+        $this->assertDatabaseMissing('audit_logs', ['user_id' => $patient->user_id, 'module' => 'rfid']);
+    }
+
+    public function test_rfid_patient_page_requires_an_authenticated_patient(): void
+    {
+        $this->get(route('patient.rfid.index'))
+            ->assertRedirectToRoute('login');
+
+        $this->actingAs(User::factory()->create(['role' => 'staff']))
+            ->get(route('patient.rfid.index'))
+            ->assertForbidden();
+
+        $this->assertDatabaseCount('rfid_cards', 0);
+    }
+
+    public function test_scan_shows_only_the_matched_patient_with_newest_records_and_all_appointments_upcoming_first(): void
     {
         $this->travelTo(Carbon::parse('2026-10-28 10:00:00', config('clinic.timezone')));
         $staff = User::factory()->create(['role' => 'staff']);
@@ -75,23 +140,422 @@ class RfidCheckInTest extends TestCase
             ->assertSee('P-2026-00001')
             ->assertSee('09170000001')
             ->assertSeeInOrder([
-                'Newer diagnosis',
-                'Older diagnosis',
+                'Patient identified',
+                'Next appointment',
+                'Upcoming Cleaning',
+                'approved',
+                'Oct 29, 2026 11:00 AM',
+                'RFID Test Branch',
+            ])
+            ->assertSee('Booked appointments')
+            ->assertSee('Past Filling')
+            ->assertSee('Dental records')
+            ->assertDontSee('Newer diagnosis')
+            ->assertDontSee('Private target address')
+            ->assertDontSee('Private emergency contact')
+            ->assertDontSee('1988-01-02')
+            ->assertViewHas('appointments', fn ($appointments): bool => $appointments->getCollection()->pluck('id')->all() === [
+                $upcomingAppointment->id,
+                $pastAppointment->id,
+            ])
+            ->assertViewHas('nextAppointment', fn ($appointment): bool => $appointment->id === $upcomingAppointment->id);
+
+        $this->get(route('clinic.rfid.scan', ['uid' => $card->uid, 'section' => 'appointments']))
+            ->assertSeeInOrder([
                 'Oct 29, 2026 11:00 AM',
                 'Upcoming Cleaning',
                 'Upcoming X-Ray',
                 'RFID Test Branch',
                 'Status: approved',
-                'Oct 27, 2026 12:00 PM',
-                'Past Filling',
-                'Status: completed',
             ])
-            ->assertDontSee('Other Patient')
-            ->assertDontSee('Other patient confidential diagnosis')
-            ->assertDontSee('Private target address')
-            ->assertDontSee('Private emergency contact')
-            ->assertDontSee('1988-01-02')
-            ->assertViewHas('appointments', fn ($appointments): bool => $appointments->pluck('id')->all() === [$upcomingAppointment->id, $pastAppointment->id]);
+            ->assertSee('Past Filling')
+            ->assertViewHas('appointments', fn ($appointments): bool => $appointments->getCollection()->pluck('id')->all() === [
+                $upcomingAppointment->id,
+                $pastAppointment->id,
+            ]);
+
+        $this->get(route('clinic.rfid.scan', [
+            'uid' => $card->uid,
+            'section' => 'appointments',
+            'appointment_from' => '2026-10-27',
+            'appointment_until' => '2026-10-27',
+        ]))
+            ->assertSee('Past Filling')
+            ->assertViewHas('appointments', fn ($appointments): bool => $appointments->getCollection()->pluck('id')->all() === [$pastAppointment->id]);
+
+        $this->get(route('clinic.rfid.scan', ['uid' => $card->uid, 'section' => 'records']))
+            ->assertSeeInOrder(['Newer diagnosis', 'Older diagnosis'])
+            ->assertDontSee('Upcoming Cleaning');
+    }
+
+    public function test_next_appointment_skips_future_appointments_already_completed(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-03 08:00:00', config('clinic.timezone')));
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00076', 'Next Appointment Patient', '09170000076');
+        $card = RfidCard::factory()->for($patient)->create(['uid' => 'NEXT-APPOINTMENT-CARD']);
+        $branch = Branch::factory()->create(['name' => 'Next Appointment Branch']);
+        $completedService = Service::factory()->create(['name' => 'Already completed treatment']);
+        $approvedService = Service::factory()->create(['name' => 'November consultation']);
+
+        Appointment::factory()
+            ->for($patient)
+            ->for($branch)
+            ->for($completedService)
+            ->create([
+                'starts_at' => Carbon::parse('2026-11-04 10:30:00', config('clinic.timezone')),
+                'status' => 'completed',
+            ]);
+        $approvedAppointment = Appointment::factory()
+            ->for($patient)
+            ->for($branch)
+            ->for($approvedService)
+            ->create([
+                'starts_at' => Carbon::parse('2026-11-13 11:00:00', config('clinic.timezone')),
+                'status' => 'approved',
+            ]);
+
+        $this->actingAs($staff)
+            ->post(route('clinic.rfid.scan.submit'), ['uid' => $card->uid])
+            ->assertOk()
+            ->assertSee('November consultation')
+            ->assertSee('Nov 13, 2026 11:00 AM')
+            ->assertViewHas('nextAppointment', fn ($appointment): bool => $appointment->id === $approvedAppointment->id);
+    }
+
+    public function test_scan_filters_and_paginates_dental_records_while_preserving_the_uid(): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-28 10:00:00', config('clinic.timezone')));
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00071', 'Dental Record Filter Patient', '09170000071');
+        $card = RfidCard::factory()->for($patient)->create(['uid' => 'RECORD-FILTER-CARD']);
+
+        foreach (range(1, 7) as $daysAgo) {
+            DentalRecord::factory()->for($patient)->create([
+                'diagnosis' => "Dental filter diagnosis {$daysAgo}",
+                'treatment' => 'Dental filter treatment',
+                'created_at' => now()->subDays($daysAgo),
+                'updated_at' => now()->subDays($daysAgo),
+            ]);
+        }
+
+        $this->actingAs($staff)
+            ->post(route('clinic.rfid.scan.submit'), ['uid' => $card->uid])
+            ->assertOk();
+
+        $filters = [
+            'uid' => $card->uid,
+            'section' => 'records',
+            'record_search' => 'Dental filter diagnosis',
+            'record_from' => now()->subDays(6)->toDateString(),
+        ];
+
+        $this->get(route('clinic.rfid.scan', $filters))
+            ->assertOk()
+            ->assertSee('section=records', false)
+            ->assertSee('records_page=2', false)
+            ->assertSee('uid=RECORD-FILTER-CARD', false);
+
+        $this->get(route('clinic.rfid.scan', [...$filters, 'records_page' => 2]))
+            ->assertOk()
+            ->assertSee('Dental filter diagnosis 6')
+            ->assertDontSee('Dental filter diagnosis 7')
+            ->assertViewHas('dentalRecords', fn ($records): bool => $records->total() === 6
+                && $records->currentPage() === 2
+                && $records->getCollection()->last()->diagnosis === 'Dental filter diagnosis 6')
+            ->assertSee('record_search')
+            ->assertSee('RECORD-FILTER-CARD');
+
+        $this->assertDatabaseCount('rfid_logs', 1);
+    }
+
+    public function test_record_search_finds_performed_treatments_and_add_on_services(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00074', 'Treatment Search Patient', '09170000074');
+        $card = RfidCard::factory()->for($patient)->create(['uid' => 'TREATMENT-SEARCH-CARD']);
+        $primaryService = Service::factory()->create(['name' => 'Primary cleaning service']);
+        $addOnService = Service::factory()->create(['name' => 'Fluoride add-on service']);
+        $appointment = Appointment::factory()
+            ->for($patient)
+            ->for($primaryService)
+            ->create([
+                'starts_at' => now()->subDay(),
+                'status' => 'completed',
+            ]);
+        $appointment->services()->attach([$primaryService->id, $addOnService->id]);
+        $record = DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'diagnosis' => 'General dental diagnosis',
+            'treatment' => 'Composite restoration performed',
+        ]);
+        DentalRecord::factory()->for($patient)->create([
+            'diagnosis' => 'Unrelated diagnosis',
+            'treatment' => 'Unrelated treatment',
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('clinic.rfid.scan', [
+                'uid' => $card->uid,
+                'section' => 'records',
+                'record_search' => 'Fluoride add-on',
+            ]))
+            ->assertSee('Search by service or treatment performed')
+            ->assertSee('Service, add-on service, or treatment')
+            ->assertSee('Composite restoration performed')
+            ->assertSee('Services performed: Primary cleaning service, Fluoride add-on service')
+            ->assertDontSee('Unrelated treatment')
+            ->assertViewHas('dentalRecords', fn ($records): bool => $records->total() === 1
+                && $records->first()->id === $record->id);
+
+        $this->get(route('clinic.rfid.scan', [
+            'uid' => $card->uid,
+            'section' => 'records',
+            'record_search' => 'Composite restoration',
+        ]))
+            ->assertSee('Composite restoration performed')
+            ->assertDontSee('Unrelated treatment')
+            ->assertViewHas('dentalRecords', fn ($records): bool => $records->total() === 1
+                && $records->first()->id === $record->id);
+    }
+
+    #[DataProvider('rfidCheckInRoles')]
+    public function test_staff_and_doctors_can_check_in_approved_appointments_from_rfid_scan(string $role): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-28 10:00:00', config('clinic.timezone')));
+        $branch = Branch::factory()->create(['name' => 'RFID Check-in Branch']);
+        $user = User::factory()->create([
+            'role' => $role,
+            'branch_id' => $branch->id,
+        ]);
+        $patient = $this->createPatient('P-2026-00075', 'RFID Check-in Patient', '09170000075');
+        $card = RfidCard::factory()->for($patient)->create(['uid' => 'RFID-CHECK-IN-CARD']);
+        $service = Service::factory()->create(['name' => 'Approved RFID service']);
+        $appointment = Appointment::factory()
+            ->for($patient)
+            ->for($branch)
+            ->for($service)
+            ->create([
+                'starts_at' => now(config('clinic.timezone'))->addHour(),
+                'status' => 'approved',
+            ]);
+        $otherBranchAppointment = null;
+        if ($role === 'doctor') {
+            $otherBranch = Branch::factory()->create(['name' => 'Other RFID Check-in Branch']);
+            $otherBranchAppointment = Appointment::factory()
+                ->for($patient)
+                ->for($otherBranch)
+                ->create([
+                    'starts_at' => now(config('clinic.timezone'))->addHours(2),
+                    'status' => 'approved',
+                ]);
+        }
+        $pendingAppointment = Appointment::factory()
+            ->for($patient)
+            ->for($branch)
+            ->create([
+                'starts_at' => now(config('clinic.timezone'))->addHours(2),
+                'status' => 'pending',
+            ]);
+
+        $response = $this->actingAs($user)
+            ->post(route('clinic.rfid.scan.submit'), ['uid' => $card->uid]);
+
+        $this->assertContains(
+            $appointment->id,
+            $response->viewData('appointments')->getCollection()->modelKeys(),
+        );
+
+        $response
+            ->assertOk()
+            ->assertSeeInOrder([
+                'Next appointment',
+                'Approved RFID service',
+                'Approved',
+                'Branch: RFID Check-in Branch',
+                'Check in',
+            ])
+            ->assertSee('pending')
+            ->assertSee(route('clinic.queue.check-in', $appointment))
+            ->assertDontSee(route('clinic.queue.check-in', $pendingAppointment));
+
+        $this->post(route('clinic.queue.check-in', $appointment))
+            ->assertRedirectToRoute('clinic.queue.index')
+            ->assertSessionHas('status', 'Appointment checked in and added to the queue.');
+
+        $this->assertSame('checked_in', $appointment->fresh()->status);
+        $this->assertDatabaseHas('queue_entries', [
+            'appointment_id' => $appointment->id,
+            'status' => 'waiting',
+        ]);
+        $this->assertDatabaseCount('queue_entries', 1);
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'appointment_check_in',
+            'record_id' => $appointment->id,
+        ]);
+
+        $this->get(route('clinic.queue.index'))
+            ->assertSee('RFID Check-in Patient')
+            ->assertSee('Call patient')
+            ->assertSee('Appointment checked in and added to the queue.');
+
+        $this->post(route('appointments.transition', [$appointment, 'call']))
+            ->assertRedirect()
+            ->assertSessionHas('status', 'Appointment updated to waiting.');
+
+        $this->assertSame('waiting', $appointment->fresh()->status);
+        $this->assertDatabaseHas('queue_entries', [
+            'appointment_id' => $appointment->id,
+            'status' => 'called',
+        ]);
+
+        if ($otherBranchAppointment !== null) {
+            $this->post(route('clinic.queue.check-in', $otherBranchAppointment), ['rfid_uid' => $card->uid])
+                ->assertNotFound();
+
+            $this->assertSame('approved', $otherBranchAppointment->fresh()->status);
+        }
+    }
+
+    public static function rfidCheckInRoles(): array
+    {
+        return [
+            'staff' => ['staff'],
+            'doctor' => ['doctor'],
+        ];
+    }
+
+    public function test_scan_filters_and_paginates_appointments_by_service_status_and_date(): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-28 10:00:00', config('clinic.timezone')));
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00072', 'Appointment Filter Patient', '09170000072');
+        $card = RfidCard::factory()->for($patient)->create(['uid' => 'APPOINTMENT-FILTER-CARD']);
+
+        foreach (range(1, 7) as $daysAhead) {
+            $service = Service::factory()->create(['name' => "Filtered service {$daysAhead}"]);
+            Appointment::factory()
+                ->for($patient)
+                ->for($service)
+                ->create([
+                    'starts_at' => now()->addDays($daysAhead),
+                    'status' => 'approved',
+                ]);
+        }
+
+        $pendingService = Service::factory()->create(['name' => 'Filtered service pending']);
+        Appointment::factory()
+            ->for($patient)
+            ->for($pendingService)
+            ->create([
+                'starts_at' => now()->addDays(4),
+                'status' => 'pending',
+            ]);
+
+        $this->actingAs($staff)
+            ->post(route('clinic.rfid.scan.submit'), ['uid' => $card->uid])
+            ->assertOk();
+
+        $this->get(route('clinic.rfid.scan', ['uid' => $card->uid, 'section' => 'appointments']))
+            ->assertSee('appointments_page=2', false)
+            ->assertViewHas('appointments', fn ($appointments): bool => $appointments->total() === 8
+                && $appointments->currentPage() === 1);
+
+        $filters = [
+            'uid' => $card->uid,
+            'section' => 'appointments',
+            'appointment_search' => 'Filtered service',
+            'appointment_status' => 'approved',
+            'appointment_from' => now()->addDays(2)->toDateString(),
+            'appointment_until' => now()->addDays(7)->toDateString(),
+        ];
+
+        $this->get(route('clinic.rfid.scan', $filters))
+            ->assertOk()
+            ->assertSee('section=appointments', false)
+            ->assertSee('appointments_page=2', false)
+            ->assertSee('uid=APPOINTMENT-FILTER-CARD', false);
+
+        $this->get(route('clinic.rfid.scan', [...$filters, 'appointments_page' => 2]))
+            ->assertOk()
+            ->assertSee('Filtered service 7')
+            ->assertDontSee('Filtered service pending')
+            ->assertViewHas('appointments', fn ($appointments): bool => $appointments->total() === 6
+                && $appointments->currentPage() === 2
+                && $appointments->getCollection()->last()->service->name === 'Filtered service 7')
+            ->assertSee('appointment_status')
+            ->assertSee('APPOINTMENT-FILTER-CARD');
+
+        $this->assertDatabaseCount('rfid_logs', 1);
+    }
+
+    public function test_consultation_search_finds_related_records_and_appointments_in_separate_sections(): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-28 10:00:00', config('clinic.timezone')));
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00073', 'Consultation Search Patient', '09170000073');
+        $card = RfidCard::factory()->for($patient)->create(['uid' => 'CONSULTATION-SEARCH-CARD']);
+        $service = Service::factory()->create(['name' => 'Dental examination']);
+        $consultation = Appointment::factory()
+            ->for($patient)
+            ->for($service)
+            ->create([
+                'starts_at' => now()->addDay(),
+                'status' => 'in_consultation',
+            ]);
+        DentalRecord::factory()->for($patient)->for($consultation)->create([
+            'diagnosis' => 'Consultation diagnosis',
+            'treatment' => 'Examination treatment',
+        ]);
+        $followUpConsultation = Appointment::factory()
+            ->for($patient)
+            ->for($service)
+            ->create([
+                'starts_at' => now()->addDays(3),
+                'status' => 'in_consultation',
+            ]);
+        DentalRecord::factory()->for($patient)->for($followUpConsultation)->create([
+            'diagnosis' => 'Consultation follow-up diagnosis',
+            'treatment' => 'Follow-up treatment',
+        ]);
+        $otherAppointment = Appointment::factory()
+            ->for($patient)
+            ->create([
+                'starts_at' => now()->addDays(2),
+                'status' => 'approved',
+            ]);
+        DentalRecord::factory()->for($patient)->for($otherAppointment)->create([
+            'diagnosis' => 'Routine diagnosis',
+            'treatment' => 'Routine treatment',
+        ]);
+
+        $this->actingAs($staff)
+            ->post(route('clinic.rfid.scan.submit'), ['uid' => $card->uid])
+            ->assertOk();
+
+        $this->get(route('clinic.rfid.scan', [
+            'uid' => $card->uid,
+            'section' => 'records',
+            'record_search' => 'consultation',
+        ]))
+            ->assertOk()
+            ->assertSee('Consultation diagnosis')
+            ->assertSee('Consultation follow-up diagnosis')
+            ->assertDontSee('Routine diagnosis')
+            ->assertSee('Services performed: Dental examination')
+            ->assertViewHas('dentalRecords', fn ($records): bool => $records->total() === 2);
+
+        $this->get(route('clinic.rfid.scan', [
+            'uid' => $card->uid,
+            'section' => 'appointments',
+            'appointment_search' => 'consultation',
+        ]))
+            ->assertOk()
+            ->assertSee('Dental examination')
+            ->assertSee('Status: in consultation')
+            ->assertDontSee('Routine treatment')
+            ->assertDontSee('Consultation diagnosis');
+
+        $this->assertDatabaseCount('rfid_logs', 1);
     }
 
     public function test_scan_rejects_rfid_cards_outside_their_validity_period_or_disabled(): void
@@ -152,7 +616,28 @@ class RfidCheckInTest extends TestCase
         $this->assertDatabaseHas('rfid_logs', ['uid' => 'NOT-REGISTERED', 'result' => 'unknown']);
     }
 
-    public function test_staff_can_update_rfid_validity_and_disable_a_card_without_deleting_it(): void
+    public function test_rfid_card_expires_at_midnight_philippine_time_on_its_valid_until_date(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00059', 'RFID Midnight Expiry Patient', '09170000059');
+        RfidCard::factory()->for($patient)->create([
+            'uid' => 'MIDNIGHT-EXPIRY',
+            'valid_from' => Carbon::parse('2026-11-03 00:00:00', config('clinic.timezone')),
+            'valid_until' => Carbon::parse('2026-11-20 00:00:00', config('clinic.timezone')),
+        ]);
+
+        $this->travelTo(Carbon::parse('2026-11-19 23:59:59', config('clinic.timezone')));
+        $this->actingAs($staff)
+            ->post(route('clinic.rfid.scan.submit'), ['uid' => 'MIDNIGHT-EXPIRY'])
+            ->assertSee('RFID Midnight Expiry Patient');
+
+        $this->travelTo(Carbon::parse('2026-11-20 00:00:00', config('clinic.timezone')));
+        $this->post(route('clinic.rfid.scan.submit'), ['uid' => 'MIDNIGHT-EXPIRY'])
+            ->assertSee('This RFID card has expired.')
+            ->assertDontSee('RFID Midnight Expiry Patient');
+    }
+
+    public function test_staff_can_update_rfid_validity_by_date_and_disable_a_card_without_deleting_it(): void
     {
         $staff = User::factory()->create(['role' => 'staff']);
         $patient = $this->createPatient('P-2026-00055', 'RFID Settings Patient', '09170000055');
@@ -164,8 +649,8 @@ class RfidCheckInTest extends TestCase
         $this->actingAs($staff)
             ->post(route('clinic.rfid.assign', $patient), [
                 'uid' => 'UPDATED-UID',
-                'valid_from' => '2026-10-29T10:00',
-                'valid_until' => '2026-10-30T10:00',
+                'valid_from' => '2026-11-03',
+                'valid_until' => '2026-11-20',
                 'is_active' => '0',
             ])
             ->assertSessionHas('status', 'RFID card assigned.');
@@ -175,8 +660,8 @@ class RfidCheckInTest extends TestCase
             'patient_id' => $patient->id,
             'uid' => 'UPDATED-UID',
             'is_active' => false,
-            'valid_from' => '2026-10-29 10:00:00',
-            'valid_until' => '2026-10-30 10:00:00',
+            'valid_from' => '2026-11-03 00:00:00',
+            'valid_until' => '2026-11-20 00:00:00',
         ]);
         $this->assertDatabaseHas('audit_logs', [
             'user_id' => $staff->id,
@@ -185,12 +670,12 @@ class RfidCheckInTest extends TestCase
         ]);
         $this->assertModelExists($historicalLog);
         $this->get(route('clinic.rfid.index'))
-            ->assertSee('Oct 29, 2026 10:00 AM')
-            ->assertSee('Oct 30, 2026 10:00 AM')
+            ->assertSee('Nov 3, 2026')
+            ->assertSee('Nov 20, 2026 12:00 AM')
             ->assertSee('disabled');
     }
 
-    public function test_rfid_validity_fields_render_custom_calendar_and_thirty_minute_time_picker(): void
+    public function test_rfid_validity_fields_render_a_date_only_calendar_picker(): void
     {
         $this->travelTo(Carbon::parse('2026-10-30 21:00:00', config('clinic.timezone')));
         $staff = User::factory()->create(['role' => 'staff']);
@@ -200,19 +685,16 @@ class RfidCheckInTest extends TestCase
             ->get(route('clinic.rfid.index'))
             ->assertSee('data-rfid-validity-picker', false)
             ->assertSee('data-clinic-today="2026-10-30"', false)
-            ->assertSee('Validity time')
-            ->assertSee('Choose validity time')
-            ->assertSee('minutes += 30', false)
-            ->assertSee('minutes < 24 * 60', false)
-            ->assertSee('Validity times in 30-minute intervals')
-            ->assertSee('interval.textContent = \'30 min\'', false)
-            ->assertSee('const displayHour = hour % 12 || 12;', false)
+            ->assertSee('type="date"', false)
+            ->assertSee('Choose date')
             ->assertSee('Clear limit')
             ->assertSee('Today')
             ->assertSee('Done')
             ->assertSee('rfid-validity-day-selected')
             ->assertSee('name="valid_from"', false)
-            ->assertSee('name="valid_until"', false);
+            ->assertSee('name="valid_until"', false)
+            ->assertDontSee('Validity time')
+            ->assertDontSee('datetime-local');
     }
 
     public function test_rfid_valid_until_must_follow_valid_from(): void
@@ -223,13 +705,30 @@ class RfidCheckInTest extends TestCase
         $this->actingAs($staff)
             ->post(route('clinic.rfid.assign', $patient), [
                 'uid' => 'INVALID-PERIOD',
-                'valid_from' => '2026-10-30T10:00',
-                'valid_until' => '2026-10-29T10:00',
+                'valid_from' => '2026-10-30',
+                'valid_until' => '2026-10-29',
                 'is_active' => '1',
             ])
             ->assertSessionHasErrors('valid_until');
 
         $this->assertDatabaseCount('rfid_cards', 0);
+    }
+
+    public function test_rfid_validity_rejects_time_values(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00058', 'RFID Date Format Patient', '09170000058');
+
+        $this->actingAs($staff)
+            ->post(route('clinic.rfid.assign', $patient), [
+                'uid' => 'DATE-ONLY-CARD',
+                'valid_from' => '2026-11-03T10:00',
+                'valid_until' => '2026-11-20T10:00',
+                'is_active' => '1',
+            ])
+            ->assertSessionHasErrors(['valid_from', 'valid_until']);
+
+        $this->assertDatabaseMissing('rfid_cards', ['patient_id' => $patient->id]);
     }
 
     public function test_new_scan_replaces_the_displayed_patient_and_unknown_card_clears_it(): void
@@ -275,7 +774,7 @@ class RfidCheckInTest extends TestCase
         $this->actingAs($staff)
             ->post(route('clinic.rfid.scan.submit'), ['uid' => $card->uid])
             ->assertOk()
-            ->assertSee('Scanning a card only identifies the patient.');
+            ->assertSee('Use Check in on an approved appointment to add the patient to the clinic queue.');
 
         $this->assertDatabaseCount('patients', 1);
         $this->assertDatabaseCount('queue_entries', 0);
@@ -296,8 +795,16 @@ class RfidCheckInTest extends TestCase
         $this->actingAs($staff)
             ->post(route('clinic.rfid.scan.submit'), ['uid' => $card->uid])
             ->assertOk()
-            ->assertSee('No dental records found for this patient.')
-            ->assertSee('No booked appointments found for this patient.');
+            ->assertSee('No upcoming appointments')
+            ->assertSee('No booked appointments found for this patient.')
+            ->assertDontSee('No dental records found for this patient.');
+
+        $this->get(route('clinic.rfid.scan', [
+            'uid' => $card->uid,
+            'section' => 'records',
+        ]))
+            ->assertOk()
+            ->assertSee('No dental records found for this patient.');
     }
 
     public function test_scan_escapes_patient_and_clinic_content_in_the_result(): void
@@ -326,9 +833,23 @@ class RfidCheckInTest extends TestCase
             ->post(route('clinic.rfid.scan.submit'), ['uid' => $card->uid])
             ->assertOk()
             ->assertSee('Security &lt;script&gt;alert(1)&lt;/script&gt; Patient', false)
+            ->assertDontSee($unsafeContent, false);
+
+        $this->get(route('clinic.rfid.scan', [
+            'uid' => $card->uid,
+            'section' => 'records',
+        ]))
+            ->assertOk()
             ->assertSee('Diagnosis &lt;script&gt;alert(1)&lt;/script&gt;', false)
             ->assertSee('Treatment &lt;script&gt;alert(1)&lt;/script&gt;', false)
             ->assertSee('Prescription &lt;script&gt;alert(1)&lt;/script&gt;', false)
+            ->assertDontSee($unsafeContent, false);
+
+        $this->get(route('clinic.rfid.scan', [
+            'uid' => $card->uid,
+            'section' => 'appointments',
+        ]))
+            ->assertOk()
             ->assertSee('Branch &lt;script&gt;alert(1)&lt;/script&gt;', false)
             ->assertSee('Service &lt;script&gt;alert(1)&lt;/script&gt;', false)
             ->assertDontSee($unsafeContent, false);
@@ -354,12 +875,11 @@ class RfidCheckInTest extends TestCase
     {
         return [
             'patient' => ['patient'],
-            'doctor' => ['doctor'],
         ];
     }
 
     #[DataProvider('clinicStaffRoles')]
-    public function test_admin_and_staff_can_open_the_rfid_scan_page(string $role): void
+    public function test_clinic_roles_can_open_the_rfid_scan_page(string $role): void
     {
         $user = User::factory()->create(['role' => $role]);
 
@@ -374,6 +894,7 @@ class RfidCheckInTest extends TestCase
         return [
             'admin' => ['admin'],
             'staff' => ['staff'],
+            'doctor' => ['doctor'],
         ];
     }
 

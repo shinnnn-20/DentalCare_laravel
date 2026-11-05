@@ -5,39 +5,58 @@ namespace App\Http\Controllers;
 use App\Models\Branch;
 use App\Models\User;
 use App\Services\AuditTrail;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\View\View;
 
 class StaffController extends Controller
 {
     private const ASSIGNABLE_BRANCH_SLUGS = ['general-trias', 'dasmarinas', 'trece'];
 
-    public function index(): View
+    public function index(Request $request): View
     {
+        $user = $request->user();
+        abort_unless($user instanceof User && $user->hasRole('admin', 'doctor'), 403);
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
+
         return view('staff.index', [
             'clinicAccounts' => User::query()
                 ->with('branch')
                 ->whereIn('role', ['staff', 'doctor'])
+                ->when(
+                    ! $user->hasRole('admin'),
+                    fn ($query) => $query->where('branch_id', $user->branch_id),
+                )
                 ->orderBy('role')
                 ->orderBy('name')
                 ->paginate(20),
-            'branches' => $this->assignableBranches(),
+            'branches' => $user->hasRole('admin') ? $this->assignableBranches() : new Collection,
         ]);
     }
 
     public function store(Request $request, AuditTrail $auditTrail): RedirectResponse
     {
+        $actor = $request->user();
+        $isAdmin = $actor->hasRole('admin');
+        abort_unless($isAdmin || $actor->hasRole('doctor'), 403);
+        abort_if($actor->hasRole('doctor') && $actor->branch_id === null, 403);
+
         $branches = $this->assignableBranches();
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'phone' => ['nullable', 'string', 'max:30'],
-            'role' => ['required', 'in:staff,doctor'],
-            'branch_id' => ['required', 'integer', Rule::in($branches->modelKeys())],
-            'password' => ['required', 'string', 'min:12', 'confirmed'],
+            'role' => $isAdmin
+                ? ['required', 'in:staff,doctor']
+                : ['required', 'in:staff'],
+            'branch_id' => $isAdmin
+                ? ['required', 'integer', Rule::in($branches->modelKeys())]
+                : ['prohibited'],
+            'password' => ['required', 'string', Password::defaults(), 'confirmed'],
         ]);
 
         $account = User::create([
@@ -47,7 +66,7 @@ class StaffController extends Controller
             'password' => $data['password'],
             'role' => $data['role'],
             'is_active' => true,
-            'branch_id' => (int) $data['branch_id'],
+            'branch_id' => $isAdmin ? (int) $data['branch_id'] : $actor->branch_id,
         ]);
 
         $roleLabel = ucfirst($account->role);
@@ -59,6 +78,7 @@ class StaffController extends Controller
 
     public function updateBranch(Request $request, User $staff, AuditTrail $auditTrail): RedirectResponse
     {
+        abort_unless($request->user()?->hasRole('admin'), 403);
         abort_unless($staff->hasRole('staff', 'doctor'), 404);
         $branches = $this->assignableBranches();
         $data = $request->validate([
@@ -80,7 +100,7 @@ class StaffController extends Controller
 
     public function toggle(Request $request, User $staff, AuditTrail $auditTrail): RedirectResponse
     {
-        abort_unless($staff->hasRole('staff', 'doctor'), 404);
+        $this->authorizeAccountManagement($request->user(), $staff);
         $staff->update(['is_active' => ! $staff->is_active]);
         $roleLabel = ucfirst($staff->role);
         $action = $staff->is_active ? $staff->role.'_activated' : $staff->role.'_disabled';
@@ -90,11 +110,33 @@ class StaffController extends Controller
         return back()->with('status', "{$roleLabel} account status updated.");
     }
 
+    public function update(Request $request, User $staff, AuditTrail $auditTrail): RedirectResponse
+    {
+        $this->authorizeAccountManagement($request->user(), $staff);
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($staff->id)],
+            'phone' => ['nullable', 'string', 'max:30'],
+            'role' => ['prohibited'],
+            'branch_id' => ['prohibited'],
+        ]);
+
+        $staff->update([
+            'name' => $data['name'],
+            'email' => mb_strtolower($data['email']),
+            'phone' => $data['phone'] ?? null,
+        ]);
+        $module = $staff->role === 'doctor' ? 'doctors' : 'staff';
+        $auditTrail->record($request->user(), $staff->role.'_updated', $module, $staff);
+
+        return back()->with('status', ucfirst($staff->role).' account updated.');
+    }
+
     public function resetPassword(Request $request, User $staff, AuditTrail $auditTrail): RedirectResponse
     {
-        abort_unless($staff->hasRole('staff', 'doctor'), 404);
+        $this->authorizeAccountManagement($request->user(), $staff);
         $data = $request->validate([
-            'password' => ['required', 'string', 'min:12', 'confirmed'],
+            'password' => ['required', 'string', Password::defaults(), 'confirmed'],
         ]);
 
         $staff->update(['password' => $data['password']]);
@@ -102,6 +144,25 @@ class StaffController extends Controller
         $auditTrail->record($request->user(), $staff->role.'_password_reset', $module, $staff);
 
         return back()->with('status', ucfirst($staff->role).' password reset.');
+    }
+
+    private function authorizeAccountManagement(?Authenticatable $actor, User $account): void
+    {
+        abort_unless($actor instanceof User && $account->hasRole('staff', 'doctor'), 404);
+
+        if ($actor->hasRole('admin')) {
+            return;
+        }
+
+        abort_unless(
+            $actor->hasRole('doctor')
+                && $actor->id !== $account->id
+                && $account->hasRole('staff')
+                && $actor->branch_id !== null
+                && $account->branch_id !== null
+                && (int) $actor->branch_id === (int) $account->branch_id,
+            404,
+        );
     }
 
     private function assignableBranches(): Collection

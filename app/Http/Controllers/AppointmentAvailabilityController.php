@@ -29,6 +29,7 @@ class AppointmentAvailabilityController extends Controller
     public function index(Request $request): View
     {
         $user = $request->user();
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
         $hasAssignedBranch = $user->hasRole('staff', 'doctor') && $user->branch_id !== null;
         $branches = Branch::query()
             ->when($hasAssignedBranch, fn ($query) => $query->whereKey($user->branch_id))
@@ -78,6 +79,7 @@ class AppointmentAvailabilityController extends Controller
     public function store(Request $request, AuditTrail $auditTrail): RedirectResponse
     {
         $user = $request->user();
+        abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
         $data = $request->validate([
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
             'date' => ['required', 'date_format:Y-m-d'],
@@ -85,7 +87,7 @@ class AppointmentAvailabilityController extends Controller
             'ends_at' => ['required', 'date_format:H:i'],
             'reason' => ['required', Rule::in(self::REASONS)],
             'description' => ['nullable', 'string', 'max:1000'],
-            'confirm_existing_appointments' => ['sometimes', 'boolean'],
+            'confirm_existing_appointments' => ['accepted'],
         ]);
         if (
             $user->hasRole('staff', 'doctor')
@@ -103,14 +105,6 @@ class AppointmentAvailabilityController extends Controller
         DB::transaction(function () use ($request, $data, $startsAt, $endsAt, $branchId, $auditTrail): void {
             $branch = Branch::query()->whereKey($branchId)->lockForUpdate()->firstOrFail();
             $this->ensureNoOverlappingBlock($branchId, $startsAt, $endsAt);
-            $overlappingAppointments = $this->overlappingAppointments($branchId, $startsAt, $endsAt);
-
-            if ($overlappingAppointments->isNotEmpty() && ! ($data['confirm_existing_appointments'] ?? false)) {
-                throw ValidationException::withMessages([
-                    'confirm_existing_appointments' => 'This time overlaps '.$overlappingAppointments->count()
-                        .' existing appointment(s). Confirm to block availability; existing appointments will remain booked.',
-                ]);
-            }
 
             $block = AppointmentAvailabilityBlock::query()->create([
                 'branch_id' => $branch->id,
@@ -136,6 +130,7 @@ class AppointmentAvailabilityController extends Controller
 
     public function update(Request $request, AppointmentAvailabilityBlock $availabilityBlock, AuditTrail $auditTrail): RedirectResponse
     {
+        abort_if($request->user()->hasRole('doctor') && $request->user()->branch_id === null, 403);
         $data = $request->validate([
             'is_active' => ['required', 'boolean'],
             'confirm_existing_appointments' => ['sometimes', 'boolean'],
@@ -206,6 +201,7 @@ class AppointmentAvailabilityController extends Controller
 
     public function destroy(Request $request, AppointmentAvailabilityBlock $availabilityBlock, AuditTrail $auditTrail): RedirectResponse
     {
+        abort_if($request->user()->hasRole('doctor') && $request->user()->branch_id === null, 403);
         DB::transaction(function () use ($request, $availabilityBlock, $auditTrail): void {
             $lockedBlock = AppointmentAvailabilityBlock::query()
                 ->whereKey($availabilityBlock->id)

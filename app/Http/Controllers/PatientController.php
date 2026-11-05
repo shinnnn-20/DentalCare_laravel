@@ -11,26 +11,39 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\View\View;
 
 class PatientController extends Controller
 {
-    public function create(): View
+    public function create(Request $request): View
     {
+        $this->ensureDoctorHasBranch($request);
+
         return view('patients.create');
     }
 
     public function index(Request $request): View
     {
+        $user = $request->user();
+        $isBranchDoctor = $user->hasRole('doctor');
+        abort_if($isBranchDoctor && $user->branch_id === null, 403);
+
         $patients = Patient::query()
             ->with('user')
+            ->when(
+                $isBranchDoctor,
+                fn ($query) => $query->forBranch((int) $user->branch_id),
+            )
             ->when($request->string('search')->isNotEmpty(), function ($query) use ($request): void {
                 $term = $request->string('search')->toString();
-                $query->where('patient_number', 'like', '%'.$term.'%')
-                    ->orWhereHas('user', fn ($userQuery) => $userQuery
-                        ->where('name', 'like', '%'.$term.'%')
-                        ->orWhere('email', 'like', '%'.$term.'%')
-                        ->orWhere('phone', 'like', '%'.$term.'%'));
+                $query->where(function ($query) use ($term): void {
+                    $query->where('patient_number', 'like', '%'.$term.'%')
+                        ->orWhereHas('user', fn ($userQuery) => $userQuery
+                            ->where('name', 'like', '%'.$term.'%')
+                            ->orWhere('email', 'like', '%'.$term.'%')
+                            ->orWhere('phone', 'like', '%'.$term.'%'));
+                });
             })
             ->orderByDesc('id')
             ->paginate(20)
@@ -41,20 +54,48 @@ class PatientController extends Controller
 
     public function show(Request $request, Patient $patient): View
     {
+        $user = $request->user();
+        $isBranchDoctor = $user->hasRole('doctor');
+        $this->authorizePatientBranch($request, $patient);
+
         $filters = $request->validate([
             'record' => ['nullable', 'integer'],
         ]);
         $highlightedDentalRecordId = isset($filters['record']) ? (int) $filters['record'] : null;
 
         if ($highlightedDentalRecordId !== null) {
-            abort_unless($patient->dentalRecords()->whereKey($highlightedDentalRecordId)->exists(), 404);
+            abort_unless(
+                $patient->dentalRecords()
+                    ->whereKey($highlightedDentalRecordId)
+                    ->when(
+                        $isBranchDoctor,
+                        fn ($query) => $query->whereHas(
+                            'appointment',
+                            fn ($appointmentQuery) => $appointmentQuery->where('branch_id', $user->branch_id),
+                        ),
+                    )
+                    ->exists(),
+                404,
+            );
         }
 
         $patient->load([
             'user',
             'rfidCard',
-            'appointments' => fn ($query) => $query->with(['service', 'services', 'bill'])->latest('starts_at'),
-            'dentalRecords' => fn ($query) => $query->with(['creator', 'appointment.service', 'appointment.services'])->latest(),
+            'appointments' => fn ($query) => $query
+                ->when($isBranchDoctor, fn ($query) => $query->where('branch_id', $user->branch_id))
+                ->with(['service', 'services', 'bill'])
+                ->latest('starts_at'),
+            'dentalRecords' => fn ($query) => $query
+                ->when(
+                    $isBranchDoctor,
+                    fn ($query) => $query->whereHas(
+                        'appointment',
+                        fn ($appointmentQuery) => $appointmentQuery->where('branch_id', $user->branch_id),
+                    ),
+                )
+                ->with(['creator', 'appointment.service', 'appointment.services'])
+                ->latest(),
         ]);
 
         return view('patients.show', compact('patient', 'highlightedDentalRecordId'));
@@ -62,8 +103,10 @@ class PatientController extends Controller
 
     public function resetPassword(Request $request, Patient $patient, AuditTrail $auditTrail): RedirectResponse
     {
+        abort_unless($request->user()->hasRole('admin'), 403);
+        $this->authorizePatientBranch($request, $patient);
         $data = $request->validate([
-            'password' => ['required', 'string', 'min:12', 'confirmed'],
+            'password' => ['required', 'string', Password::defaults(), 'confirmed'],
         ]);
 
         $patient->user->update(['password' => $data['password']]);
@@ -75,6 +118,8 @@ class PatientController extends Controller
 
     public function destroy(Request $request, Patient $patient, AuditTrail $auditTrail): RedirectResponse
     {
+        abort_unless($request->user()->hasRole('admin', 'staff'), 403);
+        $this->authorizePatientBranch($request, $patient);
         $request->validate([
             'confirmation' => ['required', 'string', Rule::in([$patient->patient_number])],
         ], [
@@ -135,18 +180,22 @@ class PatientController extends Controller
         AuditTrail $auditTrail,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
+        $this->ensureDoctorHasBranch($request);
+        $branchId = $request->user()->hasRole('staff', 'doctor')
+            ? $request->user()->branch_id
+            : null;
         $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
+            'name' => ['required', 'string', 'max:255', 'regex:/^[\pL\pM\s.\'-]+$/u'],
             'date_of_birth' => ['required', 'date', 'before:today'],
             'gender' => ['required', 'in:female,male,other,prefer_not_to_say'],
-            'phone' => ['required', 'string', 'max:30'],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
+            'phone' => ['required', 'string', 'max:11', 'regex:/^[0-9]+$/'],
+            'email' => ['required', 'email:rfc', 'max:255', 'unique:users,email'],
             'address' => ['required', 'string', 'max:2000'],
             'emergency_contact' => ['nullable', 'string', 'max:100'],
-            'password' => ['required', 'string', 'min:12', 'confirmed'],
+            'password' => ['required', 'string', Password::defaults(), 'confirmed'],
         ]);
 
-        $patient = DB::transaction(function () use ($data, $auditTrail, $request): Patient {
+        $patient = DB::transaction(function () use ($data, $auditTrail, $request, $branchId): Patient {
             $user = User::create([
                 'name' => $data['name'],
                 'email' => mb_strtolower($data['email']),
@@ -157,6 +206,7 @@ class PatientController extends Controller
             ]);
             $patient = Patient::create([
                 'user_id' => $user->id,
+                'branch_id' => $branchId,
                 'patient_number' => 'P-PENDING-'.Str::uuid(),
                 'date_of_birth' => $data['date_of_birth'],
                 'gender' => $data['gender'],
@@ -187,6 +237,7 @@ class PatientController extends Controller
         AuditTrail $auditTrail,
         ClinicNotificationService $notifications,
     ): RedirectResponse {
+        $this->authorizePatientBranch($request, $patient);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($patient->user_id)],
@@ -223,5 +274,25 @@ class PatientController extends Controller
         );
 
         return back()->with('status', 'Patient information updated.');
+    }
+
+    private function ensureDoctorHasBranch(Request $request): void
+    {
+        abort_if($request->user()->hasRole('doctor') && $request->user()->branch_id === null, 403);
+    }
+
+    private function authorizePatientBranch(Request $request, Patient $patient): void
+    {
+        $user = $request->user();
+
+        if (! $user->hasRole('doctor')) {
+            return;
+        }
+
+        abort_if($user->branch_id === null, 403);
+        abort_unless(
+            Patient::query()->forBranch((int) $user->branch_id)->whereKey($patient->id)->exists(),
+            404,
+        );
     }
 }

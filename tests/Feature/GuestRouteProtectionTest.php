@@ -21,6 +21,7 @@ class GuestRouteProtectionTest extends TestCase
             'clinic.patients.index',
             'clinic.billing.index',
             'admin.staff.index',
+            'account.password.edit',
         ];
 
         foreach ($protectedRoutes as $routeName) {
