@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Appointment;
+use App\Models\AppointmentAvailabilityBlock;
 use App\Models\Bill;
 use App\Models\Branch;
 use App\Models\Patient;
@@ -16,6 +17,50 @@ use Tests\TestCase;
 class BranchAwareOverviewReportsTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_reports_summarize_active_blocked_hours_by_month_or_year_and_selected_branch(): void
+    {
+        $branch = Branch::factory()->create(['name' => 'North Branch']);
+        $otherBranch = Branch::factory()->create(['name' => 'South Branch']);
+        AppointmentAvailabilityBlock::factory()->for($branch)->create([
+            'starts_at' => '2026-11-03 10:00:00',
+            'ends_at' => '2026-11-03 12:00:00',
+        ]);
+        AppointmentAvailabilityBlock::factory()->for($branch)->create([
+            'starts_at' => '2026-12-03 10:00:00',
+            'ends_at' => '2026-12-03 13:00:00',
+            'is_active' => false,
+        ]);
+        AppointmentAvailabilityBlock::factory()->for($branch)->create([
+            'starts_at' => '2027-01-10 10:00:00',
+            'ends_at' => '2027-01-10 11:30:00',
+        ]);
+        AppointmentAvailabilityBlock::factory()->for($otherBranch)->create([
+            'starts_at' => '2026-11-03 09:00:00',
+            'ends_at' => '2026-11-03 10:00:00',
+        ]);
+        $admin = User::factory()->create(['role' => 'admin']);
+        $filters = [
+            'from' => '2026-11-01',
+            'to' => '2027-01-31',
+            'branch_id' => $branch->id,
+        ];
+
+        $this->actingAs($admin)
+            ->get(route('admin.reports', [...$filters, 'availability_period' => 'month']))
+            ->assertOk()
+            ->assertSee('Nov 2026')
+            ->assertSee('Jan 2027')
+            ->assertSee('3.50')
+            ->assertSee('Active blocked intervals');
+
+        $this->get(route('admin.reports', [...$filters, 'availability_period' => 'year']))
+            ->assertOk()
+            ->assertSee('2026')
+            ->assertSee('2027')
+            ->assertSee('2.00')
+            ->assertSee('1.50');
+    }
 
     public function test_revenue_details_filter_by_branch_and_patient_on_overview_and_reports(): void
     {

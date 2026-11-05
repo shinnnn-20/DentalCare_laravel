@@ -12,7 +12,7 @@
     <section class="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
         <h2 class="text-lg font-semibold text-slate-900">Block a date or time range</h2>
         <p class="mt-1 text-sm text-slate-500">Select 10:00 AM–5:00 PM in 30-minute increments. A full clinic day can be blocked from 10:00 AM to 5:00 PM.</p>
-        <form method="POST" action="{{ route('clinic.availability.store') }}" class="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-availability-form data-clinic-date="{{ $clinicNow->toDateString() }}" data-clinic-time="{{ $clinicNow->format('H:i') }}">
+        <form method="POST" action="{{ route('clinic.availability.store') }}" class="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-availability-form data-clinic-date="{{ $clinicNow->toDateString() }}" data-clinic-time="{{ $clinicNow->format('H:i') }}" data-confirm="Block the selected branch's appointment availability? Existing appointments will remain booked and need separate handling." data-confirm-title="Confirm availability block" data-confirm-accept="Block availability" data-confirm-variant="warning">
             @csrf
             <label class="form-label">Branch
                 <select class="form-input" name="branch_id" required>
@@ -114,7 +114,7 @@
                                 <span @class(['status-badge', 'bg-teal-50 text-teal-800' => $availabilityBlock->is_active, 'bg-slate-100 text-slate-600' => ! $availabilityBlock->is_active])>{{ $availabilityBlock->is_active ? 'Active' : 'Disabled' }}</span>
                             </td>
                             <td data-label="Action">
-                                <form method="POST" action="{{ route('clinic.availability.update', $availabilityBlock) }}" class="flex flex-col gap-2">
+                                <form method="POST" action="{{ route('clinic.availability.update', $availabilityBlock) }}" class="flex flex-col gap-2" data-confirm="Save changes to this appointment availability block?" data-confirm-title="Confirm availability changes" data-confirm-accept="Save changes">
                                     @csrf
                                     @method('PATCH')
                                     <input type="hidden" name="is_active" value="{{ $availabilityBlock->is_active ? 0 : 1 }}">
@@ -124,13 +124,16 @@
                                             Confirm if visits overlap
                                         </label>
                                     @endif
-                                    <button class="btn-small {{ $availabilityBlock->is_active ? 'text-rose-700' : 'text-teal-800' }}">{{ $availabilityBlock->is_active ? 'Enable time again' : 'Re-enable block' }}</button>
+                                    <button @class([
+                                        'btn-danger' => $availabilityBlock->is_active,
+                                        'btn-small' => ! $availabilityBlock->is_active,
+                                    ])>{{ $availabilityBlock->is_active ? 'Enable time again' : 'Re-enable block' }}</button>
                                 </form>
                                 @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                     <form method="POST" action="{{ route('clinic.availability.destroy', $availabilityBlock) }}" class="mt-2" data-confirm="Permanently delete this availability block?" data-confirm-title="Delete availability block" data-confirm-accept="Delete block" data-confirm-variant="danger">
                                         @csrf
                                         @method('DELETE')
-                                        <button class="btn-small w-full text-rose-700">Delete block</button>
+                                        <button class="btn-danger w-full">Delete block</button>
                                     </form>
                                 @endif
                             </td>

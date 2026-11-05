@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Enums\EmailVerificationResult;
 use App\Mail\VerifyPatientEmail;
+use App\Models\Branch;
 use App\Models\Patient;
 use App\Models\User;
 use Illuminate\Auth\Notifications\ResetPassword;
@@ -364,6 +365,7 @@ class EmailVerificationTest extends TestCase
             'name' => 'Jamie Patient',
             'date_of_birth' => '1990-03-10',
             'gender' => 'prefer_not_to_say',
+            'branch_id' => Branch::query()->where('slug', 'general-trias')->value('id'),
             'phone' => '09170000000',
             'email' => 'patient@example.test',
             'address' => 'Clinic Street',

@@ -58,6 +58,8 @@ class PayMongoBillCheckoutTest extends TestCase
                 && ($attributes['payment_method_types'] ?? null) === ['gcash']
                 && ($attributes['success_url'] ?? null) === route('paymongo.bill.result', 'success')
                 && ($attributes['cancel_url'] ?? null) === route('paymongo.bill.result', 'cancelled')
+                && ! array_key_exists('billing', $attributes)
+                && ! array_key_exists('description', $attributes)
                 && preg_match('/^DENTALCARE-BILL-TEST-[0-9a-f-]{36}$/', $attributes['reference_number'] ?? '') === 1;
         });
 
@@ -122,6 +124,8 @@ class PayMongoBillCheckoutTest extends TestCase
             ->assertOk()
             ->assertSee('Start GCash test checkout')
             ->assertSee(route('clinic.billing.paymongo.store', $bill))
+            ->assertSee('data-confirm="Record this payment in the bill ledger?', false)
+            ->assertSee('data-confirm="Check this PayMongo session now?', false)
             ->assertSee('Check existing payment with PayMongo')
             ->assertSee(route('clinic.billing.paymongo.reconcile', $pendingCheckout));
 
@@ -385,6 +389,60 @@ class PayMongoBillCheckoutTest extends TestCase
         $this->assertDatabaseHas('bills', [
             'id' => $bill->id,
             'payment_status' => 'unpaid',
+        ]);
+    }
+
+    public function test_reconcile_rate_limit_is_per_staff_and_redirects_with_a_helpful_message(): void
+    {
+        $this->configurePayMongo();
+        Http::preventStrayRequests();
+        Http::fake([
+            'api.paymongo.com/v1/checkout_sessions/cs_bill_test_rate_limit' => Http::response([
+                'data' => [
+                    'id' => 'cs_bill_test_rate_limit',
+                    'attributes' => [
+                        'reference_number' => 'DENTALCARE-BILL-TEST-rate-limit',
+                        'livemode' => false,
+                        'payments' => [],
+                    ],
+                ],
+            ]),
+        ]);
+        $bill = $this->createPatientBill()[1];
+        $checkout = $bill->payMongoBillCheckouts()->create([
+            'reference_number' => 'DENTALCARE-BILL-TEST-rate-limit',
+            'checkout_session_id' => 'cs_bill_test_rate_limit',
+            'amount_centavos' => 10000,
+        ]);
+        $staff = User::factory()->create(['role' => 'staff']);
+
+        for ($attempt = 0; $attempt < 30; $attempt++) {
+            $this->actingAs($staff)
+                ->from(route('clinic.billing.index'))
+                ->post(route('clinic.billing.paymongo.reconcile', $checkout));
+        }
+
+        $otherStaff = User::factory()->create(['role' => 'staff']);
+
+        $this->actingAs($otherStaff)
+            ->from(route('clinic.billing.index'))
+            ->post(route('clinic.billing.paymongo.reconcile', $checkout));
+
+        Http::assertSentCount(31);
+
+        $this->actingAs($staff)
+            ->from(route('clinic.billing.index'))
+            ->post(route('clinic.billing.paymongo.reconcile', $checkout))
+            ->assertRedirectToRoute('clinic.billing.index')
+            ->assertSessionHasErrors([
+                'checkout' => 'You have checked PayMongo too many times. Please wait a minute before trying again.',
+            ]);
+
+        Http::assertSentCount(31);
+        $this->assertDatabaseHas('paymongo_bill_checkouts', [
+            'id' => $checkout->id,
+            'status' => 'pending',
+            'paid_payment_id' => null,
         ]);
     }
 
@@ -791,7 +849,7 @@ class PayMongoBillCheckoutTest extends TestCase
         $this->assertDatabaseCount('payments', 0);
     }
 
-    public function test_bill_webhook_rejects_a_mismatched_amount_without_changing_billing(): void
+    public function test_bill_webhook_acknowledges_a_mismatched_amount_without_changing_billing(): void
     {
         $this->configurePayMongo();
         $bill = $this->createPatientBill()[1];
@@ -804,7 +862,9 @@ class PayMongoBillCheckoutTest extends TestCase
         $payload = $this->paidWebhookPayload($checkout);
         $payload['data']['data']['attributes']['payments'][0]['attributes']['amount'] = 10001;
 
-        $this->sendSignedPayload($payload)->assertUnprocessable();
+        $this->sendSignedPayload($payload)
+            ->assertOk()
+            ->assertExactJson(['received' => true, 'processed' => false]);
 
         $this->assertDatabaseHas('paymongo_bill_checkouts', [
             'id' => $checkout->id,
@@ -818,7 +878,7 @@ class PayMongoBillCheckoutTest extends TestCase
         ]);
     }
 
-    public function test_bill_webhook_rejects_mismatched_session_or_non_gcash_and_live_payments(): void
+    public function test_bill_webhook_acknowledges_mismatched_session_or_non_gcash_and_live_payments(): void
     {
         $this->configurePayMongo();
         $bill = $this->createPatientBill()[1];
@@ -831,15 +891,21 @@ class PayMongoBillCheckoutTest extends TestCase
 
         $wrongReferencePayload = $this->paidWebhookPayload($checkout);
         $wrongReferencePayload['data']['data']['attributes']['reference_number'] = 'DENTALCARE-BILL-TEST-other';
-        $this->sendSignedPayload($wrongReferencePayload)->assertNotFound();
+        $this->sendSignedPayload($wrongReferencePayload)
+            ->assertOk()
+            ->assertExactJson(['received' => true, 'processed' => false]);
 
         $wrongMethodPayload = $this->paidWebhookPayload($checkout);
         $wrongMethodPayload['data']['data']['attributes']['payments'][0]['attributes']['source']['type'] = 'card';
-        $this->sendSignedPayload($wrongMethodPayload)->assertUnprocessable();
+        $this->sendSignedPayload($wrongMethodPayload)
+            ->assertOk()
+            ->assertExactJson(['received' => true, 'processed' => false]);
 
         $livePaymentPayload = $this->paidWebhookPayload($checkout);
         $livePaymentPayload['data']['data']['attributes']['payments'][0]['attributes']['livemode'] = true;
-        $this->sendSignedPayload($livePaymentPayload)->assertUnprocessable();
+        $this->sendSignedPayload($livePaymentPayload)
+            ->assertOk()
+            ->assertExactJson(['received' => true, 'processed' => false]);
 
         $this->assertDatabaseHas('paymongo_bill_checkouts', [
             'id' => $checkout->id,

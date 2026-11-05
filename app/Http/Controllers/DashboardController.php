@@ -27,9 +27,16 @@ class DashboardController extends Controller
         $user = $request->user();
 
         if ($user->role === 'patient') {
-            $patient = $user->patient()->firstOrFail();
+            $patient = $user->patient()->with('rfidCard')->firstOrFail();
+            $rfidCard = $patient->rfidCard;
+            $rfidExpirationWarningThrough = today(config('clinic.timezone'))->addDays(30)->toDateString();
 
             return view('dashboard.patient', [
+                'rfidCard' => $rfidCard,
+                'showRfidExpirationNotice' => $rfidCard !== null
+                    && $rfidCard->is_active
+                    && $rfidCard->valid_until !== null
+                    && $rfidCard->valid_until->toDateString() <= $rfidExpirationWarningThrough,
                 'nextAppointment' => $patient->appointments()
                     ->with(['service', 'services'])
                     ->where('starts_at', '>=', now())
@@ -152,6 +159,7 @@ class DashboardController extends Controller
         return view('dashboard.clinic', [
             'metrics' => $metrics,
             'isAdmin' => $hasAdminDashboard,
+            'canViewRevenue' => $canViewRevenue,
             'appointments' => $appointments,
             'statistics' => $statistics,
             'branches' => $branches,
@@ -340,7 +348,11 @@ class DashboardController extends Controller
                     'date_time' => $appointment->starts_at->format('M j, Y · g:i A'),
                     'branch' => $appointment->branch?->name ?? 'Unassigned',
                     'services' => $appointment->treatmentNames(),
-                    'type' => $appointment->type === 'walk_in' ? 'Walk-in' : 'Online',
+                    'type' => match ($appointment->type) {
+                        'walk_in' => 'Walk-in',
+                        'appointment' => 'Appointment',
+                        default => 'Online',
+                    },
                 ];
                 if ($includeDoctor) {
                     $record['doctor'] = 'Not recorded';
@@ -400,7 +412,11 @@ class DashboardController extends Controller
                 'patient_id' => $entry->appointment->patient->patient_number,
                 'appointment_time' => $entry->appointment->starts_at->format('g:i A'),
                 'branch' => $entry->appointment->branch?->name ?? 'Unassigned',
-                'type' => $entry->appointment->type === 'walk_in' ? 'Walk-in' : 'Online',
+                'type' => match ($entry->appointment->type) {
+                    'walk_in' => 'Walk-in',
+                    'appointment' => 'Appointment',
+                    default => 'Online',
+                },
                 'status' => ucfirst($entry->status),
             ],
         );

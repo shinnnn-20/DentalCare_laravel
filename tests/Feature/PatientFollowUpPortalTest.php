@@ -63,4 +63,31 @@ class PatientFollowUpPortalTest extends TestCase
             ->assertOk()
             ->assertDontSee('Upcoming follow-up');
     }
+
+    public function test_patient_dashboard_shows_only_the_five_most_recent_dental_records(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-05 10:00:00', config('clinic.timezone')));
+        $patient = Patient::factory()->create();
+        $recordIds = [];
+
+        foreach (range(1, 6) as $number) {
+            $createdAt = Carbon::parse('2026-11-01 09:00:00', config('clinic.timezone'))->addDays($number);
+            $recordIds[] = DentalRecord::factory()->for($patient)->create([
+                'treatment' => 'Overview record '.$number,
+                'created_at' => $createdAt,
+                'updated_at' => $createdAt,
+            ])->id;
+        }
+
+        $this->actingAs($patient->user)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertViewHas('recentRecords', fn ($recentRecords): bool => $recentRecords->modelKeys() === array_reverse(array_slice($recordIds, 1)))
+            ->assertSee('Overview record 6')
+            ->assertSee('Overview record 5')
+            ->assertSee('Overview record 4')
+            ->assertSee('Overview record 3')
+            ->assertSee('Overview record 2')
+            ->assertDontSee('Overview record 1');
+    }
 }

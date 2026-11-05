@@ -168,7 +168,15 @@ class PayMongoBillPaymentReconciler
                 'module' => 'payments',
                 'record_type' => Payment::class,
                 'record_id' => (string) $payment->id,
-                'description' => "PayMongo test payment {$paidPayment['id']} recorded for bill {$bill->bill_number}.",
+                'description' => sprintf(
+                    'System recorded PayMongo TEST MODE GCash payment %s for patient %s on bill %s: PHP %s applied, transaction %s, receipt %s.',
+                    $paidPayment['id'],
+                    $bill->patient()->value('patient_number') ?? 'unknown patient',
+                    $bill->bill_number,
+                    number_format((float) $payment->applied_amount, 2),
+                    $payment->transaction_id,
+                    $receipt->receipt_number,
+                ),
             ]);
             $this->appointmentCompletion->sync($bill);
 

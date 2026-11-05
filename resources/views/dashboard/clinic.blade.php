@@ -143,7 +143,7 @@
                     <p class="mt-1 text-sm text-slate-500">Appointments and recorded payments · {{ $statistics['rangeLabel'] }} · {{ $selectedBranchName }}</p>
                 </div>
             </div>
-            <div class="grid gap-4 xl:grid-cols-2">
+            <div class="grid gap-4 {{ $canViewRevenue ? 'xl:grid-cols-2' : 'xl:grid-cols-1' }}">
                 <article class="rounded-2xl border border-slate-200 bg-white p-5" data-appointments-trend>
                     <h3 class="font-semibold text-slate-900">Appointments over time</h3>
                     <p class="mt-1 text-sm text-slate-500">Scheduled appointments by day or month.</p>
@@ -160,23 +160,25 @@
                     </div>
                 </article>
 
-                <article class="rounded-2xl border border-slate-200 bg-white p-5" data-revenue-trend>
-                    <h3 class="font-semibold text-slate-900">Revenue collected</h3>
-                    <p class="mt-1 text-sm text-slate-500">Applied payment amounts recorded during the selected period at {{ $selectedBranchName }}.</p>
-                    <div class="mt-5 flex h-44 items-end gap-2 overflow-x-auto border-b border-slate-100 pb-2" role="img" aria-label="Applied payments by date">
-                        @foreach ($statistics['timeline'] as $point)
-                            <div class="flex h-full min-w-9 flex-1 flex-col items-center justify-end gap-1">
-                                <span class="whitespace-nowrap text-[0.65rem] font-semibold text-slate-700">₱{{ number_format($point['revenue'], 0) }}</span>
-                                <div class="flex h-28 w-full items-end rounded-t-md bg-slate-50">
-                                    <div class="w-full rounded-t-md bg-cyan-600" style="height: {{ $point['revenue'] / $statistics['revenueMaximum'] * 100 }}%"></div>
+                @if ($canViewRevenue)
+                    <article class="rounded-2xl border border-slate-200 bg-white p-5" data-revenue-trend>
+                        <h3 class="font-semibold text-slate-900">Revenue collected</h3>
+                        <p class="mt-1 text-sm text-slate-500">Applied payment amounts recorded during the selected period at {{ $selectedBranchName }}.</p>
+                        <div class="mt-5 flex h-44 items-end gap-2 overflow-x-auto border-b border-slate-100 pb-2" role="img" aria-label="Applied payments by date">
+                            @foreach ($statistics['timeline'] as $point)
+                                <div class="flex h-full min-w-9 flex-1 flex-col items-center justify-end gap-1">
+                                    <span class="whitespace-nowrap text-[0.65rem] font-semibold text-slate-700">₱{{ number_format($point['revenue'], 0) }}</span>
+                                    <div class="flex h-28 w-full items-end rounded-t-md bg-slate-50">
+                                        <div class="w-full rounded-t-md bg-cyan-600" style="height: {{ $point['revenue'] / $statistics['revenueMaximum'] * 100 }}%"></div>
+                                    </div>
+                                    <span class="whitespace-nowrap text-[0.65rem] text-slate-500">{{ $point['label'] }}</span>
                                 </div>
-                                <span class="whitespace-nowrap text-[0.65rem] text-slate-500">{{ $point['label'] }}</span>
-                            </div>
-                        @endforeach
-                    </div>
-                </article>
+                            @endforeach
+                        </div>
+                    </article>
+                @endif
 
-                <article class="rounded-2xl border border-slate-200 bg-white p-5 xl:col-span-2" data-appointment-statuses>
+                <article class="rounded-2xl border border-slate-200 bg-white p-5 {{ $canViewRevenue ? 'xl:col-span-2' : '' }}" data-appointment-statuses>
                     <h3 class="font-semibold text-slate-900">Appointment status distribution</h3>
                     <p class="mt-1 text-sm text-slate-500">Statuses currently recorded for appointments in the selected period.</p>
                     @forelse ($statistics['statuses'] as $status)

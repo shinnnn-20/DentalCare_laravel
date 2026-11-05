@@ -43,6 +43,9 @@ class AppointmentController extends Controller
             ->when($hasAssignedBranch, fn ($query) => $query->whereKey($user->branch_id))
             ->orderBy('id')
             ->get();
+        $bookingBranches = $user->hasRole('doctor')
+            ? Branch::query()->orderBy('id')->get()
+            : $branches;
         $filters = $request->validate([
             'date' => ['nullable', 'date'],
             'status' => ['nullable', 'in:pending,approved,rejected,checked_in,waiting,in_consultation,billed,completed,cancelled,no_show'],
@@ -90,7 +93,7 @@ class AppointmentController extends Controller
             })
             ->when(
                 $isAppointmentRecordsPage,
-                fn ($query) => $query->orderByRaw("CASE WHEN status IN ('checked_in', 'waiting', 'in_consultation', 'billed') THEN 0 WHEN status = 'pending' THEN 1 ELSE 2 END"),
+                fn ($query) => $query->orderByRaw("CASE WHEN status IN ('checked_in', 'waiting', 'in_consultation', 'billed') THEN 0 WHEN status = 'pending' THEN 1 WHEN status = 'approved' THEN 2 ELSE 3 END"),
             )
             ->orderByDesc('starts_at')
             ->paginate(20)
@@ -108,10 +111,13 @@ class AppointmentController extends Controller
                 'Pending Appointments' => $appointmentCollection
                     ->where('status', 'pending')
                     ->whereNotIn('id', $followUpAppointmentIds),
+                'Approved Appointments' => $appointmentCollection
+                    ->where('status', 'approved')
+                    ->whereNotIn('id', $followUpAppointmentIds),
                 'Follow-up appointments' => $followUpAppointments,
                 'Other Appointments' => $appointmentCollection->reject(fn (Appointment $appointment): bool => in_array(
                     $appointment->status,
-                    [...self::ONGOING_APPOINTMENT_STATUSES, 'pending'],
+                    [...self::ONGOING_APPOINTMENT_STATUSES, 'pending', 'approved'],
                     true,
                 ) || $followUpAppointments->contains('id', $appointment->id)),
             ];
@@ -135,17 +141,24 @@ class AppointmentController extends Controller
             ->pluck('id')
             ->all();
 
-        $services = Service::query()
-            ->where('is_active', true)
-            ->when(Schema::hasColumn('services', 'category'), fn ($query) => $query->orderBy('category'))
-            ->orderBy('name')
-            ->get();
+        $services = collect();
+        $serviceBranchIds = [];
+        foreach ($bookingBranches as $bookingBranch) {
+            $branchServices = Service::query()
+                ->forBranch((int) $bookingBranch->id)
+                ->where('is_active', true)
+                ->when(Schema::hasColumn('services', 'category'), fn ($query) => $query->orderBy('category'))
+                ->orderBy('name')
+                ->get();
+
+            foreach ($branchServices as $service) {
+                $services->put($service->id, $service);
+                $serviceBranchIds[$service->id][] = (string) $bookingBranch->id;
+            }
+        }
+        $services = $services->values();
         $patients = $request->user()->hasRole('admin', 'staff', 'doctor')
             ? Patient::query()
-                ->when(
-                    $user->hasRole('doctor'),
-                    fn ($query) => $query->forBranch((int) $user->branch_id),
-                )
                 ->with('user')
                 ->orderBy('patient_number')
                 ->get()
@@ -162,6 +175,8 @@ class AppointmentController extends Controller
             'services',
             'patients',
             'branches',
+            'bookingBranches',
+            'serviceBranchIds',
             'hasUnassignedAppointments',
             'appointmentTimes',
             'reschedulableAppointmentIds',
@@ -180,11 +195,11 @@ class AppointmentController extends Controller
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
             'service_id' => ['nullable', 'integer', 'exists:services,id'],
             'service_ids' => ['nullable', 'array'],
-            'service_ids.*' => ['integer', 'exists:services,id'],
+            'service_ids.*' => ['integer', 'distinct', 'exists:services,id'],
             'exclude_appointment_id' => ['nullable', 'integer', 'exists:appointments,id'],
         ]);
         if (
-            $request->user()->hasRole('staff', 'doctor')
+            $request->user()->hasRole('staff')
             && $request->user()->branch_id !== null
             && (int) $data['branch_id'] !== (int) $request->user()->branch_id
         ) {
@@ -210,9 +225,22 @@ class AppointmentController extends Controller
                 ? $data['service_ids']
                 : (! empty($data['service_id']) ? [$data['service_id']] : []);
 
-            $durationMinutes = ! empty($serviceIds)
-                ? (int) Service::query()->whereIn('id', $serviceIds)->sum('duration_minutes')
-                : 30;
+            $durationMinutes = 30;
+            if (! empty($serviceIds)) {
+                $services = Service::query()
+                    ->forBranch((int) $data['branch_id'])
+                    ->whereIn('id', $serviceIds)
+                    ->where('is_active', true)
+                    ->get(['id', 'duration_minutes']);
+
+                if ($services->count() !== count(array_unique(array_map('intval', $serviceIds)))) {
+                    throw ValidationException::withMessages([
+                        'service_ids' => 'Choose only active services available at this branch.',
+                    ]);
+                }
+
+                $durationMinutes = (int) $services->sum('duration_minutes');
+            }
         }
         $durationMinutes = max(30, $durationMinutes);
         $monthStartKey = $monthStart->format('Y-m-d H:i:s');
@@ -298,11 +326,14 @@ class AppointmentController extends Controller
     ): RedirectResponse {
         $user = $request->user();
         $isPatient = $user->role === 'patient';
+        $isDoctor = $user->hasRole('doctor');
         abort_unless($isPatient || $user->hasRole('admin', 'staff', 'doctor'), 403);
         abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
+        if ($isDoctor && ! $request->exists('booking_mode')) {
+            $request->merge(['booking_mode' => 'walk_in']);
+        }
 
         $this->mergeAppointmentStart($request);
-
         $serviceIds = $request->input('service_ids');
         if (! is_array($serviceIds) || empty($serviceIds)) {
             $singleServiceId = $request->input('service_id');
@@ -311,20 +342,21 @@ class AppointmentController extends Controller
             $serviceIds = array_values(array_unique(array_map('intval', $serviceIds)));
         }
 
+        $appointmentBookingMode = $isDoctor ? $request->input('booking_mode', 'walk_in') : null;
+        $isScheduledAppointment = $isDoctor && $appointmentBookingMode === 'appointment';
         $data = $request->validate([
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
             'patient_id' => [$isPatient ? 'nullable' : 'required', 'integer', 'exists:patients,id'],
+            'booking_mode' => [$isDoctor ? 'sometimes' : 'prohibited', Rule::in(['walk_in', 'appointment'])],
             'service_id' => [empty($serviceIds) ? 'required' : 'nullable', 'integer', 'exists:services,id'],
             'service_ids' => ['nullable', 'array'],
             'service_ids.*' => ['integer', 'exists:services,id'],
-            'starts_at' => [$isPatient ? 'required' : 'nullable', 'date_format:Y-m-d\TH:i'],
+            'starts_at' => [$isPatient || $isScheduledAppointment ? 'required' : 'nullable', 'date_format:Y-m-d\TH:i'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
-        if (
-            $user->hasRole('staff', 'doctor')
+        if ($user->hasRole('staff')
             && $user->branch_id !== null
-            && (int) $data['branch_id'] !== (int) $user->branch_id
-        ) {
+            && (int) $data['branch_id'] !== (int) $user->branch_id) {
             throw ValidationException::withMessages([
                 'branch_id' => 'Appointments must be scheduled at your assigned branch.',
             ]);
@@ -334,31 +366,31 @@ class AppointmentController extends Controller
             throw ValidationException::withMessages(['service_id' => 'Choose at least one available treatment.']);
         }
 
-        $services = Service::query()->whereIn('id', $serviceIds)->where('is_active', true)->get();
+        $branchId = (int) $data['branch_id'];
+        $services = Service::query()
+            ->forBranch($branchId)
+            ->whereIn('id', $serviceIds)
+            ->where('is_active', true)
+            ->get();
 
         if ($services->count() !== count($serviceIds)) {
-            throw ValidationException::withMessages(['service_id' => 'Choose an available service.']);
+            throw ValidationException::withMessages(['service_id' => 'Choose an available service for the selected branch.']);
         }
 
         $patient = $isPatient
             ? $request->user()->patient()->firstOrFail()
             : Patient::query()->findOrFail($data['patient_id']);
-        if ($user->hasRole('doctor')) {
-            abort_unless(
-                Patient::query()->forBranch((int) $user->branch_id)->whereKey($patient->id)->exists(),
-                404,
-            );
-        }
         $durationMinutes = (int) $services->sum('duration_minutes');
         $durationMinutes = max(30, $durationMinutes);
         $startsAt = isset($data['starts_at'])
             ? Carbon::parse($data['starts_at'], config('clinic.timezone'))
             : $this->nextAppointmentStart(now(config('clinic.timezone')), $durationMinutes);
 
-        $branchId = (int) $data['branch_id'];
+        $requiresBranchApproval = $isScheduledAppointment
+            && (int) $user->branch_id !== $branchId;
         $this->ensureAppointmentAvailability($startsAt, $durationMinutes, $branchId);
 
-        $appointment = DB::transaction(function () use ($isPatient, $patient, $services, $startsAt, $durationMinutes, $data, $request, $branchId): Appointment {
+        $appointment = DB::transaction(function () use ($isPatient, $isScheduledAppointment, $requiresBranchApproval, $patient, $services, $startsAt, $durationMinutes, $data, $request, $branchId): Appointment {
             $slotKeys = $this->appointmentSlotKeys($startsAt, $durationMinutes);
             Branch::query()->whereKey($branchId)->lockForUpdate()->firstOrFail();
             $this->ensureAppointmentAvailability($startsAt, $durationMinutes, $branchId);
@@ -368,10 +400,12 @@ class AppointmentController extends Controller
                 'branch_id' => $branchId,
                 'service_id' => $services->first()->id,
                 'created_by' => $request->user()->id,
-                'type' => $isPatient ? 'online' : 'walk_in',
+                'type' => $isPatient ? 'online' : ($isScheduledAppointment ? 'appointment' : 'walk_in'),
                 'starts_at' => $startsAt,
                 'duration_minutes' => $durationMinutes,
-                'status' => $isPatient ? 'pending' : 'checked_in',
+                'status' => $isPatient || $requiresBranchApproval
+                    ? 'pending'
+                    : ($isScheduledAppointment ? 'approved' : 'checked_in'),
                 'notes' => $data['notes'] ?? null,
             ]);
 
@@ -379,31 +413,55 @@ class AppointmentController extends Controller
 
             $this->attachAppointmentSlots($slotKeys, $branchId, $appointment->id);
 
-            if (! $isPatient) {
+            if (! $isPatient && ! $isScheduledAppointment) {
                 $this->addToQueue($appointment);
             }
 
             return $appointment;
         });
 
-        $auditTrail->record($request->user(), $isPatient ? 'appointment_booked' : 'walk_in_registered', 'appointments', $appointment);
+        $auditTrail->record(
+            $request->user(),
+            $isPatient ? 'appointment_booked' : ($isScheduledAppointment ? 'appointment_scheduled' : 'walk_in_registered'),
+            'appointments',
+            $appointment,
+            sprintf(
+                '%s %s for patient %s on %s at %s; treatments: %s; current status: %s.',
+                $isPatient ? 'Patient' : $request->user()->name,
+                $isPatient ? 'requested an appointment' : ($isScheduledAppointment ? 'scheduled an appointment' : 'registered a walk-in'),
+                $patient->user->name,
+                $appointment->starts_at->format('M j, Y g:i A'),
+                Branch::query()->whereKey($branchId)->value('name') ?? 'unknown branch',
+                $services->pluck('name')->join(', '),
+                str_replace('_', ' ', $appointment->status),
+            ).($requiresBranchApproval ? ' Destination branch approval is required.' : ''),
+        );
         $patientName = $patient->user->name;
         $appointmentTime = $appointment->starts_at->format('F j, Y \a\t g:i A');
         $notifications->notifyClinicStaff(
             $request->user(),
-            $isPatient ? 'appointment.booked' : 'appointment.created',
-            $isPatient ? 'New Appointment Booked' : 'Appointment Created',
+            $isPatient || $isScheduledAppointment ? 'appointment.booked' : 'appointment.created',
+            $requiresBranchApproval
+                ? 'Appointment Awaiting Branch Approval'
+                : ($isPatient || $isScheduledAppointment ? 'New Appointment Booked' : 'Appointment Created'),
             $isPatient
                 ? "{$patientName} booked an appointment for {$appointmentTime}."
-                : "{$request->user()->name} added an appointment for {$patientName} on {$appointmentTime}.",
+                : ($requiresBranchApproval
+                    ? "{$request->user()->name} requested an appointment for {$patientName} on {$appointmentTime}; the destination branch must approve it."
+                : ($isScheduledAppointment
+                    ? "{$request->user()->name} scheduled an appointment for {$patientName} on {$appointmentTime}."
+                    : "{$request->user()->name} added an appointment for {$patientName} on {$appointmentTime}.")),
             route('clinic.appointment-records', ['date' => $appointment->starts_at->toDateString()], false).'#appointment-'.$appointment->id,
             'appointment',
             $appointment->id,
         );
 
-        return redirect()->route($isPatient ? 'appointments.index' : 'clinic.appointment-records')->with('status', $isPatient
-            ? 'Appointment request submitted for clinic approval.'
-            : 'Walk-in appointment added to the queue.');
+        return redirect()->route($isPatient ? 'appointments.index' : 'clinic.appointment-records')->with('status', match (true) {
+            $isPatient => 'Appointment request submitted for clinic approval.',
+            $requiresBranchApproval => 'Appointment request submitted to the selected branch for approval.',
+            $isScheduledAppointment => 'Appointment scheduled.',
+            default => 'Walk-in appointment added to the queue.',
+        });
     }
 
     public function checkInFromQueue(
@@ -446,9 +504,19 @@ class AppointmentController extends Controller
                 ]);
             }
 
+            $lockedAppointment->loadMissing(['patient.user', 'branch']);
             $lockedAppointment->update(['status' => 'checked_in']);
-            $this->addToQueue($lockedAppointment);
-            $auditTrail->record($request->user(), 'appointment_check_in', 'appointments', $lockedAppointment);
+            $queueEntry = $this->addToQueue($lockedAppointment);
+            $auditTrail->record(
+                $request->user(),
+                'appointment_check_in',
+                'appointments',
+                $lockedAppointment,
+                "Checked in {$lockedAppointment->patient->user->name} for appointment #{$lockedAppointment->id} at "
+                    .$lockedAppointment->starts_at->format('M j, Y g:i A')
+                    .' in '.($lockedAppointment->branch?->name ?? 'an unassigned branch')
+                    ."; queue number {$queueEntry->queue_number}; status changed from approved to checked in.",
+            );
         });
 
         $appointment->refresh()->load('patient.user');
@@ -532,7 +600,7 @@ class AppointmentController extends Controller
             throw ValidationException::withMessages(['status' => 'This appointment cannot be changed from its current status.']);
         }
 
-        DB::transaction(function () use ($appointment, $action, $to, $allowedFrom): void {
+        $previousStatus = DB::transaction(function () use ($appointment, $action, $to, $allowedFrom): string {
             $lockedAppointment = Appointment::query()
                 ->whereKey($appointment->id)
                 ->lockForUpdate()
@@ -565,6 +633,7 @@ class AppointmentController extends Controller
                 );
             }
 
+            $previousStatus = $lockedAppointment->status;
             $lockedAppointment->update(['status' => $to]);
 
             if (in_array($to, self::RELEASED_APPOINTMENT_STATUSES, true)) {
@@ -582,10 +651,35 @@ class AppointmentController extends Controller
 
                 $queueEntry->update(['status' => $queueStatus]);
             }
+
+            return $previousStatus;
         });
 
-        $appointment->refresh();
-        $auditTrail->record($user, 'appointment_'.$action, 'appointments', $appointment);
+        $appointment->refresh()->load(['patient.user', 'branch']);
+        $auditTrail->record(
+            $user,
+            'appointment_'.$action,
+            'appointments',
+            $appointment,
+            sprintf(
+                '%s %s for patient %s on %s at %s; appointment #%d status changed from %s to %s.',
+                $user->name,
+                match ($action) {
+                    'approve' => 'approved the appointment',
+                    'reject' => 'rejected the appointment',
+                    'cancel' => 'cancelled the appointment',
+                    'call' => 'called the patient for the appointment',
+                    'consult' => 'started a consultation for the appointment',
+                    'no-show' => 'marked the appointment as no-show',
+                },
+                $appointment->patient->user->name,
+                $appointment->starts_at->format('M j, Y g:i A'),
+                $appointment->branch?->name ?? 'an unassigned branch',
+                $appointment->id,
+                str_replace('_', ' ', $previousStatus),
+                str_replace('_', ' ', $appointment->status),
+            ),
+        );
         $notificationDetails = match ($action) {
             'approve' => ['appointment.approved', 'Appointment Approved', "{$user->name} approved {$appointment->patient->user->name}'s appointment for ".$appointment->starts_at->format('F j, Y \a\t g:i A').'.'],
             'reject' => ['appointment.rejected', 'Appointment Rejected', "{$user->name} rejected {$appointment->patient->user->name}'s appointment request."],
@@ -771,8 +865,10 @@ class AppointmentController extends Controller
                     'appointment_rescheduled',
                     'appointments',
                     $appointment,
-                    'Changed from '.$previousStart->format('Y-m-d H:i').' to '.$appointment->starts_at->format('Y-m-d H:i')
-                        .($branchChanged ? '; branch changed from '.(Branch::find($previousBranchId)?->name ?? 'Not Assigned').' to '.Branch::findOrFail($branchId)->name : '.'),
+                    "Rescheduled {$appointment->patient->user->name}'s appointment #{$appointment->id} from "
+                        .$previousStart->format('M j, Y g:i A').' to '.$appointment->starts_at->format('M j, Y g:i A')
+                        .($branchChanged ? '; branch changed from '.(Branch::find($previousBranchId)?->name ?? 'unassigned').' to '.Branch::findOrFail($branchId)->name : '')
+                        .'.',
                 );
             }
 

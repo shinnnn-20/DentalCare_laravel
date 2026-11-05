@@ -39,6 +39,48 @@ class RfidCheckInTest extends TestCase
             ->assertDontSee('Update registered card');
     }
 
+    public function test_patient_dashboard_notifies_when_an_active_rfid_card_expires_within_thirty_days(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-06 09:00:00', config('clinic.timezone')));
+        $patient = $this->createPatient('P-2026-00101', 'RFID Expiration Patient', '09170000101');
+        RfidCard::factory()->for($patient)->create([
+            'uid' => 'EXPIRING-CARD-101',
+            'is_active' => true,
+            'valid_until' => '2026-11-30 00:00:00',
+        ]);
+
+        $this->actingAs($patient->user)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertSee('RFID card expiration reminder')
+            ->assertSee('Your RFID card expires soon')
+            ->assertSee('Nov 30, 2026')
+            ->assertSee(route('patient.rfid.index'), false);
+    }
+
+    public function test_patient_dashboard_hides_rfid_expiration_notice_for_disabled_or_distant_expiry_cards(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-06 09:00:00', config('clinic.timezone')));
+        $patient = $this->createPatient('P-2026-00102', 'RFID Distant Expiration Patient', '09170000102');
+        RfidCard::factory()->for($patient)->create([
+            'uid' => 'DISTANT-CARD-102',
+            'is_active' => true,
+            'valid_until' => '2026-12-07 00:00:00',
+        ]);
+
+        $this->actingAs($patient->user)
+            ->get(route('dashboard'))
+            ->assertDontSee('RFID card expiration reminder');
+
+        $patient->rfidCard->update([
+            'is_active' => false,
+            'valid_until' => '2026-11-05 00:00:00',
+        ]);
+
+        $this->get(route('dashboard'))
+            ->assertDontSee('RFID card expiration reminder');
+    }
+
     public function test_patient_cannot_replace_their_registered_card(): void
     {
         $patient = $this->createPatient('P-2026-00063', 'RFID Replacement Patient', '09170000063');

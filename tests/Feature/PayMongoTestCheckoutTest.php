@@ -326,19 +326,23 @@ class PayMongoTestCheckoutTest extends TestCase
         ]);
     }
 
-    public function test_webhook_rejects_live_mode_and_wrong_amount_events(): void
+    public function test_webhook_acknowledges_live_mode_and_wrong_amount_events_without_processing(): void
     {
         $this->configureWebhookSecret();
         $checkout = $this->createPendingTestCheckout();
         $livePayload = $this->paidWebhookPayload($checkout);
         $livePayload['data']['livemode'] = true;
 
-        $this->sendSignedPayload($livePayload)->assertUnprocessable();
+        $this->sendSignedPayload($livePayload)
+            ->assertOk()
+            ->assertExactJson(['received' => true, 'processed' => false]);
 
         $wrongAmountPayload = $this->paidWebhookPayload($checkout);
         $wrongAmountPayload['data']['data']['attributes']['payments'][0]['attributes']['amount'] = 10001;
 
-        $this->sendSignedPayload($wrongAmountPayload)->assertUnprocessable();
+        $this->sendSignedPayload($wrongAmountPayload)
+            ->assertOk()
+            ->assertExactJson(['received' => true, 'processed' => false]);
 
         $this->assertDatabaseHas('paymongo_test_checkouts', [
             'id' => $checkout->id,
@@ -347,14 +351,16 @@ class PayMongoTestCheckoutTest extends TestCase
         ]);
     }
 
-    public function test_webhook_requires_a_recorded_checkout_session_and_matching_reference(): void
+    public function test_webhook_acknowledges_an_unrecorded_checkout_session_without_processing(): void
     {
         $this->configureWebhookSecret();
         $checkout = $this->createPendingTestCheckout();
         $payload = $this->paidWebhookPayload($checkout);
         $payload['data']['data']['attributes']['reference_number'] = 'DENTALCARE-TEST-not-recorded';
 
-        $this->sendSignedPayload($payload)->assertNotFound();
+        $this->sendSignedPayload($payload)
+            ->assertOk()
+            ->assertExactJson(['received' => true, 'processed' => false]);
 
         $this->assertDatabaseHas('paymongo_test_checkouts', [
             'id' => $checkout->id,

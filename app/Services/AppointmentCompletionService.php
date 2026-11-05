@@ -27,7 +27,7 @@ class AppointmentCompletionService
                 }
 
                 $appointment->update(['status' => 'billed']);
-                $this->recordStatusChange($appointment, 'appointment_completion_reopened');
+                $this->recordStatusChange($appointment, 'appointment_completion_reopened', $lockedBill, $paidCents, $totalCents);
 
                 return true;
             }
@@ -44,14 +44,34 @@ class AppointmentCompletionService
             $appointment->update(['status' => 'completed']);
             $appointment->queueEntry()->update(['status' => 'completed']);
             DB::table('appointment_slots')->where('appointment_id', $appointment->id)->delete();
-            $this->recordStatusChange($appointment, 'appointment_completed');
+            $this->recordStatusChange($appointment, 'appointment_completed', $lockedBill, $paidCents, $totalCents);
 
             return true;
         });
     }
 
-    private function recordStatusChange(Appointment $appointment, string $action): void
+    private function recordStatusChange(Appointment $appointment, string $action, Bill $bill, int $paidCents, int $totalCents): void
     {
+        $appointment->loadMissing(['patient.user', 'branch']);
+        $description = $action === 'appointment_completed'
+            ? sprintf(
+                'System completed appointment #%d for patient %s on %s at %s after treatment and full payment of PHP %s on bill %s.',
+                $appointment->id,
+                $appointment->patient->user->name,
+                $appointment->starts_at->format('M j, Y g:i A'),
+                $appointment->branch?->name ?? 'an unassigned branch',
+                number_format($totalCents / 100, 2),
+                $bill->bill_number,
+            )
+            : sprintf(
+                'System changed appointment #%d for patient %s from completed back to billed because bill %s has an outstanding balance: PHP %s paid of PHP %s.',
+                $appointment->id,
+                $appointment->patient->user->name,
+                $bill->bill_number,
+                number_format($paidCents / 100, 2),
+                number_format($totalCents / 100, 2),
+            );
+
         AuditLog::query()->create([
             'user_id' => null,
             'role' => 'system',
@@ -59,9 +79,7 @@ class AppointmentCompletionService
             'module' => 'appointments',
             'record_type' => class_basename($appointment),
             'record_id' => (string) $appointment->id,
-            'description' => $action === 'appointment_completed'
-                ? 'Appointment was automatically completed after treatment and full payment.'
-                : 'Appointment returned to billed status after an add-on service created an outstanding balance.',
+            'description' => $description,
         ]);
     }
 }

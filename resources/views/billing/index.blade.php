@@ -5,9 +5,25 @@
 @section('content')
     <div class="mb-8 flex flex-wrap items-end justify-between gap-4 print-hidden">
         <div><p class="text-sm font-medium text-teal-700">{{ $isReadOnly ? 'Branch records' : 'Clinic operations' }}</p><h1 class="mt-1 text-3xl font-bold tracking-tight">Billing & payments</h1><p class="mt-2 text-slate-500">{{ $isReadOnly ? 'View bills and payment history for appointments at your assigned branch.' : 'Record transactions and issue an acknowledgement receipt for each payment.' }}</p></div>
-        <button class="btn-secondary gap-2" type="button" data-print-all-bills>
-            🖨 Print All
-        </button>
+        <div class="flex flex-wrap items-end gap-3">
+            <form method="GET" action="{{ route('clinic.billing.index') }}" class="flex items-end gap-2">
+                @if ($selectedBillId)
+                    <input type="hidden" name="bill" value="{{ $selectedBillId }}">
+                @endif
+                <div>
+                    <label class="mb-1 block text-sm font-medium text-slate-700" for="billing-page">Page to print</label>
+                    <select class="form-input min-h-11" id="billing-page" name="page">
+                        @foreach (range(1, $bills->lastPage()) as $page)
+                            <option value="{{ $page }}" @selected($page === $bills->currentPage())>Page {{ $page }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <button class="btn-small min-h-11" type="submit">Go</button>
+            </form>
+            <button class="btn-secondary gap-2" type="button" data-print-all-bills>
+                🖨 Print Selected Page
+            </button>
+        </div>
     </div>
     <p class="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950 print-hidden">
         <strong class="block">ACKNOWLEDGEMENT RECEIPT (AR) ONLY</strong>
@@ -18,6 +34,7 @@
             @forelse ($bills as $bill)
                 @php($paid = (float) $bill->payments->sum('applied_amount'))
                 @php($balance = max(0, (float) $bill->total - $paid))
+                @php($isPaid = $bill->payment_status === 'paid' || $paid >= (float) $bill->total)
                 @php($originalItems = $bill->items->where('is_add_on', false))
                 @php($addOnItems = $bill->items->where('is_add_on', true))
                 @php($unreconciledPaymongoCheckout = $bill->payMongoBillCheckouts->contains(fn ($checkout) => $checkout->status === 'paid' && (! $checkout->paid_payment_id || ! $bill->payments->contains(fn ($payment) => $payment->provider === 'paymongo' && $payment->is_test && $payment->provider_transaction_id === $checkout->paid_payment_id))))
@@ -49,7 +66,11 @@
                     <td data-label="Action">
                         <button class="btn-small whitespace-nowrap" type="button" data-print-bill="bill-print-{{ $bill->id }}">🖨 Print Bill</button>
                         @if ($bill->appointment && in_array($bill->appointment->status, ['billed', 'completed'], true))
-                            <a class="btn-small mt-2 whitespace-nowrap" href="{{ route('clinic.bills.additional-services.create', $bill) }}">Add services</a>
+                            @if ($isPaid)
+                                <span class="mt-2 inline-flex cursor-not-allowed whitespace-nowrap rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-400" aria-disabled="true">Add services · Paid</span>
+                            @else
+                                <a class="btn-small mt-2 whitespace-nowrap" href="{{ route('clinic.bills.additional-services.create', $bill) }}">Add services</a>
+                            @endif
                         @endif
                     </td>
                     @endunless
@@ -66,7 +87,7 @@
                         @endif
                         @foreach ($bill->payMongoBillCheckouts as $checkout)
                             @if ($paymongoTestCheckoutAvailable && $checkout->status === 'pending' && $checkout->checkout_session_id)
-                                <form method="POST" action="{{ route('clinic.billing.paymongo.reconcile', $checkout) }}" class="mb-3">
+                                <form method="POST" action="{{ route('clinic.billing.paymongo.reconcile', $checkout) }}" class="mb-3" data-confirm="Check this PayMongo session now? If PayMongo confirms it is paid, the payment and receipt will be added to this bill." data-confirm-title="Confirm PayMongo payment" data-confirm-accept="Check and reconcile">
                                     @csrf
                                     <button class="btn-secondary" type="submit">Check existing payment with PayMongo</button>
                                     <p class="mt-1 text-xs text-slate-500">Checks this checkout’s status; it does not start a new charge.</p>
@@ -76,14 +97,14 @@
                         @if ($balance > 0)
                             @if ($paymongoTestCheckoutAvailable)
                                 @if (! $unreconciledPaymongoCheckout && ! $bill->payMongoBillCheckouts->contains('status', 'review'))
-                                    <form method="POST" action="{{ route('clinic.billing.paymongo.store', $bill) }}" class="mb-3">
+                                    <form method="POST" action="{{ route('clinic.billing.paymongo.store', $bill) }}" class="mb-3" data-confirm="Continue to the PayMongo test checkout? No payment will be recorded until PayMongo confirms it." data-confirm-title="Start test checkout" data-confirm-accept="Continue">
                                         @csrf
                                         <button class="btn-primary" type="submit">Start GCash test checkout</button>
                                         <p class="mt-1 text-xs text-amber-700">Test mode only; a confirmed checkout is recorded as a clearly labeled test payment and applied to this bill.</p>
                                     </form>
                                 @endif
                             @endif
-                            <form method="POST" action="{{ route('clinic.payments.store', $bill) }}" class="grid gap-2">
+                            <form method="POST" action="{{ route('clinic.payments.store', $bill) }}" class="grid gap-2" data-confirm="Record this payment in the bill ledger? Verify the payment method and amounts before continuing." data-confirm-title="Confirm payment" data-confirm-accept="Record payment">
                                 @csrf
                                 <select class="form-input" name="method" required><option value="cash">Cash</option><option value="gcash">GCash</option><option value="other">Other</option></select>
                                 <div class="grid grid-cols-2 gap-2"><label class="form-label text-xs">Amount received<input class="form-input" type="text" inputmode="decimal" name="amount" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ number_format($balance, 2, '.', '') }}" required></label><label class="form-label text-xs">Apply to bill<input class="form-input" type="text" inputmode="decimal" name="applied_amount" data-money-input pattern="(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?" title="Enter an amount with up to two decimal places." value="{{ number_format($balance, 2, '.', '') }}" required></label></div>
@@ -210,6 +231,7 @@
         @php($balance = max(0, (float) $bill->total - $paid))
         @php($originalItems = $bill->items->where('is_add_on', false))
         @php($addOnItems = $bill->items->where('is_add_on', true))
+        @php($latestPayment = $bill->payments->sortBy(fn ($payment) => $payment->paid_at ?? $payment->created_at)->last())
         <article class="billing-print-paper" id="bill-print-{{ $bill->id }}">
             <header class="bill-print-header">
                 <img class="bill-print-logo" src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="Doc Brigs Dental Care logo">
@@ -232,6 +254,9 @@
                 <div><span>Patient</span><strong>{{ $bill->patient->user->name }}</strong></div>
                 <div><span>Patient ID</span><strong>{{ $bill->patient->patient_number }}</strong></div>
                 <div><span>Bill processed by</span><strong>{{ $bill->creator?->name ?? 'Clinic system' }}</strong></div>
+                @if ($latestPayment)
+                    <div><span>Payment date &amp; time</span><strong>{{ ($latestPayment->paid_at ?? $latestPayment->created_at)->timezone(config('clinic.timezone'))->format('M j, Y g:i A') }}</strong></div>
+                @endif
             </section>
 
             @if ($bill->items->isNotEmpty())

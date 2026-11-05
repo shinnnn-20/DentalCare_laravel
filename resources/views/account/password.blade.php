@@ -10,7 +10,7 @@
     </div>
 
     <section class="max-w-2xl rounded-2xl border border-slate-200 bg-white p-5">
-        <form method="POST" action="{{ route('account.password.update') }}" class="grid gap-4">
+        <form method="POST" action="{{ route('account.password.update') }}" class="grid gap-4" data-confirm="Change your account password?" data-confirm-title="Confirm password change" data-confirm-accept="Change password">
             @csrf
             @method('PUT')
             <label class="form-label">Current password

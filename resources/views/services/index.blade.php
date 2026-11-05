@@ -7,9 +7,24 @@
         <p class="text-sm font-medium text-teal-700">Clinic setup</p>
         <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Dental services</h1>
         <p class="mt-2 max-w-2xl text-slate-500">Review clinic treatments and pricing. Reference fees are estimates; treatments requiring confirmation need a final staff-confirmed amount before billing.</p>
+        @if (auth()->user()->hasRole('admin'))
+            <form method="GET" action="{{ route('clinic.services.index') }}" class="mt-4 flex max-w-xl flex-wrap items-end gap-3">
+                <label class="form-label min-w-56 flex-1">Filter by branch
+                    <select class="form-input" name="branch_id">
+                        <option value="">All branches and shared defaults</option>
+                        @foreach ($branches as $branch)
+                            <option value="{{ $branch->id }}" @selected((string) $selectedBranchId === (string) $branch->id)>{{ $branch->name }}</option>
+                        @endforeach
+                    </select>
+                </label>
+                <button class="btn-secondary min-h-11" type="submit">Apply filter</button>
+            </form>
+        @elseif (auth()->user()->hasRole('doctor'))
+            <p class="mt-3 text-sm font-medium text-teal-800">Showing services for {{ $branches->firstWhere('id', $selectedBranchId)?->name }}. Editing a shared default creates an override for this branch only.</p>
+        @endif
     </div>
 
-    @if (auth()->user()->hasRole('admin'))
+    @if (auth()->user()->hasRole('admin', 'doctor'))
         <section class="mb-7 overflow-hidden rounded-3xl border border-teal-100 bg-white shadow-sm">
             <div class="flex items-start gap-3 border-b border-teal-100 bg-teal-50/70 px-5 py-4 sm:px-6">
                 <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-teal-700 text-lg font-bold text-white" aria-hidden="true">+</span>
@@ -18,8 +33,21 @@
                     <p class="mt-1 text-sm text-slate-500">Create a treatment option for the appointment booking form.</p>
                 </div>
             </div>
-            <form method="POST" action="{{ route('admin.services.store') }}" class="grid gap-4 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-4">
+            <form method="POST" action="{{ route('admin.services.store') }}" class="grid gap-4 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-4" data-confirm="Add this treatment and its pricing to the clinic service catalog?" data-confirm-title="Confirm service creation" data-confirm-accept="Add service">
                 @csrf
+                @if (auth()->user()->hasRole('admin'))
+                    <label class="form-label">Service scope
+                        <select class="form-input" name="branch_id">
+                            <option value="" @selected(old('branch_id', $selectedBranchId ?? '') === '')>Shared across all branches</option>
+                            @foreach ($branches as $branch)
+                                <option value="{{ $branch->id }}" @selected((string) old('branch_id', $selectedBranchId) === (string) $branch->id)>Only {{ $branch->name }}</option>
+                            @endforeach
+                        </select>
+                    </label>
+                @else
+                    <input type="hidden" name="branch_id" value="{{ auth()->user()->branch_id }}">
+                    <p class="form-label">Service scope <span class="form-input flex items-center bg-slate-50 text-slate-600">{{ auth()->user()->branch?->name }}</span></p>
+                @endif
                 <label class="form-label">Service name
                     <input class="form-input" name="name" value="{{ old('name') }}" required maxlength="255" placeholder="e.g. Dental cleaning">
                 </label>
@@ -96,11 +124,30 @@
                                 <p class="text-xs font-medium text-amber-800">Final amount must be confirmed by staff when the bill is created.</p>
                             @endif
 
-                            @if (auth()->user()->hasRole('admin'))
+                            @if (auth()->user()->hasRole('admin', 'doctor'))
                                 <details class="border-t border-slate-100 pt-4">
                                     <summary class="cursor-pointer text-sm font-semibold text-teal-800 hover:text-teal-950">Edit service details</summary>
-                                    <form method="POST" action="{{ route('admin.services.update', $service) }}" class="mt-4 grid gap-3">
+                                    <form method="POST" action="{{ route('admin.services.update', $service) }}" class="mt-4 grid gap-3" data-confirm="Save these changes to {{ $service->name }}, including its price and availability?" data-confirm-title="Confirm service changes" data-confirm-accept="Save changes">
                                         @csrf @method('PUT')
+                                        @if (auth()->user()->hasRole('admin'))
+                                            @if ($service->branch_id === null)
+                                                <label class="form-label">Apply changes to
+                                                    <select class="form-input" name="branch_id">
+                                                        <option value="" @selected((string) old('branch_id', $selectedBranchId ?? '') === '')>All branches (shared default)</option>
+                                                        @foreach ($branches as $branch)
+                                                            <option value="{{ $branch->id }}" @selected((string) old('branch_id', $selectedBranchId) === (string) $branch->id)>Only {{ $branch->name }}</option>
+                                                        @endforeach
+                                                    </select>
+                                                    <span class="text-xs font-normal text-slate-500">Selecting one branch creates or updates a local override without changing other branches.</span>
+                                                </label>
+                                            @else
+                                                <input type="hidden" name="branch_id" value="{{ $service->branch_id }}">
+                                                <p class="text-sm font-medium text-teal-800">Branch-specific service · {{ $service->branch->name }}</p>
+                                            @endif
+                                        @else
+                                            <input type="hidden" name="branch_id" value="{{ auth()->user()->branch_id }}">
+                                            <p class="text-sm font-medium text-teal-800">{{ $service->branch_id ? 'Branch-specific service' : 'Shared default · saving creates a local override' }} · {{ auth()->user()->branch?->name }}</p>
+                                        @endif
                                         <label class="form-label">Service name
                                             <input class="form-input" name="name" value="{{ $service->name }}" required maxlength="255">
                                         </label>

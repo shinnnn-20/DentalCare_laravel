@@ -73,6 +73,7 @@ class AppointmentAvailabilityTest extends TestCase
             ->assertSee('Appointment availability blocked.')
             ->assertDontSee('onsubmit="return confirm(', false)
             ->assertSee('Enable time again')
+            ->assertSee('<button class="btn-danger">Enable time again</button>', false)
             ->assertSee('data-availability-form', false)
             ->assertSee('data-availability-time="start"', false)
             ->assertSee('data-availability-time="end"', false)
@@ -88,7 +89,9 @@ class AppointmentAvailabilityTest extends TestCase
             ->assertSeeInOrder(['<!DOCTYPE html>', 'data-availability-form', "document.querySelectorAll('[data-availability-time]')"], false);
 
         if ($role !== 'doctor') {
-            $response->assertSee('data-confirm="Permanently delete this availability block?"', false);
+            $response
+                ->assertSee('data-confirm="Permanently delete this availability block?"', false)
+                ->assertSee('<button class="btn-danger w-full">Delete block</button>', false);
         }
     }
 

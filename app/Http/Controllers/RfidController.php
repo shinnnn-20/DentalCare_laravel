@@ -51,6 +51,11 @@ class RfidController extends Controller
         ]);
         $card = $patient->rfidCard;
         $wasAssigned = $card !== null;
+        $previousCardDetails = $card === null ? null : [
+            'is_active' => $card->is_active,
+            'valid_from' => $card->valid_from?->toDateString(),
+            'valid_until' => $card->valid_until?->toDateString(),
+        ];
         $data = $request->validate([
             'uid' => ['required', 'string', 'max:100', Rule::unique('rfid_cards', 'uid')->ignore($card?->id)],
             'valid_from' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
@@ -81,23 +86,41 @@ class RfidController extends Controller
             }
         }
 
-        DB::transaction(function () use ($request, $patient, $cardAttributes, $wasAssigned, $auditTrail): void {
+        DB::transaction(function () use ($request, $patient, $cardAttributes, $wasAssigned, $previousCardDetails, $auditTrail): void {
             $card = RfidCard::updateOrCreate(
                 ['patient_id' => $patient->id],
                 $cardAttributes,
             );
+            $validityPeriod = 'active '.($card->is_active ? 'enabled' : 'disabled')
+                .'; valid from '.($card->valid_from?->format('Y-m-d') ?? 'any date')
+                .'; valid until '.($card->valid_until?->format('Y-m-d') ?? 'no expiry');
+            $description = $wasAssigned
+                ? "Updated RFID card settings for patient {$patient->patient_number}: {$validityPeriod}."
+                : "Assigned an RFID card to patient {$patient->patient_number}: {$validityPeriod}; card UID was not recorded.";
+
+            if ($wasAssigned && $previousCardDetails !== null) {
+                $changedFields = [];
+                $currentDetails = [
+                    'is_active' => $card->is_active,
+                    'valid_from' => $card->valid_from?->toDateString(),
+                    'valid_until' => $card->valid_until?->toDateString(),
+                ];
+                foreach ($currentDetails as $field => $value) {
+                    if ($previousCardDetails[$field] !== $value) {
+                        $changedFields[] = str_replace('_', ' ', $field);
+                    }
+                }
+                $description = $changedFields === []
+                    ? "Saved RFID card settings for patient {$patient->patient_number} without changing card status or validity dates."
+                    : 'Changed '.implode(', ', $changedFields)." for the RFID card assigned to patient {$patient->patient_number}; {$validityPeriod}.";
+            }
+
             $auditTrail->record(
                 $request->user(),
                 $wasAssigned ? 'rfid_card_updated' : 'rfid_assigned',
                 'rfid',
                 $card,
-                $wasAssigned
-                    ? 'Status: '.$card->validityStatus().'; valid from: '
-                        .($card->valid_from?->format('Y-m-d') ?? 'unrestricted')
-                        .'; valid until: '.($card->valid_until
-                            ? $card->valid_until->format('Y-m-d').' 00:00'
-                            : 'no expiry')
-                    : null,
+                $description,
             );
         });
 

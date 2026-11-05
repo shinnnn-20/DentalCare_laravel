@@ -8,6 +8,25 @@
         <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Hello, {{ auth()->user()->name }}</h1>
         <p class="mt-2 text-slate-500">Your appointments, treatment history, and billing in one place.</p>
     </div>
+    @if ($showRfidExpirationNotice)
+        @php($rfidCardExpired = $rfidCard->validityStatus() === 'expired')
+        <section aria-labelledby="rfid-expiration-heading" class="mb-6 flex flex-col gap-4 rounded-2xl border-2 border-amber-300 bg-amber-50 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <div>
+                <p class="text-sm font-bold uppercase tracking-wide text-amber-800">RFID card expiration reminder</p>
+                <h2 id="rfid-expiration-heading" class="mt-1 text-xl font-bold text-slate-900">
+                    {{ $rfidCardExpired ? 'Your RFID card has expired' : 'Your RFID card expires soon' }}
+                </h2>
+                <p class="mt-1 text-sm text-slate-700">
+                    {{ $rfidCardExpired ? 'Your card expired on' : 'Your card expires on' }}
+                    <strong>{{ $rfidCard->valid_until->format('M j, Y') }}</strong>.
+                    Contact the clinic to renew or update your card.
+                </p>
+            </div>
+            <a class="inline-flex min-h-11 items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-amber-900 ring-1 ring-amber-300 transition hover:bg-amber-100" href="{{ route('patient.rfid.index') }}">
+                View RFID card
+            </a>
+        </section>
+    @endif
     @if ($nextFollowUp)
         <section aria-labelledby="follow-up-heading" class="mb-6 flex flex-col gap-4 rounded-2xl border-2 border-amber-300 bg-amber-50 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-6">
             <div class="flex items-start gap-4">

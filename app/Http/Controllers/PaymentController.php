@@ -83,7 +83,22 @@ class PaymentController extends Controller
         });
 
         $payment->load(['bill.patient.user', 'receipt']);
-        $auditTrail->record($request->user(), 'payment_processed', 'payments', $payment);
+        $auditTrail->record(
+            $request->user(),
+            'payment_processed',
+            'payments',
+            $payment,
+            sprintf(
+                'Recorded %s payment for patient %s, bill %s: PHP %s received, PHP %s applied, PHP %s change; receipt %s.',
+                strtoupper($payment->method),
+                $payment->bill->patient->user->name,
+                $payment->bill->bill_number,
+                number_format((float) $payment->amount, 2),
+                number_format((float) $payment->applied_amount, 2),
+                number_format((float) $payment->change_amount, 2),
+                $payment->receipt->receipt_number,
+            ),
+        );
         $notifications->notifyClinicStaff(
             $request->user(),
             'billing.payment_recorded',

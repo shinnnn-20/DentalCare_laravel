@@ -18,7 +18,7 @@
                 @foreach ($checkInAppointments as $appointment)
                     <article class="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-teal-100 bg-white p-4">
                         <div><h3 class="font-semibold">{{ $appointment->patient->user->name }}</h3><p class="mt-1 text-sm text-slate-500">{{ $appointment->starts_at->format('M j, Y \a\t g:i A') }} · {{ $appointment->treatmentNames() }} · {{ $appointment->patient->patient_number }}</p></div>
-                        <form method="POST" action="{{ route('clinic.queue.check-in', $appointment) }}">@csrf<button class="btn-primary">Check in</button></form>
+                        <form method="POST" action="{{ route('clinic.queue.check-in', $appointment) }}" data-confirm="Check this patient in and add them to the clinic queue?" data-confirm-title="Confirm check-in" data-confirm-accept="Check in">@csrf<button class="btn-primary">Check in</button></form>
                     </article>
                 @endforeach
             </div>
@@ -29,19 +29,16 @@
             <article class="flex flex-wrap items-center justify-between gap-5 rounded-2xl border border-slate-200 bg-white p-5">
                 <div class="flex min-w-0 items-center gap-3 sm:gap-4">
                     <div class="grid h-14 w-16 place-items-center rounded-xl bg-teal-50 text-lg font-bold text-teal-800">{{ $entry->queue_number }}</div>
-                    <div class="min-w-0"><h2 class="font-semibold">{{ $entry->appointment->patient->user->name }}</h2><p class="mt-1 text-sm text-slate-500">{{ $entry->appointment->starts_at->format('g:i A') }} · {{ $entry->appointment->treatmentNames() }} · {{ $entry->appointment->patient->patient_number }}</p><p class="mt-1 text-xs font-semibold uppercase tracking-wide text-teal-700">{{ $entry->appointment->type === 'walk_in' ? 'Walk-in' : 'Online' }} appointment</p></div>
+                    <div class="min-w-0"><h2 class="font-semibold">{{ $entry->appointment->patient->user->name }}</h2><p class="mt-1 text-sm text-slate-500">{{ $entry->appointment->starts_at->format('g:i A') }} · {{ $entry->appointment->treatmentNames() }} · {{ $entry->appointment->patient->patient_number }}</p><p class="mt-1 text-xs font-semibold uppercase tracking-wide text-teal-700">{{ match ($entry->appointment->type) { 'walk_in' => 'Walk-in', 'appointment' => 'Appointment', default => 'Online' } }} appointment</p></div>
                 </div>
                 <div class="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:gap-3"><span class="status-badge capitalize">{{ str_replace('_', ' ', $entry->status) }}</span>
                     @if ($entry->status === 'waiting')
                         <form class="w-full sm:w-auto" method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'call']) }}">@csrf<button class="btn-primary w-full sm:w-auto">Call patient</button></form>
                     @elseif ($entry->status === 'called')
-                        <form class="w-full sm:w-auto" method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'consult']) }}">@csrf<button class="btn-primary w-full sm:w-auto">Start visit</button></form>
-                    @endif
-                    @if (auth()->user()->hasRole('doctor') && $entry->status === 'in_consultation' && ! $entry->appointment->dentalRecord)
-                        <a class="btn-secondary w-full sm:w-auto" href="{{ route('clinic.records.create', $entry->appointment) }}">Dental record</a>
+                        <form class="w-full sm:w-auto" method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'consult']) }}" data-confirm="Start this patient's dental visit and update the queue status?" data-confirm-title="Start visit" data-confirm-accept="Start visit">@csrf<button class="btn-primary w-full sm:w-auto">Start visit</button></form>
                     @endif
                     @if (in_array($entry->status, ['waiting', 'called'], true) && auth()->user()->hasRole('admin', 'staff', 'doctor'))
-                        <form class="w-full sm:w-auto" method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'no-show']) }}">@csrf<button class="btn-small w-full text-rose-700 sm:w-auto">No show</button></form>
+                        <form class="w-full sm:w-auto" method="POST" action="{{ route('appointments.transition', [$entry->appointment, 'no-show']) }}" data-confirm="Mark this patient as a no-show? This will update the appointment and queue." data-confirm-title="Confirm no-show" data-confirm-accept="Mark no-show" data-confirm-variant="warning">@csrf<button class="btn-danger w-full sm:w-auto">No show</button></form>
                     @endif
                 </div>
             </article>

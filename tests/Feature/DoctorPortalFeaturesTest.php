@@ -30,6 +30,11 @@ class DoctorPortalFeaturesTest extends TestCase
             'name' => 'Shared Clinic Service',
             'is_active' => true,
         ]);
+        Service::factory()->create([
+            'name' => 'Other Branch Only Service',
+            'branch_id' => $otherBranch->id,
+            'is_active' => true,
+        ]);
         $patient = $this->patient('Branch Patient', [
             'date_of_birth' => '1990-01-15',
             'gender' => 'female',
@@ -46,6 +51,9 @@ class DoctorPortalFeaturesTest extends TestCase
             ->get(route('dashboard'))
             ->assertOk()
             ->assertDontSee("Today's revenue")
+            ->assertDontSee('Revenue collected')
+            ->assertDontSee('data-revenue-trend', false)
+            ->assertSee('Appointments over time')
             ->assertDontSee('Reports')
             ->assertDontSee('Audit logs')
             ->assertSee(route('clinic.patients.index'))
@@ -85,8 +93,9 @@ class DoctorPortalFeaturesTest extends TestCase
         $this->get(route('clinic.services.index'))
             ->assertOk()
             ->assertSee('Shared Clinic Service')
-            ->assertDontSee('Add a service')
-            ->assertDontSee('Edit service details');
+            ->assertDontSee('Other Branch Only Service')
+            ->assertSee('Add a service')
+            ->assertSee('Edit service details');
 
         $this->get(route('clinic.rfid.index'))
             ->assertOk()
@@ -193,7 +202,10 @@ class DoctorPortalFeaturesTest extends TestCase
         $this->actingAs($doctor)
             ->get(route('clinic.patients.create'))
             ->assertOk()
-            ->assertSee('Create patient account');
+            ->assertSee('Create patient account')
+            ->assertSee('name="branch_id" value="'.$branch->id.'"', false)
+            ->assertSee('<select class="form-input" disabled>', false)
+            ->assertSee($branch->name);
 
         $this->post(route('clinic.patients.store'), [
             'name' => 'New Branch Patient',
@@ -202,6 +214,7 @@ class DoctorPortalFeaturesTest extends TestCase
             'phone' => '09171234567',
             'email' => 'new.branch.patient@example.test',
             'address' => 'Branch Clinic Road',
+            'branch_id' => $branch->id,
             'password' => 'Patient-account-password!',
             'password_confirmation' => 'Patient-account-password!',
         ])->assertRedirect();
@@ -214,9 +227,51 @@ class DoctorPortalFeaturesTest extends TestCase
             ->assertOk()
             ->assertSee('New Branch Patient')
             ->assertSee('Branch Clinic Road');
+
+        $otherBranch = $this->branch('dasmarinas');
+        $this->post(route('clinic.patients.store'), [
+            'name' => 'Wrong Branch Patient',
+            'date_of_birth' => '1990-01-15',
+            'gender' => 'female',
+            'phone' => '09171234567',
+            'email' => 'wrong.branch.patient@example.test',
+            'address' => 'Branch Clinic Road',
+            'branch_id' => $otherBranch->id,
+            'password' => 'Patient-account-password!',
+            'password_confirmation' => 'Patient-account-password!',
+        ])->assertSessionHasErrors('branch_id');
     }
 
-    public function test_doctor_can_edit_patient_details_but_cannot_manage_patient_access_services_or_rfid(): void
+    public function test_admin_selects_the_patient_branch_when_registering(): void
+    {
+        $branch = $this->branch('trece');
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAs($admin)
+            ->get(route('clinic.patients.create'))
+            ->assertOk()
+            ->assertSee('Select a branch')
+            ->assertSee($branch->name);
+
+        $this->post(route('clinic.patients.store'), [
+            'name' => 'Admin Registered Patient',
+            'date_of_birth' => '1990-01-15',
+            'gender' => 'female',
+            'phone' => '09171234567',
+            'email' => 'admin.registered.patient@example.test',
+            'address' => 'Branch Clinic Road',
+            'branch_id' => $branch->id,
+            'password' => 'Patient-account-password!',
+            'password_confirmation' => 'Patient-account-password!',
+        ])->assertRedirect();
+
+        $patient = Patient::query()->whereHas('user', fn ($query) => $query
+            ->where('email', 'admin.registered.patient@example.test'))->firstOrFail();
+
+        $this->assertSame($branch->id, (int) $patient->branch_id);
+    }
+
+    public function test_doctor_can_edit_patient_details_and_manage_branch_services_but_not_patient_access_or_rfid(): void
     {
         $branch = $this->branch('dasmarinas');
         $doctor = User::factory()->create([
@@ -225,6 +280,7 @@ class DoctorPortalFeaturesTest extends TestCase
         ]);
         $patient = $this->patient('Read Only Patient');
         $service = Service::factory()->create();
+        $sharedManagedService = Service::factory()->create(['name' => 'Doctor Managed Service']);
         $appointment = $this->appointment($patient, $service, $branch);
         $bill = Bill::factory()->for($patient)->for($appointment)->create();
 
@@ -262,7 +318,7 @@ class DoctorPortalFeaturesTest extends TestCase
             'price' => 100,
             'requires_price_confirmation' => false,
             'duration_minutes' => 30,
-        ])->assertForbidden();
+        ])->assertRedirect();
 
         $this->put(route('admin.services.update', $service), [
             'name' => 'Changed by Doctor',
@@ -270,7 +326,7 @@ class DoctorPortalFeaturesTest extends TestCase
             'requires_price_confirmation' => false,
             'duration_minutes' => 30,
             'is_active' => true,
-        ])->assertForbidden();
+        ])->assertRedirect();
 
         $this->post(route('clinic.rfid.assign', $patient), [
             'uid' => 'DOCTOR-ASSIGNED-RFID',
@@ -285,8 +341,28 @@ class DoctorPortalFeaturesTest extends TestCase
         $this->assertSame('Updated Patient', $patient->user->fresh()->name);
         $this->assertSame($originalPassword, $patient->user->fresh()->password);
         $this->assertTrue($patient->user->fresh()->is_active);
-        $this->assertDatabaseMissing('services', ['name' => 'Doctor Managed Service']);
-        $this->assertDatabaseHas('services', ['id' => $service->id, 'name' => $service->name]);
+        $this->assertDatabaseHas('services', ['name' => 'Doctor Managed Service']);
+        $this->assertDatabaseHas('services', [
+            'name' => 'Doctor Managed Service',
+            'branch_id' => $branch->id,
+            'base_service_id' => $sharedManagedService->id,
+        ]);
+        $this->assertSame(
+            1,
+            Service::query()->forBranch($branch->id)->where('name', 'Doctor Managed Service')->count(),
+        );
+        $this->assertDatabaseHas('services', [
+            'id' => $service->id,
+            'name' => $service->name,
+            'price' => $service->price,
+            'branch_id' => null,
+        ]);
+        $this->assertDatabaseHas('services', [
+            'base_service_id' => $service->id,
+            'branch_id' => $branch->id,
+            'name' => 'Changed by Doctor',
+            'price' => '150.00',
+        ]);
         $this->assertDatabaseMissing('rfid_cards', ['uid' => 'DOCTOR-ASSIGNED-RFID']);
         $this->assertDatabaseMissing('audit_logs', ['action' => 'patient_access_removed']);
         $this->assertDatabaseHas('payments', [
@@ -299,6 +375,15 @@ class DoctorPortalFeaturesTest extends TestCase
             ->get(route('clinic.services.index'))
             ->assertSee('Add a service')
             ->assertSee('Edit service details');
+
+        $otherDoctor = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $this->branch('general-trias')->id,
+        ]);
+        $this->actingAs($otherDoctor)
+            ->get(route('clinic.services.index'))
+            ->assertSee($service->name)
+            ->assertDontSee('Changed by Doctor');
 
         $this->post(route('admin.services.store'), [
             'name' => 'Admin Managed Service',
@@ -321,6 +406,22 @@ class DoctorPortalFeaturesTest extends TestCase
             'name' => 'Updated Admin Service',
             'price' => '150.00',
         ]);
+    }
+
+    public function test_inactive_services_are_listed_after_active_services(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $activeA = Service::factory()->create(['name' => 'Active Service A', 'is_active' => true]);
+        $activeZ = Service::factory()->create(['name' => 'Active Service Z', 'is_active' => true]);
+        $inactive = Service::factory()->create(['name' => 'Inactive Service A', 'is_active' => false]);
+
+        $this->actingAs($admin)
+            ->get(route('clinic.services.index'))
+            ->assertViewHas('services', fn ($services): bool => $services->getCollection()->modelKeys() === [
+                $activeA->id,
+                $activeZ->id,
+                $inactive->id,
+            ]);
     }
 
     public function test_doctor_without_a_branch_cannot_open_branch_scoped_portal_features(): void

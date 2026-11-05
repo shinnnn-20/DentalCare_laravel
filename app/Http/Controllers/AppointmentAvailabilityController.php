@@ -121,7 +121,10 @@ class AppointmentAvailabilityController extends Controller
                 'appointment_availability_blocked',
                 'appointment_availability',
                 $block,
-                $branch->name.' · '.$startsAt->format('M j, Y g:i A').'–'.$endsAt->format('g:i A').' · '.$data['reason'],
+                "{$request->user()->name} blocked appointment availability at {$branch->name} from "
+                    .$startsAt->format('M j, Y g:i A').' to '.$endsAt->format('M j, Y g:i A')
+                    .' because '.$data['reason'].'.'
+                    .(empty($data['description']) ? '' : ' Details: '.$data['description']),
             );
         });
 
@@ -189,7 +192,10 @@ class AppointmentAvailabilityController extends Controller
                 $isActive ? 'appointment_availability_reenabled' : 'appointment_availability_disabled',
                 'appointment_availability',
                 $lockedBlock,
-                $branch->name.' · '.$lockedBlock->starts_at->format('M j, Y g:i A').'–'.$lockedBlock->ends_at->format('g:i A'),
+                "{$request->user()->name} ".($isActive ? 're-enabled' : 'disabled')
+                    ." the appointment availability block at {$branch->name} from "
+                    .$lockedBlock->starts_at->format('M j, Y g:i A').' to '.$lockedBlock->ends_at->format('M j, Y g:i A')
+                    .'; reason: '.$lockedBlock->reason.'.',
             );
         });
 
@@ -222,7 +228,9 @@ class AppointmentAvailabilityController extends Controller
                 'appointment_availability_deleted',
                 'appointment_availability',
                 $lockedBlock,
-                $branch->name.' · '.$lockedBlock->starts_at->format('M j, Y g:i A').'–'.$lockedBlock->ends_at->format('g:i A').' · '.$lockedBlock->reason,
+                "{$request->user()->name} deleted the appointment availability block at {$branch->name} from "
+                    .$lockedBlock->starts_at->format('M j, Y g:i A').' to '.$lockedBlock->ends_at->format('M j, Y g:i A')
+                    .'; reason: '.$lockedBlock->reason.'.',
             );
             $lockedBlock->delete();
         });

@@ -39,7 +39,7 @@
                 </div>
             </dl>
             @if ($patient->user->is_active && auth()->user()->hasRole('admin', 'staff', 'doctor'))
-                <form method="POST" action="{{ route('clinic.patients.update', $patient) }}" class="mt-4 grid gap-3">
+                <form method="POST" action="{{ route('clinic.patients.update', $patient) }}" class="mt-4 grid gap-3" data-confirm="Save these changes to the patient's profile?" data-confirm-title="Confirm patient changes" data-confirm-accept="Save changes">
                 @csrf @method('PUT')
                 <label class="form-label">Full name<input class="form-input" name="name" value="{{ $patient->user->name }}" required></label>
                 <label class="form-label">Email<input class="form-input" type="email" name="email" value="{{ $patient->user->email }}" required></label>
@@ -51,7 +51,7 @@
                 <button class="btn-secondary justify-self-start">Save patient details</button>
                 </form>
                 @if (auth()->user()->hasRole('admin'))
-                    <form method="POST" action="{{ route('clinic.patients.password', $patient) }}" class="mt-6 grid gap-3 border-t border-slate-100 pt-5">
+                    <form method="POST" action="{{ route('clinic.patients.password', $patient) }}" class="mt-6 grid gap-3 border-t border-slate-100 pt-5" data-confirm="Reset this patient's password? Share the new password securely." data-confirm-title="Confirm password reset" data-confirm-accept="Reset password">
                         @csrf @method('PUT')
                         <h3 class="font-semibold">Reset patient password</h3>
                         <p class="text-sm text-slate-500">Choose a password with at least 8 characters, one capital letter, and one special character, then share it with the patient securely.</p>
@@ -62,7 +62,7 @@
                 @endif
             @endif
             @if ($patient->user->is_active && auth()->user()->hasRole('admin', 'staff'))
-                <form method="POST" action="{{ route('clinic.patients.destroy', $patient) }}" class="mt-6 grid gap-3 border-t border-rose-100 pt-5">
+                <form method="POST" action="{{ route('clinic.patients.destroy', $patient) }}" class="mt-6 grid gap-3 border-t border-rose-100 pt-5" data-confirm="Remove this patient's access and pseudonymize their contact and demographic details? This cannot be undone." data-confirm-title="Confirm patient access removal" data-confirm-accept="Remove access" data-confirm-variant="danger">
                     @csrf @method('DELETE')
                     <h3 class="font-semibold text-rose-800">Remove patient access</h3>
                     <p class="text-sm text-slate-600">This disables the account, clears contact and demographic details, and signs out existing sessions. Appointments, dental records, and billing history will be retained. The patient number remains to link those records.</p>

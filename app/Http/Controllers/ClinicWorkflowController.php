@@ -105,7 +105,14 @@ class ClinicWorkflowController extends Controller
             'appointment_id' => $appointment->id,
             'created_by' => $request->user()->id,
         ]);
-        $auditTrail->record($request->user(), 'dental_record_created', 'dental_records', $record);
+        $auditTrail->record(
+            $request->user(),
+            'dental_record_created',
+            'dental_records',
+            $record,
+            "Created dental record #{$record->id} for patient {$appointment->patient->patient_number} from appointment #{$appointment->id}"
+                .($record->follow_up_date === null ? '; no follow-up date set.' : '; follow-up scheduled for '.$record->follow_up_date->toDateString().'.'),
+        );
         $notifications->notifyClinicStaff(
             $request->user(),
             'patient.dental_record_created',
@@ -144,10 +151,6 @@ class ClinicWorkflowController extends Controller
 
     private function redirectToAppointment(Request $request, Appointment $appointment, string $message): RedirectResponse
     {
-        if ($request->user()->hasRole('doctor')) {
-            return redirect()->route('clinic.queue.index')->with('status', $message);
-        }
-
         $query = [
             ...$this->appointmentListFilters($request),
             'date' => $appointment->starts_at->toDateString(),
@@ -297,7 +300,30 @@ class ClinicWorkflowController extends Controller
             return $bill;
         });
 
-        $auditTrail->record($request->user(), 'bill_created', 'billing', $bill);
+        $itemSummary = collect($itemRows)
+            ->map(fn (array $item): string => sprintf(
+                '%s at PHP %s',
+                $item['service_name'],
+                number_format((float) $item['unit_price'], 2),
+            ))
+            ->join('; ');
+        $auditTrail->record(
+            $request->user(),
+            'bill_created',
+            'billing',
+            $bill,
+            sprintf(
+                'Created bill %s for patient %s from appointment #%d; items: %s; subtotal PHP %s, discount %s%% (PHP %s), total PHP %s.',
+                $bill->bill_number,
+                $appointment->patient->user->name,
+                $appointment->id,
+                $itemSummary,
+                number_format((float) $bill->subtotal, 2),
+                number_format((float) $bill->discount_value, 2),
+                number_format((float) $bill->discount, 2),
+                number_format((float) $bill->total, 2),
+            ),
+        );
         $notifications->notifyClinicStaff(
             $request->user(),
             'billing.bill_created',
@@ -429,6 +455,7 @@ class ClinicWorkflowController extends Controller
                 ...($hasAssignedBranch ? [] : ['unassigned']),
                 ...$branches->map(fn (object $branch): string => (string) $branch->id)->all(),
             ])],
+            'availability_period' => ['nullable', Rule::in(['month', 'year'])],
         ]);
         $from = $filters['from'] ?? today(config('clinic.timezone'))->toDateString();
         $to = $filters['to'] ?? today(config('clinic.timezone'))->toDateString();
@@ -537,6 +564,60 @@ class ClinicWorkflowController extends Controller
             'count' => (int) $row->total,
             'percentage' => (float) $row->total / $statusTotal * 100,
         ])->all();
+
+        $availabilityPeriod = $filters['availability_period'] ?? 'month';
+        $availabilityBreakdown = [];
+        $availabilityCursor = $rangeStart->copy()->startOfMonth();
+
+        while ($availabilityCursor->lessThanOrEqualTo($rangeEnd)) {
+            $availabilityKey = $availabilityPeriod === 'year'
+                ? $availabilityCursor->format('Y')
+                : $availabilityCursor->format('Y-m');
+            $availabilityBreakdown[$availabilityKey] = [
+                'label' => $availabilityPeriod === 'year'
+                    ? $availabilityCursor->format('Y')
+                    : $availabilityCursor->format('M Y'),
+                'blocks' => 0,
+                'hours' => 0.0,
+            ];
+            $availabilityCursor = $availabilityPeriod === 'year'
+                ? $availabilityCursor->copy()->endOfYear()->addSecond()
+                : $availabilityCursor->copy()->endOfMonth()->addSecond();
+        }
+
+        $availabilityQuery = AppointmentAvailabilityBlock::query()
+            ->where('is_active', true)
+            ->where('starts_at', '<=', $rangeEnd->format('Y-m-d H:i:s'))
+            ->where('ends_at', '>', $rangeStart->format('Y-m-d H:i:s'));
+
+        if ($branchId === 'unassigned') {
+            $availabilityBlocks = collect();
+        } else {
+            $availabilityBlocks = $availabilityQuery
+                ->when($branchId !== null, fn (Builder $query): Builder => $query->where('branch_id', $branchId))
+                ->get(['starts_at', 'ends_at']);
+        }
+
+        foreach ($availabilityBlocks as $availabilityBlock) {
+            $overlapStart = $availabilityBlock->starts_at->greaterThan($rangeStart)
+                ? $availabilityBlock->starts_at->copy()
+                : $rangeStart->copy();
+            $overlapEnd = $availabilityBlock->ends_at->lessThan($rangeEnd)
+                ? $availabilityBlock->ends_at->copy()
+                : $rangeEnd->copy();
+            $availabilityKey = $availabilityPeriod === 'year'
+                ? $overlapStart->format('Y')
+                : $overlapStart->format('Y-m');
+
+            if (isset($availabilityBreakdown[$availabilityKey])) {
+                $availabilityBreakdown[$availabilityKey]['blocks']++;
+                $availabilityBreakdown[$availabilityKey]['hours'] += max(
+                    0,
+                    $overlapEnd->getTimestamp() - $overlapStart->getTimestamp(),
+                ) / 3600;
+            }
+        }
+
         $timeline = array_values($timeline);
         $appointmentMaximum = max(1, ...array_column($timeline, 'appointments'));
         $revenueMaximum = max(1.0, ...array_column($timeline, 'revenue'));
@@ -564,6 +645,10 @@ class ClinicWorkflowController extends Controller
                 ->whereBetween('created_at', [$rangeStartUtc, $rangeEndUtc])
                 ->sum('applied_amount'),
             'newPatients' => $newPatientsQuery->count(),
+            'availabilityPeriod' => $availabilityPeriod,
+            'availabilityBreakdown' => $availabilityBreakdown,
+            'availabilityBlocks' => $availabilityBlocks->count(),
+            'availabilityBlockedHours' => array_sum(array_column($availabilityBreakdown, 'hours')),
             'timeline' => $timeline,
             'statuses' => $statuses,
             'appointmentMaximum' => $appointmentMaximum,
@@ -717,7 +802,11 @@ class ClinicWorkflowController extends Controller
                 'date_time' => $appointment->starts_at->format('M j, Y · g:i A'),
                 'branch' => $appointment->branch?->name ?? 'Unassigned',
                 'services' => $appointment->treatmentNames(),
-                'type' => $appointment->type === 'walk_in' ? 'Walk-in' : 'Online',
+                'type' => match ($appointment->type) {
+                    'walk_in' => 'Walk-in',
+                    'appointment' => 'Appointment',
+                    default => 'Online',
+                },
                 'status' => str_replace('_', ' ', ucfirst($appointment->status)),
             ],
         );

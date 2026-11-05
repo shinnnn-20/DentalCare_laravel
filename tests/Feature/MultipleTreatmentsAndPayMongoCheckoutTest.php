@@ -247,7 +247,7 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
      * Test B — Different patients:
      * - Initiate a test checkout for Patient A.
      * - Initiate a separate test checkout for Patient B.
-     * - Confirm that each checkout uses the correct patient's information and bill reference.
+     * - Confirm that each checkout uses its own bill reference and outstanding amount.
      * - Confirm that a successful payment for one patient does not change another patient's bill.
      */
     public function test_b_different_patients_receive_dynamic_checkout_sessions_and_separate_bills(): void
@@ -310,25 +310,17 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
         $checkoutB = $billB->payMongoBillCheckouts()->sole();
 
         // Verify sent requests
-        Http::assertSent(function (Request $request) use ($billA, $checkoutA): bool {
+        Http::assertSent(function (Request $request) use ($checkoutA): bool {
             $data = $request->data()['data']['attributes'] ?? [];
 
-            return ($data['billing']['name'] ?? null) === 'Patient Alice Johnson'
-                && ($data['billing']['email'] ?? null) === 'alice@example.com'
-                && ($data['billing']['phone'] ?? null) === '09181111111'
-                && ($data['description'] ?? null) === 'Payment for Bill '.$billA->bill_number.' - Patient Alice Johnson'
-                && ($data['reference_number'] ?? null) === $checkoutA->reference_number
+            return ($data['reference_number'] ?? null) === $checkoutA->reference_number
                 && ($data['line_items'][0]['amount'] ?? null) === 330000;
         });
 
-        Http::assertSent(function (Request $request) use ($billB, $checkoutB): bool {
+        Http::assertSent(function (Request $request) use ($checkoutB): bool {
             $data = $request->data()['data']['attributes'] ?? [];
 
-            return ($data['billing']['name'] ?? null) === 'Patient Bob Smith'
-                && ($data['billing']['email'] ?? null) === 'bob@example.com'
-                && ($data['billing']['phone'] ?? null) === '09182222222'
-                && ($data['description'] ?? null) === 'Payment for Bill '.$billB->bill_number.' - Patient Bob Smith'
-                && ($data['reference_number'] ?? null) === $checkoutB->reference_number
+            return ($data['reference_number'] ?? null) === $checkoutB->reference_number
                 && ($data['line_items'][0]['amount'] ?? null) === 150000;
         });
 

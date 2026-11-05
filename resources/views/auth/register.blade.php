@@ -24,6 +24,15 @@
                     @endforeach
                 </select>
             </label>
+            <label class="form-label sm:col-span-2">Preferred branch
+                <select class="form-input" name="branch_id" required>
+                    <option value="">Select a branch</option>
+                    @foreach ($branches as $branch)
+                        <option value="{{ $branch->id }}" @selected((string) old('branch_id') === (string) $branch->id)>{{ $branch->name }}</option>
+                    @endforeach
+                </select>
+                @error('branch_id')<span class="text-xs font-normal text-rose-700">{{ $message }}</span>@enderror
+            </label>
             <label class="form-label">Contact number<input class="form-input" name="phone" value="{{ old('phone') }}" maxlength="11" pattern="[0-9]{1,11}" inputmode="numeric" title="Enter up to 11 digits." required autocomplete="tel">
                 @error('phone')<span class="text-xs font-normal text-rose-700">{{ $message }}</span>@enderror
             </label>

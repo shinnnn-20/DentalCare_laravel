@@ -29,7 +29,7 @@
                     </td>
                     @unless ($isReadOnly)
                     <td data-label="Assign / update card">
-                        <form method="POST" action="{{ route('clinic.rfid.assign', $patient) }}" class="grid min-w-72 gap-2 sm:min-w-96 sm:grid-cols-2">@csrf
+                        <form method="POST" action="{{ route('clinic.rfid.assign', $patient) }}" class="grid min-w-72 gap-2 sm:min-w-96 sm:grid-cols-2" data-confirm="Save the RFID card UID, validity dates, and status for {{ $patient->user->name }}?" data-confirm-title="Confirm RFID changes" data-confirm-accept="Save card settings">@csrf
                             <label class="form-label sm:col-span-2">RFID UID
                                 <input class="form-input" name="uid" value="{{ $card?->uid }}" maxlength="100" placeholder="Scan or enter UID" required>
                             </label>

@@ -24,7 +24,13 @@
                     @endunless
                 </select>
             </label>
-            <button class="btn-primary">Apply range</button>
+            <label class="form-label">Blocked time by
+                <select class="form-input" name="availability_period">
+                    <option value="month" @selected($availabilityPeriod === 'month')>Month</option>
+                    <option value="year" @selected($availabilityPeriod === 'year')>Year</option>
+                </select>
+            </label>
+            <button class="btn-primary">Apply filters</button>
         </form>
         <header class="report-print-header" data-report-branch="{{ $selectedBranchName }}">
             <img class="report-print-logo" src="{{ asset('images/landing/doc-brigs-dental-care-logo.jpg') }}" alt="Doc Brigs Dental Care logo">
@@ -101,6 +107,25 @@
                 </footer>
             </section>
         </dialog>
+        <section class="mt-8 rounded-2xl border border-slate-200 bg-white p-5" data-report-availability>
+            <div class="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold text-slate-900">Blocked appointment availability</h2>
+                    <p class="mt-1 text-sm text-slate-500">Active blocked dates and time for the selected range and branch.</p>
+                </div>
+                <p class="text-sm text-slate-600"><strong class="text-slate-900">{{ $availabilityBlocks }}</strong> blocks · <strong class="text-slate-900">{{ number_format($availabilityBlockedHours, 2) }}</strong> hours</p>
+            </div>
+            <div class="mt-4 overflow-x-auto">
+                <table class="data-table">
+                    <thead><tr><th>{{ $availabilityPeriod === 'year' ? 'Year' : 'Month' }}</th><th>Blocked intervals</th><th>Blocked hours</th></tr></thead>
+                    <tbody>
+                        @foreach ($availabilityBreakdown as $period)
+                            <tr><td>{{ $period['label'] }}</td><td>{{ $period['blocks'] }}</td><td>{{ number_format($period['hours'], 2) }}</td></tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </section>
         <section class="print-hidden mt-8 grid gap-4 xl:grid-cols-2" data-report-statistics>
             <article class="rounded-2xl border border-slate-200 bg-white p-5" data-report-appointments>
                 <h2 class="font-semibold text-slate-900">Appointments over time</h2>
@@ -160,6 +185,12 @@
                     <tr><td>Cancelled appointments</td><td>{{ $cancelled }}</td></tr>
                     <tr><td>New patient registrations</td><td>{{ $newPatients }}</td></tr>
                     <tr><td>Revenue collected</td><td>₱{{ number_format((float) $revenue, 2) }}</td></tr>
+                    <tr><td>Active blocked intervals</td><td>{{ $availabilityBlocks }}</td></tr>
+                    <tr><td>Active blocked hours</td><td>{{ number_format($availabilityBlockedHours, 2) }}</td></tr>
+                    @foreach ($availabilityBreakdown as $period)
+                        <tr><td>Blocked intervals · {{ $period['label'] }}</td><td>{{ $period['blocks'] }}</td></tr>
+                        <tr><td>Blocked hours · {{ $period['label'] }}</td><td>{{ number_format($period['hours'], 2) }}</td></tr>
+                    @endforeach
                 </tbody>
             </table>
         </div>

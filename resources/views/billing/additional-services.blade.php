@@ -46,10 +46,12 @@
             @endif
         </section>
 
-        @if ($services->isEmpty())
+        @if (! $canAddServices)
+            <p class="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">This bill is fully paid. Additional services can no longer be added.</p>
+        @elseif ($services->isEmpty())
             <p class="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">There are no additional active services available for this bill.</p>
         @else
-            <form method="POST" action="{{ route('clinic.bills.additional-services.store', $bill) }}" class="mt-6 grid gap-6" data-addon-form>
+            <form method="POST" action="{{ route('clinic.bills.additional-services.store', $bill) }}" class="mt-6 grid gap-6" data-addon-form data-confirm="Add the selected services to this bill? The bill total and remaining balance will change." data-confirm-title="Confirm bill changes" data-confirm-accept="Add services">
                 @csrf
                 <fieldset class="grid gap-3">
                     <legend class="mb-1 text-base font-semibold text-slate-900">Choose services by category</legend>

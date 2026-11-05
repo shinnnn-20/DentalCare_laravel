@@ -23,10 +23,12 @@ class AdditionalServiceController extends Controller
         $bill->load(['appointment', 'patient.user', 'items', 'payments']);
         $appointment = $bill->appointment;
         abort_unless($appointment !== null && $this->isEligible($appointment, $bill), 422);
+        $canAddServices = ! $this->isPaid($bill);
 
         return view('billing.additional-services', [
             'bill' => $bill,
-            'services' => $this->availableServices($bill),
+            'canAddServices' => $canAddServices,
+            'services' => $canAddServices ? $this->availableServices($bill) : collect(),
         ]);
     }
 
@@ -64,7 +66,13 @@ class AdditionalServiceController extends Controller
         ]);
 
         $serviceIds = array_map('intval', $data['service_ids']);
+        $appointment = $bill->appointment()->firstOrFail();
         $services = Service::query()
+            ->when(
+                $appointment->branch_id !== null,
+                fn ($query) => $query->forBranch((int) $appointment->branch_id),
+                fn ($query) => $query->whereNull('branch_id'),
+            )
             ->whereIn('id', $serviceIds)
             ->where('is_active', true)
             ->get()
@@ -98,6 +106,11 @@ class AdditionalServiceController extends Controller
                 ->firstOrFail();
 
             abort_unless($this->isEligible($appointment, $lockedBill), 422);
+            if ($this->isPaid($lockedBill)) {
+                throw ValidationException::withMessages([
+                    'service_ids' => 'Additional services cannot be added to a paid bill.',
+                ]);
+            }
 
             $existingServiceIds = $lockedBill->items()
                 ->whereIn('service_id', $serviceIds)
@@ -172,7 +185,14 @@ class AdditionalServiceController extends Controller
                 'additional_services_added',
                 'billing',
                 $lockedBill,
-                'Added '.implode('; ', $auditDescriptions).'.',
+                sprintf(
+                    'Added %s to bill %s for patient %s; total changed from PHP %s to PHP %s.',
+                    implode('; ', $auditDescriptions),
+                    $lockedBill->bill_number,
+                    $lockedBill->patient()->value('patient_number') ?? 'unknown patient',
+                    number_format(($totalCents - $additionalCents) / 100, 2),
+                    number_format($totalCents / 100, 2),
+                ),
             );
             $appointmentCompletion->sync($lockedBill);
         });
@@ -185,6 +205,11 @@ class AdditionalServiceController extends Controller
     private function availableServices(Bill $bill): Collection
     {
         return Service::query()
+            ->when(
+                $bill->appointment->branch_id !== null,
+                fn ($query) => $query->forBranch((int) $bill->appointment->branch_id),
+                fn ($query) => $query->whereNull('branch_id'),
+            )
             ->where('is_active', true)
             ->whereNotIn('id', $bill->items()->whereNotNull('service_id')->select('service_id'))
             ->whereNotIn('name', $bill->items()->select('service_name'))
@@ -197,6 +222,17 @@ class AdditionalServiceController extends Controller
     {
         return $appointment->patient_id === $bill->patient_id
             && in_array($appointment->status, ['billed', 'completed'], true);
+    }
+
+    private function isPaid(Bill $bill): bool
+    {
+        $paidAmount = $bill->relationLoaded('payments')
+            ? $bill->payments->sum('applied_amount')
+            : $bill->payments()->sum('applied_amount');
+
+        return $bill->payment_status === 'paid'
+            || (int) round((float) $paidAmount * 100)
+                >= (int) round((float) $bill->total * 100);
     }
 
     private function authorizeBillBranch(Request $request, Bill $bill): void

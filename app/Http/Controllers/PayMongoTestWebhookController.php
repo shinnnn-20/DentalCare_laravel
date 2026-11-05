@@ -44,7 +44,7 @@ class PayMongoTestWebhookController extends Controller
         } catch (JsonException) {
             Log::warning('PayMongo test webhook payload was not valid JSON.');
 
-            return response()->json(['message' => 'Invalid webhook payload.'], 400);
+            return response()->json(['received' => true, 'processed' => false]);
         }
 
         $event = $payload['data'] ?? null;
@@ -75,7 +75,7 @@ class PayMongoTestWebhookController extends Controller
         if (! is_array($event) || ! is_string($eventType)) {
             Log::warning('PayMongo test webhook did not contain the expected event envelope.');
 
-            return response()->json(['message' => 'Invalid webhook event.'], 400);
+            return response()->json(['received' => true, 'processed' => false]);
         }
 
         if ($eventType !== 'checkout_session.payment.paid') {
@@ -91,7 +91,7 @@ class PayMongoTestWebhookController extends Controller
                 'livemode' => $livemode,
             ]);
 
-            return response()->json(['message' => 'Only test-mode events are accepted.'], 422);
+            return response()->json(['received' => true, 'processed' => false]);
         }
 
         $session = $eventData;
@@ -105,7 +105,7 @@ class PayMongoTestWebhookController extends Controller
                 'reference_number_present' => is_string($referenceNumber),
             ]);
 
-            return response()->json(['message' => 'Invalid checkout session event.'], 400);
+            return response()->json(['received' => true, 'processed' => false]);
         }
 
         if (($attributes['livemode'] ?? null) !== false) {
@@ -113,7 +113,7 @@ class PayMongoTestWebhookController extends Controller
                 'session_id' => $sessionId,
             ]);
 
-            return response()->json(['message' => 'Only test-mode GCash checkout sessions are accepted.'], 422);
+            return response()->json(['received' => true, 'processed' => false]);
         }
 
         $paidPayment = $reconciler->paidPayment($attributes['payments'] ?? null);
@@ -126,7 +126,7 @@ class PayMongoTestWebhookController extends Controller
                     : 0,
             ]);
 
-            return response()->json(['message' => 'No matching paid test payment was found.'], 422);
+            return response()->json(['received' => true, 'processed' => false]);
         }
 
         $billCheckoutExists = PayMongoBillCheckout::query()
@@ -142,7 +142,7 @@ class PayMongoTestWebhookController extends Controller
                     'session_id' => $sessionId,
                 ]);
 
-                return response()->json(['message' => 'No matching paid test payment was found.'], 422);
+                return response()->json(['received' => true, 'processed' => false]);
             }
 
             if ($result === 'review') {
@@ -164,7 +164,12 @@ class PayMongoTestWebhookController extends Controller
             }
 
             if ($result === 'not_found') {
-                return response()->json(['message' => 'Checkout session was not found.'], 404);
+                Log::warning('PayMongo bill test webhook did not match a recorded checkout.', [
+                    'session_id' => $sessionId,
+                    'reference_number' => $referenceNumber,
+                ]);
+
+                return response()->json(['received' => true, 'processed' => false]);
             }
 
             Log::info('PayMongo bill test webhook processed.', [
@@ -209,7 +214,7 @@ class PayMongoTestWebhookController extends Controller
                 'reference_number' => $referenceNumber,
             ]);
 
-            return response()->json(['message' => 'Checkout session was not found.'], 404);
+            return response()->json(['received' => true, 'processed' => false]);
         }
 
         if ($paidPayment['amount'] !== self::TEST_AMOUNT_CENTAVOS) {
@@ -217,7 +222,7 @@ class PayMongoTestWebhookController extends Controller
                 'session_id' => $sessionId,
             ]);
 
-            return response()->json(['message' => 'No matching paid test payment was found.'], 422);
+            return response()->json(['received' => true, 'processed' => false]);
         }
 
         if ($checkout->status === 'paid' && $checkout->paid_payment_id !== $paidPayment['id']) {

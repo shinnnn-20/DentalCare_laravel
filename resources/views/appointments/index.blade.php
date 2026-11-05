@@ -15,21 +15,29 @@
                 <div class="flex items-start gap-3">
                     <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-700 text-lg font-bold text-white" aria-hidden="true">+</span>
                     <div>
-                        <h2 class="text-lg font-semibold text-slate-900">{{ auth()->user()->role === 'patient' ? 'Request an appointment' : 'Register a walk-in' }}</h2>
-                        <p class="mt-1 text-sm text-slate-500">{{ auth()->user()->role === 'patient' ? 'Choose a service, then pick an available date and time. Requests require clinic approval.' : 'Choose a patient, service, date, and available time. Walk-ins join the waiting queue immediately.' }}</p>
+                        <h2 class="text-lg font-semibold text-slate-900" data-booking-title>{{ auth()->user()->role === 'patient' ? 'Request an appointment' : 'Register an appointment' }}</h2>
+                        <p class="mt-1 text-sm text-slate-500" data-booking-description>{{ auth()->user()->role === 'patient' ? 'Choose a service, then pick an available date and time. Requests require clinic approval.' : 'Choose a patient, service, date, and available time. Walk-ins join the waiting queue immediately.' }}</p>
                     </div>
                 </div>
             </div>
-            <form method="POST" action="{{ route('appointments.store') }}" class="grid gap-5 p-5 sm:grid-cols-2 sm:p-7 xl:grid-cols-12" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" @if (auth()->user()->role === 'patient') data-patient-booking @endif>
+            <form method="POST" action="{{ route('appointments.store') }}" class="grid gap-5 p-5 sm:grid-cols-2 sm:p-7 xl:grid-cols-12" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-schedule-confirm="{{ auth()->user()->role === 'patient' ? 'Submit this appointment request?' : 'Register this walk-in appointment and add it to the queue?' }}" data-schedule-confirm-title="Confirm appointment" @if (auth()->user()->role === 'patient') data-patient-booking @endif @if (auth()->user()->hasRole('doctor')) data-doctor-booking data-doctor-branch-id="{{ auth()->user()->branch_id }}" @endif>
                 @csrf
                 <label class="form-label sm:col-span-2 xl:col-span-4">Branch
                     <select class="form-input" name="branch_id" data-branch-select required>
                         <option value="">Choose a branch</option>
-                        @foreach ($branches as $branch)
+                        @foreach ($bookingBranches as $branch)
                             <option value="{{ $branch->id }}" @selected((string) old('branch_id', $hasAssignedBranch ? auth()->user()->branch_id : '') === (string) $branch->id)>{{ $branch->name }}</option>
                         @endforeach
                     </select>
                 </label>
+                @if (auth()->user()->hasRole('doctor'))
+                    <label class="form-label sm:col-span-2 xl:col-span-4">Visit type
+                        <select class="form-input" name="booking_mode" data-booking-mode>
+                            <option value="walk_in" @selected(old('booking_mode', 'walk_in') === 'walk_in')>Walk-in</option>
+                            <option value="appointment" @selected(old('booking_mode') === 'appointment')>Appointment</option>
+                        </select>
+                    </label>
+                @endif
                 @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                     <label class="form-label sm:col-span-2 xl:col-span-4">Patient
                         <select name="patient_id" class="form-input" required>
@@ -79,7 +87,7 @@
                                         <option value="">Choose a treatment...</option>
                                         @foreach ($categoryServices as $service)
                                             @php($displayPrice = $service->requires_price_confirmation && $service->price_display ? $service->price_display : config('clinic.currency_symbol').number_format((float) $service->price, 2))
-                                            <option value="{{ $service->id }}" data-service-name="{{ $service->name }}" data-price="{{ $displayPrice }}" data-price-display="{{ $service->price_display }}" data-raw-price="{{ (float) $service->price }}" data-requires-confirmation="{{ $service->requires_price_confirmation ? 'true' : 'false' }}" data-category="{{ $category ?: 'Other Services' }}" data-duration="{{ (int) $service->duration_minutes }}" @selected(old('service_id') == $service->id || in_array($service->id, (array) old('service_ids', [])))>{{ $service->name }} — {{ $displayPrice }}</option>
+                                            <option value="{{ $service->id }}" data-branch-ids="{{ implode(',', $serviceBranchIds[$service->id] ?? []) }}" data-service-name="{{ $service->name }}" data-price="{{ $displayPrice }}" data-price-display="{{ $service->price_display }}" data-raw-price="{{ (float) $service->price }}" data-requires-confirmation="{{ $service->requires_price_confirmation ? 'true' : 'false' }}" data-category="{{ $category ?: 'Other Services' }}" data-duration="{{ (int) $service->duration_minutes }}" @selected(old('service_id') == $service->id || in_array($service->id, (array) old('service_ids', [])))>{{ $service->name }} — {{ $displayPrice }}</option>
                                         @endforeach
                                     </select>
                                     <span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-400" aria-hidden="true">
@@ -185,7 +193,7 @@
                 <p class="hidden rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800 sm:col-span-2 xl:col-span-12" data-sunday-error role="alert">The Dental Clinic is closed on Sundays. Please select another date.</p>
                 <label class="form-label sm:col-span-2 xl:col-span-12">Notes <span class="font-normal text-slate-400">(optional)</span><input class="form-input" name="notes" maxlength="2000" placeholder="Reason for visit"></label>
                 <div class="sm:col-span-2 xl:col-span-12">
-                    <button class="btn-primary w-full sm:w-auto">{{ auth()->user()->role === 'patient' ? 'Submit appointment request' : 'Add walk-in to queue' }}</button>
+                    <button class="btn-primary w-full sm:w-auto" data-booking-submit>{{ auth()->user()->role === 'patient' ? 'Submit appointment request' : 'Add walk-in to queue' }}</button>
                 </div>
             </form>
         </section>
@@ -280,13 +288,13 @@
                         <td data-label="Queue">{{ $appointment->queueEntry?->queue_number ?? '—' }}</td>
                         <td data-label="Actions"><div class="flex flex-wrap gap-2">
                             @if (auth()->user()->role === 'patient' && in_array($appointment->status, ['pending', 'approved'], true))
-                                <form method="POST" action="{{ route('appointments.transition', [$appointment, 'cancel']) }}">@csrf<button class="btn-small">Cancel</button></form>
+                                <form method="POST" action="{{ route('appointments.transition', [$appointment, 'cancel']) }}" data-confirm="Cancel this appointment? This will release its reserved time slot." data-confirm-title="Cancel appointment" data-confirm-accept="Cancel appointment" data-confirm-variant="warning">@csrf<button class="btn-danger">Cancel</button></form>
                             @elseif (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                 @if (in_array($appointment->status, ['pending', 'approved'], true))
                                     @if (in_array($appointment->id, $reschedulableAppointmentIds, true))
                                         <details class="min-w-0">
                                             <summary class="btn-small cursor-pointer list-none">Reschedule</summary>
-                                            <form method="POST" action="{{ route('clinic.appointments.reschedule', $appointment) }}" class="mt-2 flex min-w-0 flex-wrap gap-1" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-exclude-appointment-id="{{ $appointment->id }}">
+                                            <form method="POST" action="{{ route('clinic.appointments.reschedule', $appointment) }}" class="mt-2 flex min-w-0 flex-wrap gap-1" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-exclude-appointment-id="{{ $appointment->id }}" data-schedule-confirm="Save this new appointment date and time?" data-schedule-confirm-title="Confirm reschedule">
                                                 @csrf @method('PATCH')
                                                 <input type="hidden" name="service_id" value="{{ $appointment->service_id }}">
                                                 @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
@@ -337,12 +345,14 @@
                                 @endif
                                 @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                     @if ($appointment->status === 'pending')
-                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}">@csrf<button class="btn-small">Approve</button></form>
-                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'reject']) }}">@csrf<button class="btn-small">Reject</button></form>
+                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}" data-confirm="Approve this appointment and reserve its scheduled time?" data-confirm-title="Approve appointment" data-confirm-accept="Approve">@csrf<button class="btn-small">Approve</button></form>
+                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'reject']) }}" data-confirm="Reject this appointment request? The patient will be notified." data-confirm-title="Reject appointment" data-confirm-accept="Reject" data-confirm-variant="warning">@csrf<button class="btn-danger">Reject</button></form>
                                     @elseif ($appointment->status === 'in_consultation')
-                                        @if (auth()->user()->hasRole('admin', 'staff') && ! $appointment->dentalRecord)
+                                        @if (auth()->user()->hasRole('doctor') && $isAppointmentRecordsPage && ! $appointment->dentalRecord)
                                             <a class="btn-small" href="{{ route('clinic.records.create', ['appointment' => $appointment->id, ...$appointmentListFilters]) }}">Dental record</a>
-                                        @elseif (auth()->user()->hasRole('admin', 'staff') && $appointment->dentalRecord && ! $appointment->bill)
+                                        @elseif (auth()->user()->hasRole('admin', 'staff') && ! $appointment->dentalRecord)
+                                            <a class="btn-small" href="{{ route('clinic.records.create', ['appointment' => $appointment->id, ...$appointmentListFilters]) }}">Dental record</a>
+                                        @elseif ($appointment->dentalRecord && ! $appointment->bill && (auth()->user()->hasRole('admin', 'staff') || ($isAppointmentRecordsPage && auth()->user()->hasRole('doctor'))))
                                             <a class="btn-small" href="{{ route('clinic.bills.create', $appointment) }}">Create bill</a>
                                         @endif
                                     @endif
@@ -377,13 +387,18 @@
             const errorMessage = form.querySelector('[data-sunday-error]');
             const sundayMessage = 'The Dental Clinic is closed on Sundays. Please select another date.';
             const patientBooking = form.hasAttribute('data-patient-booking');
+            const doctorBooking = form.hasAttribute('data-doctor-booking');
+            const bookingModeSelect = form.querySelector('[data-booking-mode]');
+            const bookingTitle = form.querySelector('[data-booking-title]');
+            const bookingDescription = form.querySelector('[data-booking-description]');
+            const bookingSubmit = form.querySelector('[data-booking-submit]');
             const excludedAppointmentId = form.dataset.excludeAppointmentId;
             const serviceSelects = form.querySelectorAll('[data-service-category]');
             const timePicker = document.createElement('div');
             const timeTrigger = document.createElement('button');
             const timeMenu = document.createElement('div');
             const timeOptionsId = `appointment-time-options-${Math.random().toString(36).slice(2)}`;
-            const timeIsRequired = timeSelect.required;
+            let timeIsRequired = timeSelect.required;
             const appointmentTimeOptions = Array.from(timeSelect.options)
                 .filter((option) => option.value !== '')
                 .map((option) => ({ value: option.value, label: option.textContent }));
@@ -415,6 +430,46 @@
             timeSelect.parentNode.insertBefore(timePicker, timeSelect);
             timePicker.append(timeTrigger, timeSelect);
             document.body.append(timeMenu);
+
+            const updateBookingMode = () => {
+                if (!doctorBooking || !bookingModeSelect) {
+                    return;
+                }
+
+                const isAppointment = bookingModeSelect.value === 'appointment';
+                timeIsRequired = isAppointment;
+                timeTrigger.setAttribute('aria-required', String(timeIsRequired));
+
+                if (bookingTitle) {
+                    bookingTitle.textContent = 'Register an appointment';
+                }
+                if (bookingDescription) {
+                    const isCrossBranchAppointment = isAppointment
+                        && branchSelect.value !== form.dataset.doctorBranchId;
+                    bookingDescription.textContent = isCrossBranchAppointment
+                        ? 'Choose a patient, branch, service, date, and available time. The destination branch must approve this appointment before it is confirmed.'
+                        : (isAppointment
+                            ? 'Choose a patient, branch, service, date, and available time. The appointment will be confirmed without adding the patient to the walk-in queue.'
+                            : 'Choose a patient, service, date, and available time. Walk-ins join the waiting queue immediately.');
+                }
+                if (bookingSubmit) {
+                    const isCrossBranchAppointment = isAppointment
+                        && branchSelect.value !== form.dataset.doctorBranchId;
+                    bookingSubmit.textContent = isCrossBranchAppointment
+                        ? 'Submit for approval'
+                        : (isAppointment ? 'Schedule appointment' : 'Add walk-in to queue');
+                }
+
+                form.dataset.scheduleConfirm = isAppointment
+                    ? (branchSelect.value !== form.dataset.doctorBranchId
+                        ? 'Submit this appointment to the destination branch for approval?'
+                        : 'Schedule this appointment for the selected patient?')
+                    : 'Register this walk-in appointment and add it to the queue?';
+                form.dataset.scheduleConfirmed = 'false';
+            };
+
+            bookingModeSelect?.addEventListener('change', updateBookingMode);
+            updateBookingMode();
 
             const closeTimeMenu = (returnFocus = false) => {
                 timeMenu.classList.add('hidden');
@@ -890,6 +945,47 @@
                 }
             };
 
+            const filterServicesForBranch = (clearSelection = false) => {
+                const branchId = branchSelect?.value ?? '';
+
+                if (clearSelection) {
+                    selectedTreatments.clear();
+                }
+
+                serviceSelects.forEach((select) => {
+                    let availableCount = 0;
+                    Array.from(select.options).forEach((option) => {
+                        if (!option.value) {
+                            option.hidden = false;
+                            option.disabled = false;
+                            return;
+                        }
+
+                        const isAvailable = branchId !== ''
+                            && (option.dataset.branchIds || '').split(',').includes(branchId);
+                        option.hidden = !isAvailable;
+                        option.disabled = !isAvailable;
+                        availableCount += Number(isAvailable);
+
+                        if (!isAvailable && select.value === option.value) {
+                            select.value = '';
+                        }
+                    });
+
+                    const categoryCard = select.closest('[data-service-category-card]');
+                    if (categoryCard) {
+                        categoryCard.hidden = branchId === '' || availableCount === 0;
+                    }
+                });
+
+                if (clearSelection) {
+                    serviceSelects.forEach((select) => {
+                        select.value = '';
+                    });
+                    renderSelectedTreatments();
+                }
+            };
+
             const addTreatment = (serviceId) => {
                 if (!serviceId || selectedTreatments.has(String(serviceId))) {
                     return;
@@ -1079,6 +1175,8 @@
                 timeSelect.setCustomValidity('');
             });
             branchSelect?.addEventListener('change', () => {
+                filterServicesForBranch(true);
+                updateBookingMode();
                 preferredTime = '';
                 timeSelect.value = '';
                 loadAvailability(dateInput.value ? dateInput.value.slice(0, 7) : currentMonth);
@@ -1119,7 +1217,8 @@
                     return;
                 }
 
-                if (patientBooking && !dateInput.value) {
+                const scheduledDoctorAppointment = doctorBooking && bookingModeSelect?.value === 'appointment';
+                if ((patientBooking || scheduledDoctorAppointment) && !dateInput.value) {
                     if (availabilityMessage) {
                         availabilityMessage.classList.remove('hidden');
                         availabilityMessage.textContent = 'Choose an available date and time to continue.';
@@ -1128,7 +1227,7 @@
                     return;
                 }
 
-                if (patientBooking && !timeSelect.value) {
+                if ((patientBooking || scheduledDoctorAppointment) && !timeSelect.value) {
                     if (availabilityMessage) {
                         availabilityMessage.classList.remove('hidden');
                         availabilityMessage.textContent = 'Choose one of the available appointment times to continue.';
@@ -1168,6 +1267,26 @@
                     return;
                 }
 
+                if (form.hasAttribute('data-schedule-confirm') && form.dataset.scheduleConfirmed !== 'true') {
+                    const confirmed = await window.showAppConfirm(form.dataset.scheduleConfirm, {
+                        title: form.dataset.scheduleConfirmTitle,
+                        confirmLabel: patientBooking
+                            ? 'Submit request'
+                            : excludedAppointmentId
+                                ? 'Save reschedule'
+                                : scheduledDoctorAppointment
+                                    ? 'Schedule appointment'
+                                    : 'Register walk-in',
+                        variant: 'warning',
+                    });
+
+                    if (!confirmed) {
+                        return;
+                    }
+
+                    form.dataset.scheduleConfirmed = 'true';
+                }
+
                 form.dataset.submittingAfterAvailabilityRefresh = 'true';
                 form.requestSubmit(event.submitter);
             });
@@ -1179,6 +1298,7 @@
                     }
                 });
             });
+            filterServicesForBranch();
             renderSelectedTreatments();
             loadAvailability(currentMonth);
         });

@@ -42,6 +42,7 @@ class ClinicWorkflowTest extends TestCase
             'name' => 'Jamie Patient',
             'date_of_birth' => '1990-03-10',
             'gender' => 'prefer_not_to_say',
+            'branch_id' => $this->generalTriasBranchId(),
             'phone' => '09170000000',
             'email' => 'jamie@example.test',
             'address' => 'Clinic Street',
@@ -61,8 +62,46 @@ class ClinicWorkflowTest extends TestCase
         $this->assertSame('patient', $user->role);
         $this->assertNull($user->email_verified_at);
         $this->assertMatchesRegularExpression('/^P-\d{4}-\d{5}$/', $user->patient->patient_number);
+        $this->assertSame($this->generalTriasBranchId(), $user->patient->branch_id);
         $this->assertDatabaseHas('audit_logs', ['action' => 'patient_registered']);
         $this->assertGuest();
+    }
+
+    public function test_public_registration_requires_a_branch_selection(): void
+    {
+        $response = $this->post(route('register.store'), [
+            'name' => 'No Branch Patient',
+            'date_of_birth' => '1990-03-10',
+            'gender' => 'prefer_not_to_say',
+            'phone' => '09170000000',
+            'email' => 'no.branch@example.test',
+            'address' => 'Clinic Street',
+            'password' => 'Secure-password-123!',
+            'password_confirmation' => 'Secure-password-123!',
+        ]);
+
+        $response->assertSessionHasErrors('branch_id');
+        $this->assertDatabaseMissing('users', ['email' => 'no.branch@example.test']);
+        $this->assertDatabaseCount('patients', 0);
+    }
+
+    public function test_public_registration_rejects_a_branch_that_does_not_exist(): void
+    {
+        $response = $this->post(route('register.store'), [
+            'name' => 'Invalid Branch Patient',
+            'date_of_birth' => '1990-03-10',
+            'gender' => 'prefer_not_to_say',
+            'branch_id' => 99999999,
+            'phone' => '09170000000',
+            'email' => 'invalid.branch@example.test',
+            'address' => 'Clinic Street',
+            'password' => 'Secure-password-123!',
+            'password_confirmation' => 'Secure-password-123!',
+        ]);
+
+        $response->assertSessionHasErrors('branch_id');
+        $this->assertDatabaseMissing('users', ['email' => 'invalid.branch@example.test']);
+        $this->assertDatabaseCount('patients', 0);
     }
 
     public function test_login_page_displays_password_toggle_controls(): void
@@ -85,6 +124,10 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('data-password-toggle', false)
             ->assertSee('Show password', false)
             ->assertSee('name="password_confirmation"', false)
+            ->assertSee('name="branch_id"', false)
+            ->assertSee('General Trias Branch')
+            ->assertSee('Dasmariñas Branch')
+            ->assertSee('Trece Branch')
             ->assertSee('minlength="8"', false)
             ->assertSee('maxlength="11"', false)
             ->assertSee('pattern="[0-9]{1,11}"', false)
@@ -284,7 +327,8 @@ class ClinicWorkflowTest extends TestCase
 
         $this->actingAs($actor)
             ->get(route('clinic.records.create', ['appointment' => $appointment->id, ...$filters]))
-            ->assertSee('Save dental record');
+            ->assertSee('Save dental record')
+            ->assertSee("data-confirm=\"Save this dental record to the patient's clinical history?\"", false);
 
         $this->post(route('clinic.records.store', ['appointment' => $appointment->id, ...$filters]), [
             'diagnosis' => 'Routine examination',
@@ -321,7 +365,7 @@ class ClinicWorkflowTest extends TestCase
         $this->assertDatabaseCount('bills', 0);
     }
 
-    public function test_doctors_can_create_dental_records_from_their_queue_and_set_a_follow_up_date(): void
+    public function test_doctors_can_create_dental_records_from_appointment_records_and_set_a_follow_up_date(): void
     {
         $this->travelTo(Carbon::parse('2026-11-03 08:00:00', config('clinic.timezone')));
         $branch = Branch::factory()->create(['name' => 'Doctor Follow-up Branch']);
@@ -354,6 +398,10 @@ class ClinicWorkflowTest extends TestCase
         $this->actingAs($doctor)
             ->get(route('clinic.queue.index'))
             ->assertSee($patient->user->name)
+            ->assertDontSee(route('clinic.records.create', $appointment));
+
+        $this->get(route('clinic.appointment-records'))
+            ->assertSee($patient->user->name)
             ->assertSee(route('clinic.records.create', $appointment));
 
         $this->get(route('clinic.records.create', $otherBranchAppointment))
@@ -368,7 +416,11 @@ class ClinicWorkflowTest extends TestCase
             'treatment' => 'Follow-up treatment',
             'follow_up_date' => '2026-11-17',
         ])
-            ->assertRedirectToRoute('clinic.queue.index')
+            ->assertRedirect(route('clinic.appointment-records', [
+                'date' => $appointment->starts_at->toDateString(),
+                'status' => 'in_consultation',
+                'appointment_id' => $appointment->id,
+            ]).'#appointment-'.$appointment->id)
             ->assertSessionHas('status', 'Dental record saved.');
 
         $this->assertDatabaseHas('dental_records', [
@@ -376,6 +428,16 @@ class ClinicWorkflowTest extends TestCase
             'created_by' => $doctor->id,
             'follow_up_date' => '2026-11-17 00:00:00',
         ]);
+
+        $this->get(route('clinic.appointment-records', [
+            'date' => $appointment->starts_at->toDateString(),
+            'status' => 'in_consultation',
+            'appointment_id' => $appointment->id,
+        ]))
+            ->assertSee(route('clinic.bills.create', $appointment));
+
+        $this->get(route('clinic.bills.create', $appointment))
+            ->assertSee('Create bill');
 
         $this->actingAs(User::factory()->create(['role' => 'staff']))
             ->get(route('clinic.appointment-records'))
@@ -693,6 +755,12 @@ class ClinicWorkflowTest extends TestCase
                 ->assertDontSee('data-service-selection', false)
                 ->assertSee('staff must confirm the final amount before billing');
 
+            $response->assertSee(
+                $user->role === 'patient'
+                    ? 'data-schedule-confirm="Submit this appointment request?"'
+                    : 'data-schedule-confirm="Register this walk-in appointment and add it to the queue?"',
+                false,
+            );
             $this->assertSame(1, substr_count($response->getContent(), 'name="service_id" required'));
         }
 
@@ -897,6 +965,10 @@ class ClinicWorkflowTest extends TestCase
             ->post(route('appointments.store'), $booking)
             ->assertRedirectToRoute('appointments.index');
         $appointment = Appointment::firstOrFail();
+        $this->get(route('appointments.index'))
+            ->assertSee('data-confirm="Cancel this appointment? This will release its reserved time slot."', false)
+            ->assertSee('<button class="btn-danger">Cancel</button>', false);
+
         $this->post(route('appointments.transition', [$appointment, 'cancel']))
             ->assertSessionHasNoErrors();
 
@@ -910,6 +982,18 @@ class ClinicWorkflowTest extends TestCase
         $this->assertDatabaseCount('appointments', 2);
         $this->assertDatabaseHas('appointment_slots', ['starts_at' => '2026-10-05 10:00:00']);
         $this->assertDatabaseCount('appointment_slots', 3);
+    }
+
+    public function test_staff_is_prompted_before_rejecting_an_appointment(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00251');
+        Appointment::factory()->for($patient)->create(['status' => 'pending']);
+
+        $this->actingAs($staff)
+            ->get(route('clinic.appointment-records'))
+            ->assertSee('data-confirm="Reject this appointment request? The patient will be notified."', false)
+            ->assertSee('<button class="btn-danger">Reject</button>', false);
     }
 
     public function test_staff_rescheduling_moves_the_slot_reservation_atomically(): void
@@ -1096,7 +1180,10 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('Staff and doctor accounts')
             ->assertSee('Clinic Doctor')
             ->assertSee('Doctor')
-            ->assertSee('General Trias Branch');
+            ->assertSee('General Trias Branch')
+            ->assertSee('<button class="btn-small shrink-0">Save</button>', false)
+            ->assertSee('<button class="btn-danger">Disable</button>', false)
+            ->assertSee('<button class="btn-small min-h-11">Reset</button>', false);
 
         $this->patch(route('admin.staff.toggle', $doctor))
             ->assertSessionHas('status', 'Doctor account status updated.');
@@ -1148,7 +1235,8 @@ class ClinicWorkflowTest extends TestCase
         $this->actingAs($staff)
             ->get(route('clinic.appointment-records'))
             ->assertSee('<details class="min-w-0">', false)
-            ->assertSee('<summary class="btn-small cursor-pointer list-none text-teal-800">Reschedule</summary>', false)
+            ->assertSee('<summary class="btn-small cursor-pointer list-none">Reschedule</summary>', false)
+            ->assertSee('data-schedule-confirm="Save this new appointment date and time?"', false)
             ->assertSee('name="appointment_date"', false)
             ->assertSee('>Save new time</button>', false);
     }
@@ -1219,7 +1307,9 @@ class ClinicWorkflowTest extends TestCase
         $this->actingAs($actor)
             ->get(route('clinic.billing.index'))
             ->assertOk()
-            ->assertSee('🖨 Print All')
+            ->assertSee('Page to print')
+            ->assertSee('name="page"', false)
+            ->assertSee('🖨 Print Selected Page')
             ->assertSee('🖨 Print Bill')
             ->assertSee('data-billing-print-report', false)
             ->assertSee('data-print-all-page', false)
@@ -1247,6 +1337,8 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('id="bill-print-'.$otherBill->id.'"', false)
             ->assertSee('ACKNOWLEDGEMENT RECEIPT (AR) ONLY')
             ->assertSee('ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.')
+            ->assertSee('Payment date & time')
+            ->assertSee('Oct 21, 2026 12:00 PM')
             ->assertSee($bill->patient->user->name)
             ->assertSee($bill->patient->patient_number)
             ->assertSee('Dental Cleaning')
@@ -1254,6 +1346,28 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('AR-2026-PRINT01')
             ->assertSee('₱6,500.00')
             ->assertSee('Doc Brigs Dental Care');
+    }
+
+    public function test_billing_print_page_selector_loads_the_selected_page(): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-21 12:00:00', config('clinic.timezone')));
+        $actor = User::factory()->create(['role' => 'admin']);
+
+        foreach (range(1, 21) as $number) {
+            $createdAt = Carbon::parse('2026-10-01 09:00:00', config('clinic.timezone'))->addMinutes($number);
+            Bill::factory()->create([
+                'bill_number' => sprintf('B-2026-PAGE%02d', $number),
+                'created_at' => $createdAt,
+                'updated_at' => $createdAt,
+            ]);
+        }
+
+        $this->actingAs($actor)
+            ->get(route('clinic.billing.index', ['page' => 2]))
+            ->assertOk()
+            ->assertSee('<option value="2" selected>Page 2</option>', false)
+            ->assertSee('B-2026-PAGE01')
+            ->assertDontSee('B-2026-PAGE21');
     }
 
     public function test_variable_fee_is_confirmed_by_staff_before_it_is_added_to_a_bill(): void
@@ -2658,11 +2772,13 @@ class ClinicWorkflowTest extends TestCase
 
     public function test_sms_logs_only_show_appointment_approvals_and_rejections(): void
     {
+        config()->set('clinic.timezone', 'Asia/Manila');
         $admin = User::factory()->create(['role' => 'admin']);
         $patient = Patient::factory()->for(User::factory()->state(['role' => 'patient']))->create();
         SmsLog::factory()->for($patient)->create([
             'type' => 'appointment_approve',
             'message' => 'Approval SMS',
+            'created_at' => '2026-11-05 03:18:00',
         ]);
         SmsLog::factory()->for($patient)->create([
             'type' => 'appointment_reject',
@@ -2681,6 +2797,7 @@ class ClinicWorkflowTest extends TestCase
             ->get(route('admin.sms-logs'))
             ->assertSee('Approval SMS')
             ->assertSee('Rejection SMS')
+            ->assertSee('Nov 5, 2026 11:18 AM')
             ->assertDontSee('Legacy payment SMS')
             ->assertDontSee('Legacy reminder SMS');
 

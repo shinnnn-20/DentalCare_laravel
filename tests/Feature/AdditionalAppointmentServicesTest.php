@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\Appointment;
-use App\Models\AuditLog;
 use App\Models\Bill;
 use App\Models\BillItem;
 use App\Models\Patient;
@@ -20,7 +19,7 @@ class AdditionalAppointmentServicesTest extends TestCase
     use RefreshDatabase;
 
     #[DataProvider('clinicStaffRoles')]
-    public function test_admin_and_staff_add_services_to_an_existing_bill_without_changing_original_items_or_payments(string $role): void
+    public function test_admin_and_staff_cannot_add_services_to_a_paid_bill(string $role): void
     {
         $actor = User::factory()->create(['role' => $role]);
         $patient = Patient::factory()->create();
@@ -59,19 +58,17 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->get(route('clinic.bills.additional-services.create', $bill))
             ->assertOk()
             ->assertSee('Original Cleaning')
-            ->assertSee('Additional X-ray')
-            ->assertSee('name="service_ids[]"', false)
-            ->assertSee('data-addon-summary-items', false)
-            ->assertSee('Total additional amount')
-            ->assertSee('name="confirm_add_ons"', false);
+            ->assertSee('This bill is fully paid.')
+            ->assertDontSee('name="service_ids[]"', false);
 
         $this->post(route('clinic.bills.additional-services.store', $bill), [
             'service_ids' => [$additionalService->id, $anotherService->id],
             'confirm_add_ons' => '1',
-        ])->assertRedirect(route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id)
-            ->assertSessionHas('status', 'Additional services added to the bill.');
+        ])->assertSessionHasErrors([
+            'service_ids' => 'Additional services cannot be added to a paid bill.',
+        ]);
 
-        $this->assertSame(3, $bill->items()->count());
+        $this->assertSame(1, $bill->items()->count());
         $this->assertDatabaseHas('bill_items', [
             'id' => $originalItem->id,
             'bill_id' => $bill->id,
@@ -79,38 +76,25 @@ class AdditionalAppointmentServicesTest extends TestCase
             'service_name' => 'Original Cleaning',
             'subtotal' => '1000.00',
         ]);
-        $this->assertDatabaseHas('bill_items', [
-            'bill_id' => $bill->id,
-            'service_id' => $additionalService->id,
-            'service_name' => 'Additional X-ray',
-            'is_add_on' => true,
-            'unit_price' => '250.50',
-            'subtotal' => '250.50',
-        ]);
         $this->assertDatabaseHas('bills', [
             'id' => $bill->id,
-            'subtotal' => '1400.50',
+            'subtotal' => '1000.00',
             'discount' => '100.00',
-            'total' => '1300.50',
-            'payment_status' => 'partially_paid',
+            'total' => '900.00',
+            'payment_status' => 'paid',
         ]);
         $this->assertDatabaseHas('payments', [
             'id' => $payment->id,
             'bill_id' => $bill->id,
             'applied_amount' => '900.00',
         ]);
-        $this->assertSame('billed', $appointment->fresh()->status);
-        $this->assertDatabaseHas('audit_logs', [
-            'user_id' => $actor->id,
-            'action' => 'additional_services_added',
-            'module' => 'billing',
-            'record_type' => 'Bill',
-            'record_id' => (string) $bill->id,
-        ]);
+        $this->assertSame('completed', $appointment->fresh()->status);
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'additional_services_added']);
 
-        $audit = AuditLog::query()->where('action', 'additional_services_added')->firstOrFail();
-        $this->assertStringContainsString('Additional X-ray (#'.$additionalService->id.') at ₱250.50', $audit->description);
-        $this->assertStringContainsString('Additional Fluoride (#'.$anotherService->id.') at ₱150.00', $audit->description);
+        $this->get(route('clinic.billing.index'))
+            ->assertOk()
+            ->assertSee('Add services · Paid')
+            ->assertDontSee(route('clinic.bills.additional-services.create', $bill));
     }
 
     public function test_add_on_service_keeps_the_original_percentage_discount_and_full_price_without_changing_payment_history(): void

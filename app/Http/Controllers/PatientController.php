@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Branch;
 use App\Models\Patient;
 use App\Models\User;
 use App\Services\AuditTrail;
@@ -19,8 +20,21 @@ class PatientController extends Controller
     public function create(Request $request): View
     {
         $this->ensureDoctorHasBranch($request);
+        $user = $request->user();
+        $isAdmin = $user->hasRole('admin');
+        $isDoctor = $user->hasRole('doctor');
+        $branches = $isAdmin
+            ? Branch::query()->orderBy('name')->get(['id', 'name'])
+            : collect();
 
-        return view('patients.create');
+        return view('patients.create', [
+            'branches' => $branches,
+            'isAdmin' => $isAdmin,
+            'isDoctor' => $isDoctor,
+            'assignedBranch' => $isDoctor
+                ? Branch::query()->findOrFail($user->branch_id)
+                : null,
+        ]);
     }
 
     public function index(Request $request): View
@@ -109,8 +123,15 @@ class PatientController extends Controller
             'password' => ['required', 'string', Password::defaults(), 'confirmed'],
         ]);
 
+        $patient->loadMissing('user');
         $patient->user->update(['password' => $data['password']]);
-        $auditTrail->record($request->user(), 'patient_password_reset', 'patients', $patient);
+        $auditTrail->record(
+            $request->user(),
+            'patient_password_reset',
+            'patients',
+            $patient,
+            "Reset the password for {$patient->user->name} (patient {$patient->patient_number}); password value was not recorded.",
+        );
 
         return redirect()->route('clinic.patients.show', $patient)
             ->with('status', 'Patient password reset.');
@@ -147,7 +168,7 @@ class PatientController extends Controller
                 'patient_access_removed',
                 'patients',
                 $lockedPatient,
-                'Patient access removed and profile details pseudonymized; clinical and billing records retained.',
+                "Removed portal access for {$user->name} (patient {$lockedPatient->patient_number}); profile details were pseudonymized and clinical and billing records were retained.",
             );
 
             $user->forceFill([
@@ -181,8 +202,9 @@ class PatientController extends Controller
         ClinicNotificationService $notifications,
     ): RedirectResponse {
         $this->ensureDoctorHasBranch($request);
-        $branchId = $request->user()->hasRole('staff', 'doctor')
-            ? $request->user()->branch_id
+        $user = $request->user();
+        $branchId = $user->hasRole('staff', 'doctor')
+            ? $user->branch_id
             : null;
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255', 'regex:/^[\pL\pM\s.\'-]+$/u'],
@@ -193,7 +215,15 @@ class PatientController extends Controller
             'address' => ['required', 'string', 'max:2000'],
             'emergency_contact' => ['nullable', 'string', 'max:100'],
             'password' => ['required', 'string', Password::defaults(), 'confirmed'],
+            'branch_id' => $user->hasRole('admin')
+                ? ['required', 'integer', Rule::exists('branches', 'id')]
+                : ($user->hasRole('doctor')
+                    ? ['required', 'integer', Rule::in([(int) $user->branch_id])]
+                    : ['prohibited']),
         ]);
+        if ($user->hasRole('admin')) {
+            $branchId = (int) $data['branch_id'];
+        }
 
         $patient = DB::transaction(function () use ($data, $auditTrail, $request, $branchId): Patient {
             $user = User::create([
@@ -214,7 +244,16 @@ class PatientController extends Controller
                 'emergency_contact' => $data['emergency_contact'] ?? null,
             ]);
             $patient->update(['patient_number' => sprintf('P-%s-%05d', now()->format('Y'), $patient->id)]);
-            $auditTrail->record($request->user(), 'patient_registered', 'patients', $patient);
+            $auditTrail->record(
+                $request->user(),
+                'patient_registered',
+                'patients',
+                $patient,
+                "Registered patient {$patient->user->name} with patient number {$patient->patient_number}"
+                    .($branchId === null
+                        ? ' without an assigned branch.'
+                        : ' at '.(Branch::query()->whereKey($branchId)->value('name') ?? 'an unknown branch').'.'),
+            );
 
             return $patient;
         });
@@ -248,6 +287,17 @@ class PatientController extends Controller
             'emergency_contact' => ['nullable', 'string', 'max:100'],
         ]);
 
+        $patient->loadMissing('user');
+        $previousDetails = [
+            'name' => $patient->user->name,
+            'email' => $patient->user->email,
+            'phone' => $patient->user->phone,
+            'date_of_birth' => $patient->date_of_birth?->toDateString(),
+            'gender' => $patient->gender,
+            'address' => $patient->address,
+            'emergency_contact' => $patient->emergency_contact,
+        ];
+
         DB::transaction(function () use ($data, $patient): void {
             $patient->user->update([
                 'name' => $data['name'],
@@ -262,7 +312,30 @@ class PatientController extends Controller
             ]);
         });
 
-        $auditTrail->record($request->user(), 'patient_updated', 'patients', $patient);
+        $changedFields = [];
+        $updatedValues = [
+            'name' => $patient->user->name,
+            'email' => $patient->user->email,
+            'phone' => $patient->user->phone,
+            'date_of_birth' => $patient->date_of_birth?->toDateString(),
+            'gender' => $patient->gender,
+            'address' => $patient->address,
+            'emergency_contact' => $patient->emergency_contact,
+        ];
+        foreach ($updatedValues as $field => $value) {
+            if ($previousDetails[$field] !== $value) {
+                $changedFields[] = str_replace('_', ' ', $field);
+            }
+        }
+        $auditTrail->record(
+            $request->user(),
+            'patient_updated',
+            'patients',
+            $patient,
+            $changedFields === []
+                ? "Saved patient {$patient->patient_number} without changing patient details."
+                : 'Updated '.implode(', ', $changedFields)." for patient {$patient->patient_number}.",
+        );
         $notifications->notifyClinicStaff(
             $request->user(),
             'patient.updated',

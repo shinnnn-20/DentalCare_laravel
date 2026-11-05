@@ -3,69 +3,52 @@
 @section('title', $isPreview ? 'Payment Receipt Preview' : 'Acknowledgement Receipt '.$receipt->receipt_number)
 
 @section('content')
-    <div class="mx-auto max-w-3xl">
+    <div class="receipt-page mx-auto max-w-3xl">
         <div class="mb-4 flex justify-end gap-2 print:hidden">
             @if (auth()->user()->role !== 'patient')
                 <button class="btn-primary" type="button" data-print-receipt>Print</button>
             @endif
             <a class="btn-secondary" href="{{ auth()->user()->role === 'patient' ? route('patient.billing') : route('clinic.billing.index') }}">Back to billing</a>
         </div>
-        <article class="receipt-paper rounded-2xl border border-slate-200 bg-white p-8 shadow-sm sm:p-12">
-            <header class="receipt-print-header border-b border-slate-200 pb-6 text-center">
-                <img class="receipt-print-logo mx-auto h-16 w-16 object-contain" src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="Doc Brigs Dental Care logo">
-                <div class="receipt-print-brand">
-                    <h1 class="mt-3 text-2xl font-bold">{{ config('clinic.name') }}</h1>
-                    <p class="mt-1 text-sm text-slate-500">{{ config('clinic.address') }} · {{ config('clinic.phone') }}</p>
-                    <h2 class="receipt-print-title mt-5 text-lg font-bold uppercase tracking-wide text-teal-800">ACKNOWLEDGEMENT RECEIPT (AR) ONLY</h2>
-                </div>
-                @if (auth()->user()->role === 'patient')
-                    <p class="mt-2 text-lg font-semibold text-slate-800">Payment Receipt Preview</p>
-                @endif
-                @if ($receipt->payment->provider === 'paymongo' && $receipt->payment->is_test)
-                    <p class="receipt-test-mode mt-5 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-bold uppercase tracking-wide text-amber-900">
-                        PayMongo test mode — no real money transferred
-                    </p>
-                @endif
-                <p class="receipt-print-disclaimer mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm font-semibold leading-6 text-amber-950">
-                    ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.
-                </p>
-            </header>
-            <div class="receipt-print-details grid gap-5 border-b border-slate-200 py-6 text-sm sm:grid-cols-2">
-                @if (auth()->user()->role === 'patient')
-                    <div>
-                        <p class="text-slate-500">Payment date</p>
-                        <p class="mt-1 font-semibold">{{ ($receipt->payment->paid_at ?? $receipt->created_at)->timezone(config('clinic.timezone'))->format('F j, Y · g:i A') }}</p>
-                    </div>
-                    <div>
-                        <p class="text-slate-500">Patient</p>
-                        <p class="mt-1 font-semibold">{{ $receipt->payment->bill->patient->user->name }}</p>
-                    </div>
-                    <div class="sm:col-span-2">
-                        <p class="text-xs text-slate-400">Receipt reference</p>
-                        <p class="mt-1 text-xs text-slate-500">{{ $receipt->receipt_number }}</p>
-                    </div>
-                @else
-                    <div><p class="text-slate-400">Receipt number</p><p class="mt-1 font-semibold">{{ $receipt->receipt_number }}</p></div>
-                    <div><p class="text-slate-400">Bill number</p><p class="mt-1 font-semibold">{{ $receipt->payment->bill->bill_number }}</p></div>
-                    <div><p class="text-slate-400">Transaction ID</p><p class="mt-1 font-semibold">{{ $receipt->payment->transaction_id }}</p></div>
-                    @if ($receipt->payment->provider_transaction_id)
-                        <div class="receipt-provider-identifiers"><p class="text-slate-400">PayMongo payment ID</p><p class="mt-1 break-all font-semibold">{{ $receipt->payment->provider_transaction_id }}</p></div>
-                        <div class="receipt-provider-identifiers"><p class="text-slate-400">Checkout session ID</p><p class="mt-1 break-all font-semibold">{{ $receipt->payment->provider_checkout_session_id }}</p></div>
+        <article class="receipt-paper billing-print-paper rounded-2xl border border-slate-200 bg-white p-8 shadow-sm sm:p-12">
+            <header class="bill-print-header mb-6 flex items-center justify-center gap-4 border-b border-slate-200 pb-5 text-left">
+                <img class="bill-print-logo h-16 w-16 object-contain" src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="Doc Brigs Dental Care logo">
+                <div class="bill-print-brand text-center">
+                    <h1 class="text-2xl font-bold">{{ config('clinic.name') }}</h1>
+                    @if (config('clinic.address') !== 'Clinic address not configured')
+                        <p class="mt-1 text-sm text-slate-500">{{ config('clinic.address') }}</p>
                     @endif
-                    <div><p class="text-slate-400">Patient</p><p class="mt-1 font-semibold">{{ $receipt->payment->bill->patient->user->name }} · {{ $receipt->payment->bill->patient->patient_number }}</p></div>
-                    <div><p class="text-slate-400">Date & time</p><p class="mt-1 font-semibold">{{ ($receipt->payment->paid_at ?? $receipt->created_at)->timezone(config('clinic.timezone'))->format('F j, Y · g:i A') }}</p></div>
-                    <div><p class="text-slate-400">Processed by</p><p class="mt-1 font-semibold">{{ $receipt->payment->processor?->name ?? 'Clinic system' }}</p></div>
-                @endif
-            </div>
+                    @if (config('clinic.phone') !== 'Clinic contact not configured')
+                        <p class="mt-1 text-sm text-slate-500">{{ config('clinic.phone') }}</p>
+                    @endif
+                    <h2 class="mt-3 text-lg font-bold uppercase tracking-wide text-teal-800">ACKNOWLEDGEMENT RECEIPT (AR) ONLY</h2>
+                </div>
+            </header>
+            <p class="bill-print-disclaimer mb-5 rounded-lg border border-amber-300 bg-amber-50 p-4 text-center text-sm font-semibold leading-6 text-amber-950">ACKNOWLEDGEMENT RECEIPT ONLY – This document acknowledges receipt of payment and is not an Official Receipt or a BIR-compliant Sales Invoice.</p>
+            @if ($isPreview)
+                <p class="receipt-preview-label mb-4 text-sm font-semibold text-slate-700">Payment Receipt Preview</p>
+            @endif
+            @if ($receipt->payment->provider === 'paymongo' && $receipt->payment->is_test)
+                <p class="receipt-test-mode mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-bold uppercase tracking-wide text-amber-900">PayMongo test mode — no real money transferred</p>
+            @endif
+            <section class="bill-print-details grid gap-3 border-b border-slate-200 py-5 text-sm sm:grid-cols-2">
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Bill No</span><strong class="text-right font-semibold">{{ $receipt->payment->bill->bill_number }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Date</span><strong class="text-right font-semibold">{{ $receipt->payment->bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y') }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Patient</span><strong class="text-right font-semibold">{{ $receipt->payment->bill->patient->user->name }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Patient ID</span><strong class="text-right font-semibold">{{ $receipt->payment->bill->patient->patient_number }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Processed by</span><strong class="text-right font-semibold">{{ $receipt->payment->processor?->name ?? 'Clinic system' }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Payment date &amp; time</span><strong class="text-right font-semibold">{{ ($receipt->payment->paid_at ?? $receipt->created_at)->timezone(config('clinic.timezone'))->format('M j, Y g:i A') }}</strong></div>
+            </section>
             @php($originalItems = $receipt->payment->bill->items->where('is_add_on', false))
             @php($addOnItems = $receipt->payment->bill->items->where('is_add_on', true))
             @php($billAmountPaid = (float) $receipt->payment->bill->payments->sum('applied_amount'))
             @php($billBalance = max(0, (float) $receipt->payment->bill->total - $billAmountPaid))
-            <section class="receipt-print-items py-6">
+            <section class="bill-print-items mt-6">
+                <h3 class="mb-2 font-semibold">Services / Items</h3>
                 @if ($originalItems->isNotEmpty())
-                    <h2 class="mb-2 font-semibold">Original Services</h2>
+                    <h4 class="mb-2 mt-4 font-medium">Original Services</h4>
                     <div class="overflow-x-auto">
-                        <table class="receipt-print-table data-table !px-0"><thead><tr><th>Service</th><th>Qty</th><th>Unit price</th><th>Subtotal</th></tr></thead><tbody>
+                        <table class="data-table !px-0"><thead><tr><th>Service / Item</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>
                             @foreach ($originalItems as $item)
                                 <tr><td data-label="Service">{{ $item->service_name }}</td><td data-label="Qty">{{ $item->quantity }}</td><td data-label="Unit price">{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->unit_price, 2) }}</td><td data-label="Subtotal">{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->subtotal, 2) }}</td></tr>
                             @endforeach
@@ -73,11 +56,11 @@
                     </div>
                 @endif
                 @if ($addOnItems->isNotEmpty())
-                    <h2 class="mb-2 mt-5 font-semibold">Add-on Services</h2>
+                    <h4 class="mb-2 mt-4 font-medium">Add-on Services</h4>
                     <div class="overflow-x-auto">
-                        <table class="receipt-print-table data-table !px-0"><thead><tr><th>Service</th><th>Qty</th><th>Unit price</th><th>Subtotal</th></tr></thead><tbody>
+                        <table class="data-table !px-0"><thead><tr><th>Service / Item</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>
                             @foreach ($addOnItems as $item)
-                                <tr><td data-label="Service"><span class="mb-1 inline-flex rounded-full bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-800">Add-on Service</span><br>{{ $item->service_name }}</td><td data-label="Qty">{{ $item->quantity }}</td><td data-label="Unit price">{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->unit_price, 2) }}</td><td data-label="Subtotal">{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->subtotal, 2) }}</td></tr>
+                                <tr><td data-label="Service / Item"><strong>Add-on Service</strong><br>{{ $item->service_name }}</td><td data-label="Qty">{{ $item->quantity }}</td><td data-label="Unit price">{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->unit_price, 2) }}</td><td data-label="Amount">{{ config('clinic.currency_symbol') }}{{ number_format((float) $item->subtotal, 2) }}</td></tr>
                             @endforeach
                         </tbody></table>
                     </div>
@@ -86,158 +69,98 @@
                     <p class="text-sm text-slate-500">No services recorded for this bill.</p>
                 @endif
             </section>
-            <div class="receipt-print-summary ml-auto grid max-w-sm gap-2 border-t border-slate-200 pt-5 text-sm">
-                <div class="flex justify-between"><span class="text-slate-500">Subtotal</span><span>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->bill->subtotal, 2) }}</span></div>
-                <div class="flex justify-between"><span class="text-slate-500">{{ $receipt->payment->bill->discountLabel() }}</span><span>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->bill->discount, 2) }}</span></div>
-                <div class="flex justify-between text-base font-bold"><span>Total</span><span>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->bill->total, 2) }}</span></div>
-                <div class="flex justify-between"><span class="text-slate-500">Amount paid to date</span><span>{{ config('clinic.currency_symbol') }}{{ number_format($billAmountPaid, 2) }}</span></div>
-                <div class="flex justify-between"><span class="text-slate-500">Remaining balance</span><span>{{ config('clinic.currency_symbol') }}{{ number_format($billBalance, 2) }}</span></div>
-                <div class="flex justify-between"><span class="text-slate-500">Amount applied</span><span>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->applied_amount, 2) }}</span></div>
-                <div class="flex justify-between"><span class="text-slate-500">Amount received</span><span>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->amount, 2) }}</span></div>
-                <div class="flex justify-between"><span class="text-slate-500">Change</span><span>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->change_amount, 2) }}</span></div>
-            </div>
+            <section class="bill-print-summary grid w-full gap-2 border-y border-slate-300 py-4 text-sm">
+                <div class="flex justify-between gap-3"><span class="text-slate-500">{{ $receipt->payment->bill->discountLabel() }}</span><strong>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->bill->discount, 2) }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Total Amount</span><strong>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->bill->total, 2) }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Amount Paid</span><strong>{{ config('clinic.currency_symbol') }}{{ number_format($billAmountPaid, 2) }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Remaining Balance</span><strong>{{ config('clinic.currency_symbol') }}{{ number_format($billBalance, 2) }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Amount Applied</span><strong>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->applied_amount, 2) }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Amount Received</span><strong>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->amount, 2) }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Change</span><strong>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->change_amount, 2) }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">Status</span><strong>{{ strtoupper(str_replace('_', ' ', $receipt->payment->bill->payment_status)) }}</strong></div>
+                <div class="flex justify-between gap-3"><span class="text-slate-500">AR / Receipt Number</span><strong>{{ $receipt->receipt_number }}</strong></div>
+            </section>
+            <section class="bill-print-payments mt-6">
+                <h3 class="mb-2 font-semibold">Payment details</h3>
+                <table>
+                    <thead><tr><th>Date</th><th>Payment method / provider</th><th>Amount applied</th><th>Provider reference</th><th>AR / Receipt No</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td>{{ ($receipt->payment->paid_at ?? $receipt->created_at)->timezone(config('clinic.timezone'))->format('M j, Y g:i A') }}</td>
+                            <td>{{ strtoupper($receipt->payment->method) }}@if ($receipt->payment->provider === 'paymongo') · PayMongo{{ $receipt->payment->is_test ? ' TEST MODE' : '' }}@endif</td>
+                            <td>{{ config('clinic.currency_symbol') }}{{ number_format((float) $receipt->payment->applied_amount, 2) }}</td>
+                            <td>
+                                @if (auth()->user()->role !== 'patient' && $receipt->payment->provider_transaction_id)
+                                    Payment: {{ $receipt->payment->provider_transaction_id }}<br>
+                                    Session: {{ $receipt->payment->provider_checkout_session_id }}
+                                @else
+                                    —
+                                @endif
+                            </td>
+                            <td>{{ $receipt->receipt_number }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
             <footer class="receipt-print-footer mt-8 border-t border-slate-200 pt-5 text-sm">
-                <div class="flex flex-wrap justify-between gap-3"><p><span class="text-slate-500">Payment method:</span> <span class="font-semibold uppercase">{{ $receipt->payment->method }}</span></p><p><span class="text-slate-500">Bill status:</span> <span class="font-semibold uppercase">{{ str_replace('_', ' ', $receipt->payment->bill->payment_status) }}</span></p></div>
-                <p class="mt-2"><span class="text-slate-500">Payment provider:</span> {{ $receipt->payment->provider === 'paymongo' ? 'PayMongo'.($receipt->payment->is_test ? ' (TEST MODE)' : '') : 'Clinic' }}</p>
                 <p class="mt-8 text-center text-xs text-slate-400">Thank you for choosing {{ config('clinic.name') }}.</p>
             </footer>
         </article>
     </div>
     @if (auth()->user()->role !== 'patient')
-        <style>
-            @media print {
-                @page receipt {
-                    size: A4 portrait;
-                    margin: 8mm;
-                }
-
-                body { background: white !important; }
-                body * { visibility: hidden !important; }
-                .receipt-paper, .receipt-paper * { visibility: visible !important; }
-                .receipt-paper {
-                    position: absolute;
-                    inset: 0;
-                    width: 100%;
-                    max-width: none;
-                    border: 0;
-                    padding: 0;
-                    box-shadow: none;
-                    color: #0f172a;
-                    font-family: Arial, sans-serif;
-                    font-size: 9pt;
-                    line-height: 1.25;
-                    page: receipt;
-                }
-                .receipt-print-header {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 5mm;
-                    margin-bottom: 3mm;
-                    padding-bottom: 3mm;
-                    text-align: left;
-                }
-                .receipt-print-logo {
-                    width: auto;
-                    max-width: 20mm;
-                    height: 24mm;
-                }
-                .receipt-print-brand h1 {
-                    margin: 0;
-                    font-size: 16pt;
-                }
-                .receipt-print-brand p {
-                    margin: 1mm 0 0;
-                    font-size: 8pt;
-                }
-                .receipt-print-title {
-                    margin-top: 2mm !important;
-                    font-size: 10pt !important;
-                }
-                .receipt-print-disclaimer {
-                    margin: 2mm 0 0;
-                    padding: 2mm;
-                    font-size: 7pt;
-                    line-height: 1.25;
-                    text-align: center;
-                }
-                .receipt-test-mode {
-                    margin: 2mm 0 0;
-                    padding: 1.5mm;
-                    font-size: 7pt;
-                }
-                .receipt-print-details {
-                    grid-template-columns: 1fr 1fr;
-                    gap: 2mm 8mm;
-                    padding: 2mm 0;
-                    font-size: 8pt;
-                }
-                .receipt-print-details p {
-                    margin-top: 0.5mm;
-                    overflow-wrap: anywhere;
-                }
-                .receipt-provider-identifiers {
-                    display: none !important;
-                }
-                .receipt-print-items {
-                    padding: 3mm 0;
-                }
-                .receipt-print-items h2 {
-                    margin: 0 0 1.5mm;
-                    font-size: 9pt;
-                }
-                .receipt-print-items h2:not(:first-child) {
-                    margin-top: 2mm;
-                }
-                .receipt-print-table {
-                    display: table !important;
-                    width: 100%;
-                    border-collapse: collapse;
-                    font-size: 8pt;
-                }
-                .receipt-print-table th,
-                .receipt-print-table td {
-                    border: 1px solid #cbd5e1;
-                    padding: 1.5mm 2mm !important;
-                    text-align: left;
-                    vertical-align: top;
-                }
-                .receipt-print-table th {
-                    background: #f1f5f9 !important;
-                    print-color-adjust: exact;
-                }
-                .receipt-print-summary {
-                    gap: 1mm;
-                    padding-top: 2mm;
-                    font-size: 8pt;
-                }
-                .receipt-print-footer {
-                    margin-top: 3mm;
-                    padding-top: 2mm;
-                    font-size: 8pt;
-                }
-                .receipt-print-footer > p:last-child {
-                    margin-top: 3mm;
-                }
-            }
-        </style>
         <script>
             const receiptPrintButton = document.querySelector('[data-print-receipt]');
+            const receiptPrintPaper = document.querySelector('.receipt-paper');
             let receiptPrintInProgress = false;
 
-            receiptPrintButton.addEventListener('click', () => {
+            const prepareReceiptPrint = async () => {
+                const images = Array.from(receiptPrintPaper.querySelectorAll('img'));
+
+                await Promise.all(images.map(async (image) => {
+                    if (!image.complete) {
+                        await new Promise((resolve, reject) => {
+                            image.addEventListener('load', resolve, { once: true });
+                            image.addEventListener('error', () => reject(new Error('The clinic logo could not be loaded.')), { once: true });
+                        });
+                    }
+
+                    if (image.naturalWidth === 0) {
+                        throw new Error('The clinic logo could not be loaded.');
+                    }
+
+                    await image.decode();
+                }));
+            };
+
+            receiptPrintButton.addEventListener('click', async () => {
                 if (receiptPrintInProgress) {
                     return;
                 }
 
                 receiptPrintInProgress = true;
                 receiptPrintButton.disabled = true;
-                window.print();
+
+                try {
+                    await prepareReceiptPrint();
+                    document.body.classList.add('printing-receipt');
+                    receiptPrintPaper.classList.add('is-print-target');
+                    window.print();
+                } catch (error) {
+                    console.error(error);
+                    receiptPrintInProgress = false;
+                    receiptPrintButton.disabled = false;
+                    window.showAppAlert('The clinic logo could not be loaded, so the receipt was not printed. Please try again.', {
+                        title: 'Unable to print',
+                        variant: 'error',
+                    });
+                }
             });
 
             window.addEventListener('afterprint', () => {
                 receiptPrintInProgress = false;
                 receiptPrintButton.disabled = false;
+                document.body.classList.remove('printing-receipt');
+                receiptPrintPaper.classList.remove('is-print-target');
             });
         </script>
     @endif

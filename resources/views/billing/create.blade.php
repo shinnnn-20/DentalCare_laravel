@@ -17,7 +17,7 @@
                 </div>
                 <p class="mt-2 text-sm text-slate-500">{{ $appointment->patient->user->name }} · Appointment #{{ $appointment->id }}</p>
             </div>
-            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}">
+            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}" data-confirm="Create this bill with the displayed services, final amounts, and discount?" data-confirm-title="Confirm bill" data-confirm-accept="Create bill">
                 @csrf
                 @if ($appointment->service->requires_price_confirmation)
                     <div class="grid gap-2">
@@ -63,7 +63,7 @@
                 <p class="mt-3 text-sm text-slate-500 border-t border-slate-200 pt-2">{{ $appointment->patient->user->name }} · Appointment #{{ $appointment->id }}</p>
             </div>
 
-            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}">
+            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}" data-confirm="Create this bill with the displayed services, final amounts, and discount?" data-confirm-title="Confirm bill" data-confirm-accept="Create bill">
                 @csrf
                 @php($hasVariable = $services->contains('requires_price_confirmation', true))
                 @if ($hasVariable)

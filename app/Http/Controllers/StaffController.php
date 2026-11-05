@@ -71,7 +71,14 @@ class StaffController extends Controller
 
         $roleLabel = ucfirst($account->role);
         $module = $account->role === 'doctor' ? 'doctors' : 'staff';
-        $auditTrail->record($request->user(), $account->role.'_created', $module, $account);
+        $branchName = Branch::query()->whereKey($account->branch_id)->value('name') ?? 'unassigned';
+        $auditTrail->record(
+            $request->user(),
+            $account->role.'_created',
+            $module,
+            $account,
+            "Created {$account->role} account {$account->name} ({$account->email}) for branch {$branchName}.",
+        );
 
         return back()->with('status', "{$roleLabel} account created.");
     }
@@ -86,13 +93,14 @@ class StaffController extends Controller
         ]);
         $branch = Branch::query()->findOrFail((int) $data['branch_id']);
 
+        $previousBranchName = Branch::query()->whereKey($staff->branch_id)->value('name') ?? 'unassigned';
         $staff->update(['branch_id' => (int) $data['branch_id']]);
         $auditTrail->record(
             $request->user(),
             $staff->role.'_branch_updated',
             $staff->role === 'doctor' ? 'doctors' : 'staff',
             $staff,
-            'Assigned to '.$branch->name.'.',
+            "Changed {$staff->role} {$staff->name}'s branch assignment from {$previousBranchName} to {$branch->name}.",
         );
 
         return back()->with('status', ucfirst($staff->role).' branch assignment updated.');
@@ -105,7 +113,14 @@ class StaffController extends Controller
         $roleLabel = ucfirst($staff->role);
         $action = $staff->is_active ? $staff->role.'_activated' : $staff->role.'_disabled';
         $module = $staff->role === 'doctor' ? 'doctors' : 'staff';
-        $auditTrail->record($request->user(), $action, $module, $staff);
+        $auditTrail->record(
+            $request->user(),
+            $action,
+            $module,
+            $staff,
+            ucfirst($staff->role).' account '.$staff->name.' ('.$staff->email.') was '
+                .($staff->is_active ? 'activated.' : 'deactivated.'),
+        );
 
         return back()->with('status', "{$roleLabel} account status updated.");
     }
@@ -121,13 +136,32 @@ class StaffController extends Controller
             'branch_id' => ['prohibited'],
         ]);
 
+        $previousDetails = [
+            'name' => $staff->name,
+            'email' => $staff->email,
+            'phone' => $staff->phone,
+        ];
         $staff->update([
             'name' => $data['name'],
             'email' => mb_strtolower($data['email']),
             'phone' => $data['phone'] ?? null,
         ]);
         $module = $staff->role === 'doctor' ? 'doctors' : 'staff';
-        $auditTrail->record($request->user(), $staff->role.'_updated', $module, $staff);
+        $changedFields = [];
+        foreach (['name', 'email', 'phone'] as $field) {
+            if ($previousDetails[$field] !== $staff->getAttribute($field)) {
+                $changedFields[] = $field;
+            }
+        }
+        $auditTrail->record(
+            $request->user(),
+            $staff->role.'_updated',
+            $module,
+            $staff,
+            $changedFields === []
+                ? ucfirst($staff->role).' account '.$staff->name.' was saved without changing account details.'
+                : 'Updated '.implode(', ', $changedFields).' for '.$staff->role.' account '.$staff->name.'.',
+        );
 
         return back()->with('status', ucfirst($staff->role).' account updated.');
     }
@@ -141,7 +175,13 @@ class StaffController extends Controller
 
         $staff->update(['password' => $data['password']]);
         $module = $staff->role === 'doctor' ? 'doctors' : 'staff';
-        $auditTrail->record($request->user(), $staff->role.'_password_reset', $module, $staff);
+        $auditTrail->record(
+            $request->user(),
+            $staff->role.'_password_reset',
+            $module,
+            $staff,
+            'Reset the password for '.$staff->role.' account '.$staff->name.'; password value was not recorded.',
+        );
 
         return back()->with('status', ucfirst($staff->role).' password reset.');
     }

@@ -131,7 +131,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
             ->middleware('throttle:5,1')
             ->name('billing.paymongo.store');
         Route::post('/paymongo-bill-checkouts/{checkout}/reconcile', [PayMongoBillCheckoutController::class, 'reconcile'])
-            ->middleware('throttle:5,1')
+            ->middleware('throttle:paymongo-reconcile')
             ->name('billing.paymongo.reconcile');
         Route::post('/patients/{patient}/rfid', [RfidController::class, 'assign'])
             ->middleware('role:admin,staff')
@@ -192,7 +192,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         Route::post('/staff', [StaffController::class, 'store'])->name('staff.store');
     });
 
-    Route::prefix('admin')->name('admin.')->middleware('role:admin')->group(function (): void {
+    Route::prefix('admin')->name('admin.')->middleware('role:admin,doctor')->group(function (): void {
         Route::post('/services', [ServiceController::class, 'store'])->name('services.store');
         Route::put('/services/{service}', [ServiceController::class, 'update'])->name('services.update');
     });

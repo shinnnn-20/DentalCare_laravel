@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\Bill;
 use App\Models\DentalRecord;
 use App\Models\Patient;
+use App\Models\Payment;
 use App\Models\QueueEntry;
 use App\Models\Service;
 use App\Models\User;
@@ -78,10 +79,35 @@ class AppointmentCompletionTest extends TestCase
             'action' => 'appointment_completed',
             'record_id' => (string) $appointment->id,
         ]);
+        $completionDescription = AuditLog::query()
+            ->where('action', 'appointment_completed')
+            ->value('description');
+        $this->assertStringContainsString("patient {$appointment->patient->user->name}", $completionDescription);
+        $this->assertStringContainsString("bill {$bill->bill_number}", $completionDescription);
+        $this->assertStringContainsString('full payment of PHP 500.00', $completionDescription);
 
         app(AppointmentCompletionService::class)->sync($bill);
 
         $this->assertSame(1, AuditLog::query()->where('action', 'appointment_completed')->count());
+    }
+
+    public function test_completed_appointment_is_reopened_with_an_explained_outstanding_balance(): void
+    {
+        [$appointment, $bill] = $this->createBillableVisit('completed');
+        Payment::factory()->for($bill)->create([
+            'amount' => '200.00',
+            'applied_amount' => '200.00',
+        ]);
+
+        $this->assertTrue(app(AppointmentCompletionService::class)->sync($bill));
+
+        $this->assertSame('billed', $appointment->fresh()->status);
+        $description = AuditLog::query()
+            ->where('action', 'appointment_completion_reopened')
+            ->value('description');
+        $this->assertStringContainsString("patient {$appointment->patient->user->name}", $description);
+        $this->assertStringContainsString("bill {$bill->bill_number}", $description);
+        $this->assertStringContainsString('PHP 200.00 paid of PHP 500.00', $description);
     }
 
     #[DataProvider('terminalStatuses')]
@@ -155,6 +181,12 @@ class AppointmentCompletionTest extends TestCase
         $this->assertSame('completed', $appointment->fresh()->status);
         $this->assertSame(1, $bill->payments()->count());
         $this->assertSame('paid', $bill->fresh()->payment_status);
+        $paymentDescription = AuditLog::query()
+            ->where('action', 'payment_processed')
+            ->value('description');
+        $this->assertStringContainsString('PayMongo TEST MODE GCash', $paymentDescription);
+        $this->assertStringContainsString($bill->bill_number, $paymentDescription);
+        $this->assertStringContainsString($appointment->patient->patient_number, $paymentDescription);
     }
 
     /**

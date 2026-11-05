@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Branch;
 use App\Models\Patient;
 use App\Models\User;
 use App\Services\AuditTrail;
@@ -58,14 +59,22 @@ class AuthController extends Controller
 
         Auth::login($user);
         $request->session()->regenerate();
-        $auditTrail->record($request->user(), 'login', 'authentication');
+        $auditTrail->record(
+            $user,
+            'login',
+            'authentication',
+            null,
+            "{$user->name} ({$user->email}) signed in to the clinic portal.",
+        );
 
         return redirect()->intended(route('dashboard'));
     }
 
     public function register(): View
     {
-        return view('auth.register');
+        return view('auth.register', [
+            'branches' => Branch::query()->orderBy('name')->get(),
+        ]);
     }
 
     public function requestPasswordReset(): View
@@ -137,6 +146,7 @@ class AuthController extends Controller
             'name' => ['required', 'string', 'max:255', 'regex:/^[\pL\pM\s.\'-]+$/u'],
             'date_of_birth' => ['required', 'date', 'before:today'],
             'gender' => ['required', 'in:female,male,other,prefer_not_to_say'],
+            'branch_id' => ['required', 'integer', 'exists:branches,id'],
             'phone' => ['required', 'string', 'max:11', 'regex:/^[0-9]+$/'],
             'email' => ['required', 'email:rfc', 'max:255', 'unique:users,email'],
             'address' => ['required', 'string', 'max:2000'],
@@ -156,6 +166,7 @@ class AuthController extends Controller
 
             $patient = Patient::create([
                 'user_id' => $user->id,
+                'branch_id' => $data['branch_id'],
                 'patient_number' => 'P-PENDING-'.Str::uuid(),
                 'date_of_birth' => $data['date_of_birth'],
                 'gender' => $data['gender'],
@@ -167,7 +178,14 @@ class AuthController extends Controller
                 'patient_number' => sprintf('P-%s-%05d', now()->format('Y'), $patient->id),
             ]);
 
-            $auditTrail->record($user, 'patient_registered', 'patients', $patient);
+            $auditTrail->record(
+                $user,
+                'patient_registered',
+                'patients',
+                $patient,
+                "Patient {$user->name} registered account {$patient->patient_number} for branch "
+                    .(Branch::query()->whereKey($patient->branch_id)->value('name') ?? 'unknown branch').'.',
+            );
 
             return $user;
         });
@@ -202,7 +220,13 @@ class AuthController extends Controller
     public function logout(Request $request, AuditTrail $auditTrail): RedirectResponse
     {
         $user = $request->user();
-        $auditTrail->record($user, 'logout', 'authentication');
+        $auditTrail->record(
+            $user,
+            'logout',
+            'authentication',
+            null,
+            "{$user->name} ({$user->email}) signed out of the clinic portal.",
+        );
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();
