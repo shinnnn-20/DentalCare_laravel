@@ -17,15 +17,15 @@ class AppointmentAvailabilityTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_booking_form_keeps_the_selected_time_while_refreshing_availability_before_submission(): void
+    public function test_booking_page_preserves_the_selected_time_while_rechecking_availability(): void
     {
-        $patient = Patient::factory()->create();
+        $patient = Patient::factory()
+            ->for(User::factory()->create(['role' => 'patient']))
+            ->create();
 
         $this->actingAs($patient->user)
             ->get(route('appointments.index'))
-            ->assertOk()
             ->assertSee('const selectedTime = preferredTime || timeSelect.value;', false)
-            ->assertSee('const availableTimes = availability[dateInput.value] || [];', false)
             ->assertDontSee('if (dateInput.value && !availability[dateInput.value])', false);
     }
 

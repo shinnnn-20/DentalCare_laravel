@@ -41,7 +41,7 @@
                 <h2 class="mt-3 text-2xl font-bold">No upcoming appointments</h2>
                 <p class="mt-2 text-teal-100">Book a visit and the clinic will confirm your requested time.</p>
             @endif
-            <a href="{{ route('appointments.index') }}" class="mt-6 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-white px-4 py-2.5 text-center text-sm font-semibold text-teal-900 hover:bg-teal-50 sm:w-auto">Book or manage appointments</a>
+            <a href="{{ route('appointments.index') }}" class="btn-primary mt-6 w-full sm:w-auto">Book or manage appointments</a>
         </section>
         <section class="stat-card">
             <p class="text-sm font-medium text-slate-500">Outstanding bills</p>
