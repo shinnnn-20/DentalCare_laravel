@@ -59,6 +59,66 @@
             </article>
         @endforeach
         </div>
+        <section class="mt-8 rounded-2xl border border-slate-200 bg-white p-5" data-report-dentist-performance>
+            <div class="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold text-slate-900">Dentist performance</h2>
+                    <p class="mt-1 text-sm text-slate-500">Patients treated and revenue collected on {{ $dentistPerformanceDate->format('F j, Y') }} · {{ $dentistPerformanceBranchName }}.</p>
+                    <p class="mt-1 text-xs text-slate-500">Patients are counted from appointments on this date with a dental record; revenue is based on applied payments recorded on this date and attributed to the dentist on the appointment’s dental record. Revenue is clinic revenue, not provider compensation.</p>
+                </div>
+                <form method="GET" action="{{ route('admin.reports') }}" class="flex flex-wrap items-end gap-3 print-hidden">
+                    <input type="hidden" name="from" value="{{ $from }}">
+                    <input type="hidden" name="to" value="{{ $to }}">
+                    <input type="hidden" name="availability_period" value="{{ $availabilityPeriod }}">
+                    @if ($selectedBranchId !== null)
+                        <input type="hidden" name="branch_id" value="{{ $selectedBranchId }}">
+                    @endif
+                    <label class="form-label">Dentist performance date
+                        <input class="form-input" type="date" name="dentist_date" value="{{ $dentistPerformanceDate->toDateString() }}" required>
+                    </label>
+                    <label class="form-label">Dentist performance branch
+                        <select class="form-input min-w-48" name="dentist_branch_id">
+                            @unless ($hasAssignedBranch)
+                                <option value="all" @selected($dentistPerformanceBranchId === 'all')>All branches</option>
+                            @endunless
+                            @foreach ($branches as $branch)
+                                <option value="{{ $branch->id }}" @selected((string) $dentistPerformanceBranchId === (string) $branch->id)>{{ $branch->name }}</option>
+                            @endforeach
+                            @unless ($hasAssignedBranch)
+                                <option value="unassigned" @selected($dentistPerformanceBranchId === 'unassigned')>Unassigned appointments</option>
+                            @endunless
+                        </select>
+                    </label>
+                    <button class="btn-primary">Apply filters</button>
+                </form>
+            </div>
+            @if ($dentistPerformance === [])
+                <p class="mt-4 rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No dentist treatment or payment records found for this date and branch selection.</p>
+            @else
+                <div class="mt-4 overflow-x-auto">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Dentist</th>
+                                <th>Branch</th>
+                                <th>Patients treated</th>
+                                <th>Revenue collected on selected date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($dentistPerformance as $performance)
+                                <tr>
+                                    <td>{{ $performance['dentist_name'] }}</td>
+                                    <td>{{ $performance['branch_name'] }}</td>
+                                    <td>{{ $performance['patients_treated'] }}</td>
+                                    <td>₱{{ number_format($performance['revenue'], 2) }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @endif
+        </section>
         <dialog class="m-auto max-h-[90dvh] w-[min(72rem,calc(100vw-2rem))] overflow-hidden rounded-2xl p-0 shadow-2xl backdrop:bg-slate-950/50 print-hidden" data-report-details>
             <section class="flex max-h-[90dvh] flex-col bg-white">
                 <header class="flex items-start justify-between gap-4 border-b border-slate-200 p-5 sm:p-6">

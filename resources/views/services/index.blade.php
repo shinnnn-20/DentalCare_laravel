@@ -6,7 +6,7 @@
     <div class="mb-8">
         <p class="text-sm font-medium text-teal-700">Clinic setup</p>
         <h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Dental services</h1>
-        <p class="mt-2 max-w-2xl text-slate-500">Review clinic treatments and pricing. Reference fees are estimates; treatments requiring confirmation need a final staff-confirmed amount before billing.</p>
+        <p class="mt-2 max-w-2xl text-slate-500">Review clinic treatments and pricing. Descriptions and appointment durations are estimates and may vary by case; your dentist confirms the treatment plan and time needed. Reference fees are estimates; treatments requiring confirmation need a final staff-confirmed amount before billing.</p>
         @if (auth()->user()->hasRole('admin'))
             <form method="GET" action="{{ route('clinic.services.index') }}" class="mt-4 flex max-w-xl flex-wrap items-end gap-3">
                 <label class="form-label min-w-56 flex-1">Filter by branch
@@ -119,7 +119,7 @@
                                     'bg-slate-100 text-slate-600' => ! $service->is_active,
                                 ])>{{ $service->is_active ? 'Active' : 'Inactive' }}</span>
                             </div>
-                            <p class="text-sm text-slate-500">Appointment duration: <span class="font-semibold text-slate-700">{{ $service->duration_minutes }} minutes</span></p>
+                            <p class="text-sm text-slate-500">Estimated chair time per appointment: <span class="font-semibold text-slate-700">{{ $service->duration_minutes }} minutes</span></p>
                             @if ($service->requires_price_confirmation)
                                 <p class="text-xs font-medium text-amber-800">Final amount must be confirmed by staff when the bill is created.</p>
                             @endif

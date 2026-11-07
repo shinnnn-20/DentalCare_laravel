@@ -118,9 +118,9 @@
 
                     <article class="flex h-full flex-col overflow-hidden rounded-[1.75rem] border border-teal-100 bg-white shadow-md shadow-teal-950/5 transition duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-teal-950/10">
                         <div class="grid aspect-[1.5] grid-cols-3 grid-rows-2 gap-2 p-3 sm:gap-2.5 sm:p-4">
-                            <img src="{{ asset('images/landing/trece-treatment-room.jpg') }}" alt="Dental treatment room at the Trece Branch" class="col-span-2 row-span-2 h-full min-h-0 w-full rounded-2xl object-cover">
+                            <img src="{{ asset('images/landing/trece-reception.jpg') }}" alt="Reception area at the Trece Branch" class="col-span-2 row-span-2 h-full min-h-0 w-full rounded-2xl object-cover">
                             <img src="{{ asset('images/landing/trece-clinic-team.jpg') }}" alt="Clinic staff at the Trece Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
-                            <img src="{{ asset('images/landing/trece-reception.jpg') }}" alt="Reception area at the Trece Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
+                            <img src="{{ asset('images/landing/trece-treatment-room.jpg') }}" alt="Dental treatment room at the Trece Branch" class="h-full min-h-0 w-full rounded-2xl object-cover">
                         </div>
                         <div class="flex flex-1 flex-col gap-3 px-5 pb-6 sm:px-6">
                             <div class="flex-1">
