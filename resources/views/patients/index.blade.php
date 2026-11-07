@@ -18,17 +18,17 @@
     <section class="rounded-2xl border border-slate-200 bg-white">
         <div class="overflow-x-auto">
             <table class="data-table">
-                <thead><tr><th>Patient</th><th>Patient number</th><th>Contact</th><th>RFID</th><th>Registered</th><th></th></tr></thead>
+                <thead><tr><th>Patient</th><th>Patient number</th><th>Branch</th><th>Contact</th><th>RFID</th><th>Registered</th><th></th></tr></thead>
                 <tbody>
                 @forelse ($patients as $patient)
                     <tr>
                         <td data-label="Patient" class="font-semibold">{{ $patient->user->name }}<div class="text-xs font-normal text-slate-400">{{ $patient->user->email }}</div></td>
-                        <td data-label="Patient number">{{ $patient->patient_number }}</td><td data-label="Contact">{{ $patient->user->phone ?? '—' }}</td>
+                        <td data-label="Patient number">{{ $patient->patient_number }}</td><td data-label="Branch">{{ $patient->branch?->name ?? 'Not assigned' }}</td><td data-label="Contact">{{ $patient->user->phone ?? '—' }}</td>
                         <td data-label="RFID">{{ $patient->rfidCard?->uid ?? 'Not assigned' }}</td><td data-label="Registered">{{ $patient->created_at->format('M j, Y') }}</td>
                         <td data-label="Profile"><a class="font-semibold text-teal-800 hover:underline" href="{{ route('clinic.patients.show', $patient) }}">View profile →</a></td>
                     </tr>
                 @empty
-                    <tr><td colspan="6" class="py-10 text-center text-slate-500">No patients found.</td></tr>
+                    <tr><td colspan="7" class="py-10 text-center text-slate-500">No patients found.</td></tr>
                 @endforelse
                 </tbody>
             </table>

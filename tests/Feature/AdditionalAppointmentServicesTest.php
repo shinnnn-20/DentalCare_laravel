@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Appointment;
 use App\Models\Bill;
 use App\Models\BillItem;
+use App\Models\Branch;
 use App\Models\Patient;
 use App\Models\Payment;
 use App\Models\Receipt;
@@ -118,11 +119,13 @@ class AdditionalAppointmentServicesTest extends TestCase
             'applied_amount' => '400.00',
         ]);
         $addOn = Service::factory()->create(['name' => 'Additional X-ray', 'price' => 250.50]);
+        $dentistSelections = $this->dentistSelectionsFor($appointment, [$addOn->id]);
 
         $this->actingAs($staff)
             ->post(route('clinic.bills.additional-services.store', $bill), [
                 'service_ids' => [$addOn->id],
                 'confirm_add_ons' => '1',
+                'service_dentists' => $dentistSelections,
             ])
             ->assertRedirect(route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id);
 
@@ -140,6 +143,62 @@ class AdditionalAppointmentServicesTest extends TestCase
             'bill_id' => $bill->id,
             'applied_amount' => '400.00',
         ]);
+        $this->assertDatabaseHas('bill_items', [
+            'bill_id' => $bill->id,
+            'service_id' => $addOn->id,
+            'treating_dentist_id' => $dentistSelections[$addOn->id],
+            'is_add_on' => true,
+        ]);
+    }
+
+    public function test_add_on_service_requires_a_dentist_from_the_appointment_branch(): void
+    {
+        $staffBranch = Branch::factory()->create();
+        $otherBranch = Branch::factory()->create();
+        $staff = User::factory()->create([
+            'role' => 'staff',
+            'branch_id' => $staffBranch->id,
+        ]);
+        $patient = Patient::factory()->create();
+        $service = Service::factory()->create(['branch_id' => $staffBranch->id]);
+        $appointment = Appointment::factory()->for($patient)->for($staffBranch)->for($service)->create([
+            'status' => 'completed',
+        ]);
+        $bill = Bill::factory()->for($patient)->for($appointment)->create();
+        $otherBranchDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $otherBranch->id,
+        ]);
+
+        $this->actingAs($staff)
+            ->post(route('clinic.bills.additional-services.store', $bill), [
+                'service_ids' => [$service->id],
+                'service_dentists' => [$service->id => $otherBranchDentist->id],
+                'confirm_add_ons' => '1',
+            ])
+            ->assertSessionHasErrors('service_dentists.'.$service->id);
+
+        $this->assertSame(0, $bill->items()->count());
+    }
+
+    public function test_add_on_service_cannot_be_submitted_without_a_dentist_selection(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = Patient::factory()->create();
+        $service = Service::factory()->create();
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'completed',
+        ]);
+        $bill = Bill::factory()->for($patient)->for($appointment)->create();
+
+        $this->actingAs($staff)
+            ->post(route('clinic.bills.additional-services.store', $bill), [
+                'service_ids' => [$service->id],
+                'confirm_add_ons' => '1',
+            ])
+            ->assertSessionHasErrors('service_dentists.'.$service->id);
+
+        $this->assertSame(0, $bill->items()->count());
     }
 
     public function test_add_on_services_are_identified_in_staff_patient_and_receipt_views(): void
@@ -176,6 +235,7 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->post(route('clinic.bills.additional-services.store', $bill), [
                 'service_ids' => [$additionalService->id],
                 'confirm_add_ons' => '1',
+                'service_dentists' => $this->dentistSelectionsFor($appointment, [$additionalService->id]),
             ])
             ->assertRedirect(route('clinic.billing.index', ['bill' => $bill->id]).'#bill-'.$bill->id);
 
@@ -197,7 +257,7 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->assertSee('Add-on Services')
             ->assertSee('Add-on Service')
             ->assertSee('Additional X-ray')
-            ->assertSee('November 1, 2026 · 8:19 PM')
+            ->assertSee('Nov 1, 2026 8:19 PM')
             ->assertSee('250.50')
             ->assertSee('1,250.50')
             ->assertSee('400.00')
@@ -222,7 +282,7 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->assertSee('Add-on Services')
             ->assertSee('Add-on Service')
             ->assertSee('Additional X-ray')
-            ->assertSee('November 1, 2026 · 8:19 PM')
+            ->assertSee('Nov 1, 2026 8:19 PM')
             ->assertSee('250.50')
             ->assertSee('1,250.50')
             ->assertSee('400.00')
@@ -325,6 +385,7 @@ class AdditionalAppointmentServicesTest extends TestCase
             ->post(route('clinic.bills.additional-services.store', $bill), [
                 'service_ids' => [$service->id],
                 'confirm_add_ons' => '1',
+                'service_dentists' => $this->dentistSelectionsFor($appointment, [$service->id]),
                 'items' => [
                     $service->id => [
                         'final_price' => '1.00',
@@ -338,6 +399,7 @@ class AdditionalAppointmentServicesTest extends TestCase
         $this->post(route('clinic.bills.additional-services.store', $bill), [
             'service_ids' => [$service->id],
             'confirm_add_ons' => '1',
+            'service_dentists' => $this->dentistSelectionsFor($appointment, [$service->id]),
         ])->assertSessionHasErrors('service_ids');
 
         $this->assertSame(1, $bill->items()->count());
@@ -375,6 +437,7 @@ class AdditionalAppointmentServicesTest extends TestCase
         $this->post(route('clinic.bills.additional-services.store', $bill), [
             'service_ids' => [$service->id],
             'confirm_add_ons' => '1',
+            'service_dentists' => $this->dentistSelectionsFor($appointment, [$service->id]),
         ])->assertSessionHasErrors([
             'items.'.$service->id.'.final_price',
             'items.'.$service->id.'.confirm_final_price',
@@ -383,6 +446,7 @@ class AdditionalAppointmentServicesTest extends TestCase
         $this->post(route('clinic.bills.additional-services.store', $bill), [
             'service_ids' => [$service->id],
             'confirm_add_ons' => '1',
+            'service_dentists' => $this->dentistSelectionsFor($appointment, [$service->id]),
             'items' => [
                 $service->id => [
                     'final_price' => '650.25',
@@ -415,6 +479,7 @@ class AdditionalAppointmentServicesTest extends TestCase
         $this->actingAs($staff)
             ->post(route('clinic.bills.additional-services.store', $bill), [
                 'service_ids' => [$service->id],
+                'service_dentists' => $this->dentistSelectionsFor($appointment, [$service->id]),
             ])
             ->assertSessionHasErrors('confirm_add_ons');
 
@@ -454,5 +519,19 @@ class AdditionalAppointmentServicesTest extends TestCase
             'admin' => ['admin'],
             'staff' => ['staff'],
         ];
+    }
+
+    /**
+     * @param  array<int, int>  $serviceIds
+     * @return array<string, int>
+     */
+    private function dentistSelectionsFor(Appointment $appointment, array $serviceIds): array
+    {
+        $dentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+
+        return array_fill_keys(array_map('strval', $serviceIds), $dentist->id);
     }
 }

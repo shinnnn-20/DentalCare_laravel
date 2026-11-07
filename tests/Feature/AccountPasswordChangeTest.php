@@ -24,12 +24,13 @@ class AccountPasswordChangeTest extends TestCase
             'password' => 'Other-account-password!',
         ]);
 
-        $this->actingAs($user)
+        $response = $this->actingAs($user)
             ->get(route('account.password.edit'))
             ->assertOk()
             ->assertSee('Current password')
             ->assertSee('Confirm new password')
             ->assertSee(route('account.password.update'));
+        $this->assertSame(3, substr_count($response->getContent(), 'data-password-toggle'));
 
         $this->put(route('account.password.update'), [
             'current_password' => 'Initial-password!',

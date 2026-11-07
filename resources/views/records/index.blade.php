@@ -32,10 +32,8 @@
                                 <div class="mt-2 flex flex-wrap items-start justify-between gap-3 text-sm">
                                     <div>
                                         <p class="font-medium">{{ $record->appointment->treatmentNames() }}</p>
-                                        <p class="mt-1 text-slate-500">Performed {{ $record->appointment->starts_at->format('F j, Y') }} · {{ $record->appointment->duration_minutes }} minutes</p>
-                                        @if ($record->creator)
-                                            <p class="mt-1 text-slate-500">Provider: {{ $record->creator->name }}</p>
-                                        @endif
+                                        <p class="mt-1 text-slate-500">Appointment: {{ $record->appointment->starts_at->format('F j, Y') }} · {{ $record->appointment->duration_minutes }} minutes</p>
+                                        <p class="mt-1 text-slate-500">Treating dentist: {{ $record->treatingDentist?->name ?? 'Not recorded' }}</p>
                                         @if ($record->notes)
                                             <p class="mt-1 text-slate-500">Clinical details: {{ $record->notes }}</p>
                                         @endif

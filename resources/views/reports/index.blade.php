@@ -62,9 +62,9 @@
         <section class="mt-8 rounded-2xl border border-slate-200 bg-white p-5" data-report-dentist-performance>
             <div class="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                    <h2 class="text-lg font-semibold text-slate-900">Dentist performance</h2>
-                    <p class="mt-1 text-sm text-slate-500">Patients treated and revenue collected on {{ $dentistPerformanceDate->format('F j, Y') }} · {{ $dentistPerformanceBranchName }}.</p>
-                    <p class="mt-1 text-xs text-slate-500">Patients are counted from appointments on this date with a dental record; revenue is based on applied payments recorded on this date and attributed to the dentist on the appointment’s dental record. Revenue is clinic revenue, not provider compensation.</p>
+                    <h2 class="text-lg font-semibold text-slate-900">Dentist Performance Statistics</h2>
+                    <p class="mt-1 text-sm text-slate-500">Performance from {{ \Illuminate\Support\Carbon::parse($dentistPerformanceFrom)->format('F j, Y') }} through {{ \Illuminate\Support\Carbon::parse($dentistPerformanceTo)->format('F j, Y') }} · {{ $dentistPerformanceBranchName }}.</p>
+                    <p class="mt-1 text-xs text-slate-500">Treatment counts use recorded treatment dates; completed appointments use appointment dates; billed amounts use bill-item creation dates; collected amounts use actual payment dates. Service branch is the appointment branch. Outstanding balance is the current balance of bills created in the selected period. Revenue is clinic revenue, not provider compensation.</p>
                 </div>
                 <form method="GET" action="{{ route('admin.reports') }}" class="flex flex-wrap items-end gap-3 print-hidden">
                     <input type="hidden" name="from" value="{{ $from }}">
@@ -73,10 +73,13 @@
                     @if ($selectedBranchId !== null)
                         <input type="hidden" name="branch_id" value="{{ $selectedBranchId }}">
                     @endif
-                    <label class="form-label">Dentist performance date
-                        <input class="form-input" type="date" name="dentist_date" value="{{ $dentistPerformanceDate->toDateString() }}" required>
+                    <label class="form-label">From
+                        <input class="form-input" type="date" name="dentist_from" value="{{ $dentistPerformanceFrom }}" required>
                     </label>
-                    <label class="form-label">Dentist performance branch
+                    <label class="form-label">To
+                        <input class="form-input" type="date" name="dentist_to" value="{{ $dentistPerformanceTo }}" required>
+                    </label>
+                    <label class="form-label">Branch
                         <select class="form-input min-w-48" name="dentist_branch_id">
                             @unless ($hasAssignedBranch)
                                 <option value="all" @selected($dentistPerformanceBranchId === 'all')>All branches</option>
@@ -89,29 +92,99 @@
                             @endunless
                         </select>
                     </label>
+                    <label class="form-label">Dentist
+                        <select class="form-input min-w-48" name="dentist_id">
+                            <option value="" @selected($dentistSelection === null)>All dentists</option>
+                            @foreach ($reportDentists as $dentist)
+                                <option value="{{ $dentist->id }}" @selected((string) $dentistSelection === (string) $dentist->id)>{{ $dentist->name }}</option>
+                            @endforeach
+                            <option value="unassigned" @selected($dentistSelection === 'unassigned')>Not recorded</option>
+                        </select>
+                    </label>
                     <button class="btn-primary">Apply filters</button>
                 </form>
             </div>
+            <p class="mt-4 text-sm text-slate-600">Clinic payments collected in this period: <strong>₱{{ number_format($dentistClinicCollected, 2) }}</strong>
+                @if ($dentistUnattributedCollected > 0)
+                    · Not attributed to a dentist/service: <strong>₱{{ number_format($dentistUnattributedCollected, 2) }}</strong>
+                @endif
+            </p>
             @if ($dentistPerformance === [])
-                <p class="mt-4 rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No dentist treatment or payment records found for this date and branch selection.</p>
+                <p class="mt-4 rounded-xl bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">No dentist treatment, billing, or payment records found for this filter selection.</p>
             @else
                 <div class="mt-4 overflow-x-auto">
                     <table class="data-table">
                         <thead>
                             <tr>
                                 <th>Dentist</th>
-                                <th>Branch</th>
+                                <th>Assigned branch</th>
+                                <th>Service branch</th>
                                 <th>Patients treated</th>
-                                <th>Revenue collected on selected date</th>
+                                <th>Services performed</th>
+                                <th>Completed appointments</th>
+                                <th>Services billed</th>
+                                <th>Total billed</th>
+                                <th>Amount collected</th>
+                                <th>Outstanding balance</th>
                             </tr>
                         </thead>
                         <tbody>
                             @foreach ($dentistPerformance as $performance)
                                 <tr>
                                     <td>{{ $performance['dentist_name'] }}</td>
-                                    <td>{{ $performance['branch_name'] }}</td>
+                                    <td>{{ $performance['assigned_branch'] }}</td>
+                                    <td>{{ $performance['branch'] }}</td>
                                     <td>{{ $performance['patients_treated'] }}</td>
-                                    <td>₱{{ number_format($performance['revenue'], 2) }}</td>
+                                    <td>{{ $performance['services_performed'] }}</td>
+                                    <td>{{ $performance['completed_appointments'] }}</td>
+                                    <td>{{ $performance['services_billed'] }}</td>
+                                    <td>₱{{ number_format($performance['total_billed'], 2) }}</td>
+                                    <td>₱{{ number_format($performance['total_collected'], 2) }}</td>
+                                    <td>₱{{ number_format($performance['outstanding_balance'], 2) }}</td>
+                                </tr>
+                                <tr>
+                                    <td class="!p-0" colspan="10">
+                                        <details class="border-t border-slate-100 px-4 py-3">
+                                            <summary class="cursor-pointer text-sm font-semibold text-teal-800">View details for {{ $performance['dentist_name'] }} · {{ $performance['branch'] }}</summary>
+                                            @php($matchingDetails = collect($dentistPerformanceDetails)->filter(fn (array $detail): bool => $detail['dentist_id'] === $performance['dentist_id'] && $detail['branch_id'] === $performance['branch_id'])->values())
+                                            <div class="mt-3 grid gap-3">
+                                                @forelse ($matchingDetails as $detail)
+                                                    <article class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                                        <div class="flex flex-wrap items-start justify-between gap-3">
+                                                            <div class="min-w-0">
+                                                                <h3 class="font-semibold text-slate-900">{{ $detail['patient_name'] }}</h3>
+                                                                <p class="mt-1 text-sm text-slate-700">{{ $detail['service'] }}</p>
+                                                                <p class="mt-1 text-xs text-slate-500">{{ $detail['appointment_date'] }} · {{ $detail['branch'] }}</p>
+                                                            </div>
+                                                            <div class="flex flex-wrap items-center gap-3">
+                                                                <span class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200">{{ $detail['payment_status'] }}</span>
+                                                                <div class="text-right">
+                                                                    <p class="text-xs text-slate-500">Collected in period</p>
+                                                                    <p class="font-semibold text-slate-900">₱{{ number_format($detail['collected_in_period'], 2) }}</p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <details class="mt-3 border-t border-slate-200 pt-3">
+                                                            <summary class="cursor-pointer text-sm font-medium text-teal-800">View patient and billing details</summary>
+                                                            <dl class="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                                                                <div><dt class="text-xs text-slate-500">Patient ID</dt><dd class="mt-1 font-medium text-slate-800">{{ $detail['patient_id'] }}</dd></div>
+                                                                <div><dt class="text-xs text-slate-500">Bill number</dt><dd class="mt-1 font-medium text-slate-800">{{ $detail['bill_number'] }}</dd></div>
+                                                                <div><dt class="text-xs text-slate-500">Appointment date</dt><dd class="mt-1 font-medium text-slate-800">{{ $detail['appointment_date'] }}</dd></div>
+                                                                <div><dt class="text-xs text-slate-500">Branch</dt><dd class="mt-1 font-medium text-slate-800">{{ $detail['branch'] }}</dd></div>
+                                                                <div><dt class="text-xs text-slate-500">Service amount</dt><dd class="mt-1 font-medium text-slate-800">₱{{ number_format($detail['service_amount'], 2) }}</dd></div>
+                                                                <div><dt class="text-xs text-slate-500">Total amount paid</dt><dd class="mt-1 font-medium text-slate-800">₱{{ number_format($detail['amount_paid'], 2) }}</dd></div>
+                                                                <div><dt class="text-xs text-slate-500">Amount collected in period</dt><dd class="mt-1 font-medium text-slate-800">₱{{ number_format($detail['collected_in_period'], 2) }}</dd></div>
+                                                                <div><dt class="text-xs text-slate-500">Remaining balance</dt><dd class="mt-1 font-medium text-slate-800">₱{{ number_format($detail['remaining_balance'], 2) }}</dd></div>
+                                                                <div><dt class="text-xs text-slate-500">Payment status</dt><dd class="mt-1 font-medium text-slate-800">{{ $detail['payment_status'] }}</dd></div>
+                                                            </dl>
+                                                        </details>
+                                                    </article>
+                                                @empty
+                                                    <p class="rounded-xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">No matching service details for this period.</p>
+                                                @endforelse
+                                            </div>
+                                        </details>
+                                    </td>
                                 </tr>
                             @endforeach
                         </tbody>

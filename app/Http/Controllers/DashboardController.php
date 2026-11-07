@@ -48,7 +48,11 @@ class DashboardController extends Controller
                     ->whereDate('follow_up_date', '>=', today(config('clinic.timezone')))
                     ->orderBy('follow_up_date')
                     ->first(),
-                'recentRecords' => $patient->dentalRecords()->latest()->limit(5)->get(),
+                'recentRecords' => $patient->dentalRecords()
+                    ->latest()
+                    ->orderByDesc('id')
+                    ->limit(5)
+                    ->get(),
                 'unpaidBills' => $patient->appointments()->with('bill')
                     ->whereHas('bill', fn ($query) => $query->whereIn('payment_status', ['unpaid', 'partially_paid']))
                     ->get()->pluck('bill')->filter(),

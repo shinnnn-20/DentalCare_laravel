@@ -18,8 +18,10 @@ use App\Services\AppointmentCompletionService;
 use App\Services\AuditTrail;
 use App\Services\ClinicNotificationService;
 use App\Services\ClinicRevenueReport;
+use App\Services\DentistPerformanceReport;
 use App\Services\SmsNotifier;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\JsonResponse;
@@ -74,6 +76,7 @@ class ClinicWorkflowController extends Controller
 
         return view('records.create', [
             'appointment' => $appointment->load(['patient.user', 'service', 'services']),
+            'treatingDentists' => $this->activeDentistsForBranch($appointment->branch_id),
             'appointmentListFilters' => $this->appointmentListFilters($request),
         ]);
     }
@@ -92,7 +95,24 @@ class ClinicWorkflowController extends Controller
 
         abort_unless(in_array($appointment->status, ['in_consultation', 'completed'], true), 422);
 
+        if ($request->user()->hasRole('doctor')) {
+            $request->merge(['treating_dentist_id' => $request->user()->id]);
+        }
+
         $data = $request->validate([
+            'treating_dentist_id' => [
+                'required',
+                'integer',
+                Rule::exists('users', 'id')->where(function (QueryBuilder $query) use ($appointment): void {
+                    $query->where('role', 'doctor')
+                        ->where('is_active', true)
+                        ->when(
+                            $appointment->branch_id === null,
+                            fn (QueryBuilder $query): QueryBuilder => $query->whereNull('branch_id'),
+                            fn (QueryBuilder $query): QueryBuilder => $query->where('branch_id', $appointment->branch_id),
+                        );
+                }),
+            ],
             'diagnosis' => ['required', 'string', 'max:5000'],
             'treatment' => ['required', 'string', 'max:5000'],
             'prescription' => ['nullable', 'string', 'max:5000'],
@@ -105,6 +125,7 @@ class ClinicWorkflowController extends Controller
             'patient_id' => $appointment->patient_id,
             'appointment_id' => $appointment->id,
             'created_by' => $request->user()->id,
+            'treating_dentist_id' => $data['treating_dentist_id'],
         ]);
         $auditTrail->record(
             $request->user(),
@@ -175,10 +196,11 @@ class ClinicWorkflowController extends Controller
 
         abort_unless($appointment->status === 'in_consultation', 422);
         abort_if($appointment->dentalRecord()->doesntExist(), 422, 'A dental record is required before billing.');
-        $appointment->load(['patient.user', 'services', 'service']);
+        $appointment->load(['patient.user', 'services', 'service', 'dentalRecord.treatingDentist']);
 
         return view('billing.create', [
             'appointment' => $appointment,
+            'treatingDentists' => $this->activeDentistsForBranch($appointment->branch_id),
         ]);
     }
 
@@ -199,13 +221,22 @@ class ClinicWorkflowController extends Controller
 
         abort_unless($appointment->status === 'in_consultation', 422);
         abort_if($appointment->dentalRecord()->doesntExist(), 422, 'A dental record is required before billing.');
-        $appointment->load(['service', 'services', 'patient.user']);
+        $appointment->load(['service', 'services', 'patient.user', 'dentalRecord']);
 
         $services = $appointment->services->isNotEmpty()
             ? $appointment->services
             : ($appointment->service ? collect([$appointment->service]) : collect());
 
         abort_if($services->isEmpty(), 422, 'This appointment has no treatments associated with it.');
+
+        $serviceDentists = $request->input('service_dentists');
+        if (! is_array($serviceDentists)) {
+            $serviceDentists = array_fill_keys(
+                $services->pluck('id')->map(static fn (int $id): string => (string) $id)->all(),
+                $appointment->dentalRecord?->treating_dentist_id,
+            );
+            $request->merge(['service_dentists' => $serviceDentists]);
+        }
 
         $finalPrice = $request->input('final_price');
         if (is_string($finalPrice)
@@ -224,8 +255,16 @@ class ClinicWorkflowController extends Controller
             $request->merge(['items' => $itemsInput]);
         }
 
+        if (! $request->exists('discount_type')) {
+            $request->merge(['discount_type' => 'percentage']);
+        }
+
+        $discountValueRules = $request->input('discount_type') === 'percentage'
+            ? ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:100']
+            : ['prohibited'];
         $rules = [
-            'discount_value' => ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:100'],
+            'discount_type' => ['required', 'string', Rule::in(['none', 'senior', 'pwd', 'percentage'])],
+            'discount_value' => $discountValueRules,
         ];
 
         if ($services->count() === 1) {
@@ -246,7 +285,30 @@ class ClinicWorkflowController extends Controller
             }
         }
 
+        foreach ($services as $service) {
+            $rules["service_dentists.{$service->id}"] = [
+                'required',
+                'integer',
+                Rule::exists('users', 'id')->where(function (QueryBuilder $query) use ($appointment): void {
+                    $query->where('role', 'doctor')
+                        ->where('is_active', true)
+                        ->when(
+                            $appointment->branch_id === null,
+                            fn (QueryBuilder $query): QueryBuilder => $query->whereNull('branch_id'),
+                            fn (QueryBuilder $query): QueryBuilder => $query->where('branch_id', $appointment->branch_id),
+                        );
+                }),
+            ];
+        }
+
         $data = $request->validate($rules);
+
+        $discountType = $data['discount_type'];
+        $discountValue = match ($discountType) {
+            'none' => 0.0,
+            'senior', 'pwd' => 20.0,
+            default => (float) $data['discount_value'],
+        };
 
         $itemRows = [];
         $subtotalCents = 0;
@@ -265,6 +327,7 @@ class ClinicWorkflowController extends Controller
 
             $itemRows[] = [
                 'service_id' => $service->id,
+                'treating_dentist_id' => $data['service_dentists'][$service->id] ?? null,
                 'service_name' => $service->name,
                 'quantity' => 1,
                 'unit_price' => number_format($itemCents / 100, 2, '.', ''),
@@ -272,10 +335,10 @@ class ClinicWorkflowController extends Controller
             ];
         }
 
-        $discountBasisPoints = (int) round((float) $data['discount_value'] * 100);
+        $discountBasisPoints = (int) round($discountValue * 100);
         $discountCents = intdiv($subtotalCents * $discountBasisPoints + 5000, 10000);
 
-        $bill = DB::transaction(function () use ($appointment, $request, $subtotalCents, $discountBasisPoints, $discountCents, $itemRows, $appointmentCompletion): Bill {
+        $bill = DB::transaction(function () use ($appointment, $request, $subtotalCents, $discountType, $discountValue, $discountCents, $itemRows, $appointmentCompletion): Bill {
             $totalCents = $subtotalCents - $discountCents;
             $bill = Bill::create([
                 'bill_number' => 'B-PENDING-'.Str::uuid(),
@@ -283,8 +346,8 @@ class ClinicWorkflowController extends Controller
                 'appointment_id' => $appointment->id,
                 'created_by' => $request->user()->id,
                 'subtotal' => number_format($subtotalCents / 100, 2, '.', ''),
-                'discount_type' => 'percentage',
-                'discount_value' => number_format($discountBasisPoints / 100, 2, '.', ''),
+                'discount_type' => $discountType,
+                'discount_value' => number_format($discountValue, 2, '.', ''),
                 'discount' => number_format($discountCents / 100, 2, '.', ''),
                 'total' => number_format($totalCents / 100, 2, '.', ''),
                 'payment_status' => $totalCents === 0 ? 'paid' : 'unpaid',
@@ -345,6 +408,23 @@ class ClinicWorkflowController extends Controller
         return redirect()->to($billingUrl)->with('status', 'A bill already exists for this appointment.');
     }
 
+    /**
+     * @return EloquentCollection<int, User>
+     */
+    private function activeDentistsForBranch(?int $branchId): EloquentCollection
+    {
+        return User::query()
+            ->where('role', 'doctor')
+            ->where('is_active', true)
+            ->when(
+                $branchId === null,
+                fn (Builder $query): Builder => $query->whereNull('branch_id'),
+                fn (Builder $query): Builder => $query->where('branch_id', $branchId),
+            )
+            ->orderBy('name')
+            ->get(['id', 'name']);
+    }
+
     public function billing(Request $request): View
     {
         $user = $request->user();
@@ -352,11 +432,24 @@ class ClinicWorkflowController extends Controller
         abort_if($isBranchDoctor && $user->branch_id === null, 403);
         $filters = $request->validate([
             'bill' => ['nullable', 'integer'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
         ]);
+        $selectedDate = $filters['date'] ?? now(config('clinic.timezone'))->toDateString();
+        $dateStart = Carbon::parse($selectedDate, config('clinic.timezone'))
+            ->startOfDay()
+            ->utc()
+            ->format('Y-m-d H:i:s');
+        $dateEnd = Carbon::parse($selectedDate, config('clinic.timezone'))
+            ->addDay()
+            ->startOfDay()
+            ->utc()
+            ->format('Y-m-d H:i:s');
 
         return view('billing.index', [
             'bills' => Bill::query()
-                ->with(['creator', 'patient.user', 'appointment', 'items', 'payments.receipt', 'payMongoBillCheckouts'])
+                ->with(['creator', 'patient.user', 'appointment', 'items.treatingDentist', 'payments.receipt', 'payMongoBillCheckouts'])
+                ->where('bills.created_at', '>=', $dateStart)
+                ->where('bills.created_at', '<', $dateEnd)
                 ->when(
                     $user->hasRole('staff', 'doctor') && $user->branch_id !== null,
                     fn (Builder $query): Builder => $query->whereHas(
@@ -369,8 +462,9 @@ class ClinicWorkflowController extends Controller
                     fn ($query, $billId) => $query->orderByRaw('CASE WHEN bills.id = ? THEN 0 ELSE 1 END', [$billId]),
                 )
                 ->latest()
-                ->paginate(20),
+                ->get(),
             'selectedBillId' => isset($filters['bill']) ? (int) $filters['bill'] : null,
+            'selectedDate' => $selectedDate,
             'paymongoTestCheckoutAvailable' => $this->paymongoTestCheckoutAvailable(),
             'isReadOnly' => false,
         ]);
@@ -382,7 +476,7 @@ class ClinicWorkflowController extends Controller
 
         return view('records.index', [
             'records' => $patient->dentalRecords()
-                ->with(['creator', 'appointment.service', 'appointment.services'])
+                ->with(['treatingDentist', 'appointment.service', 'appointment.services'])
                 ->latest()
                 ->paginate(20),
         ]);
@@ -440,8 +534,11 @@ class ClinicWorkflowController extends Controller
         ]);
     }
 
-    public function reports(Request $request, ClinicRevenueReport $revenueReport): View
-    {
+    public function reports(
+        Request $request,
+        ClinicRevenueReport $revenueReport,
+        DentistPerformanceReport $dentistPerformanceReport,
+    ): View {
         $user = $request->user();
         abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
         $hasAssignedBranch = $user->role === 'doctor' && $user->branch_id !== null;
@@ -449,10 +546,16 @@ class ClinicWorkflowController extends Controller
             ->when($hasAssignedBranch, fn (Builder $query): Builder => $query->whereKey($user->branch_id))
             ->orderBy('name')
             ->get();
+        $reportDentists = User::query()
+            ->where('role', 'doctor')
+            ->orderBy('name')
+            ->get();
         $filters = $request->validate([
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
             'dentist_date' => ['nullable', 'date'],
+            'dentist_from' => ['nullable', 'date'],
+            'dentist_to' => ['nullable', 'date', 'after_or_equal:dentist_from'],
             'branch_id' => ['nullable', Rule::in([
                 ...($hasAssignedBranch ? [] : ['unassigned']),
                 ...$branches->map(fn (object $branch): string => (string) $branch->id)->all(),
@@ -460,6 +563,10 @@ class ClinicWorkflowController extends Controller
             'dentist_branch_id' => ['nullable', Rule::in([
                 ...($hasAssignedBranch ? [] : ['all', 'unassigned']),
                 ...$branches->map(fn (object $branch): string => (string) $branch->id)->all(),
+            ])],
+            'dentist_id' => ['nullable', Rule::in([
+                'unassigned',
+                ...$reportDentists->map(static fn (User $dentist): string => (string) $dentist->id)->all(),
             ])],
             'availability_period' => ['nullable', Rule::in(['month', 'year'])],
         ]);
@@ -640,8 +747,12 @@ class ClinicWorkflowController extends Controller
             }
         }
 
-        $dentistPerformanceDay = Carbon::parse(
-            $filters['dentist_date'] ?? today(config('clinic.timezone'))->toDateString(),
+        $dentistPerformanceFrom = Carbon::parse(
+            $filters['dentist_from'] ?? $filters['dentist_date'] ?? $from,
+            config('clinic.timezone'),
+        );
+        $dentistPerformanceTo = Carbon::parse(
+            $filters['dentist_to'] ?? $filters['dentist_date'] ?? $to,
             config('clinic.timezone'),
         );
         $dentistPerformanceBranchSelection = $hasAssignedBranch
@@ -655,82 +766,11 @@ class ClinicWorkflowController extends Controller
             'unassigned' => 'Unassigned appointments',
             default => $branches->firstWhere('id', (int) $dentistPerformanceBranchId)?->name ?? 'All branches',
         };
-        [$dentistPerformanceStartUtc, $dentistPerformanceEndUtc] = $revenueReport->utcRange(
-            $dentistPerformanceDay->copy()->startOfDay(),
-            $dentistPerformanceDay->copy()->endOfDay(),
-        );
-        $applyDentistBranchFilter = static function (QueryBuilder $query) use ($dentistPerformanceBranchId): QueryBuilder {
-            if ($dentistPerformanceBranchId === 'unassigned') {
-                return $query->whereNull('appointments.branch_id');
-            }
-
-            if ($dentistPerformanceBranchId !== null) {
-                return $query->where('appointments.branch_id', $dentistPerformanceBranchId);
-            }
-
-            return $query;
-        };
-        $patientsTreatedOnDate = $applyDentistBranchFilter(
-            DB::table('dental_records as records')
-                ->join('appointments', 'appointments.id', '=', 'records.appointment_id')
-                ->join('users as dentists', 'dentists.id', '=', 'records.created_by')
-                ->leftJoin('branches', 'branches.id', '=', 'appointments.branch_id')
-                ->where('dentists.role', 'doctor')
-                ->whereBetween('appointments.starts_at', [
-                    $dentistPerformanceDay->copy()->startOfDay(),
-                    $dentistPerformanceDay->copy()->endOfDay(),
-                ]),
-        )
-            ->selectRaw(
-                'dentists.id as dentist_id, dentists.name as dentist_name, appointments.branch_id, COALESCE(branches.name, ?) as branch_name, COUNT(DISTINCT records.patient_id) as patients_treated',
-                ['Unassigned'],
-            )
-            ->groupBy('dentists.id', 'dentists.name', 'appointments.branch_id', 'branches.name')
-            ->get();
-        $dentistPerformanceByBranch = [];
-
-        foreach ($patientsTreatedOnDate as $row) {
-            $key = $row->dentist_id.':'.($row->branch_id ?? 'unassigned');
-            $dentistPerformanceByBranch[$key] = [
-                'dentist_name' => $row->dentist_name,
-                'branch_name' => $row->branch_name,
-                'patients_treated' => (int) $row->patients_treated,
-                'revenue' => 0.0,
-            ];
-        }
-
-        $revenueCollectedOnDate = $applyDentistBranchFilter(
-            DB::table('payments')
-                ->join('bills', 'bills.id', '=', 'payments.bill_id')
-                ->join('appointments', 'appointments.id', '=', 'bills.appointment_id')
-                ->join('dental_records as records', 'records.appointment_id', '=', 'appointments.id')
-                ->join('users as dentists', 'dentists.id', '=', 'records.created_by')
-                ->leftJoin('branches', 'branches.id', '=', 'appointments.branch_id')
-                ->where('dentists.role', 'doctor')
-                ->whereBetween('payments.created_at', [$dentistPerformanceStartUtc, $dentistPerformanceEndUtc]),
-        )
-            ->selectRaw(
-                'dentists.id as dentist_id, dentists.name as dentist_name, appointments.branch_id, COALESCE(branches.name, ?) as branch_name, SUM(payments.applied_amount) as revenue',
-                ['Unassigned'],
-            )
-            ->groupBy('dentists.id', 'dentists.name', 'appointments.branch_id', 'branches.name')
-            ->get();
-
-        foreach ($revenueCollectedOnDate as $row) {
-            $key = $row->dentist_id.':'.($row->branch_id ?? 'unassigned');
-            $dentistPerformanceByBranch[$key] ??= [
-                'dentist_name' => $row->dentist_name,
-                'branch_name' => $row->branch_name,
-                'patients_treated' => 0,
-                'revenue' => 0.0,
-            ];
-            $dentistPerformanceByBranch[$key]['revenue'] = (float) $row->revenue;
-        }
-        $dentistPerformance = array_values($dentistPerformanceByBranch);
-        usort(
-            $dentistPerformance,
-            static fn (array $first, array $second): int => [$first['branch_name'], $first['dentist_name']]
-                <=> [$second['branch_name'], $second['dentist_name']],
+        $dentistPerformance = $dentistPerformanceReport->generate(
+            $dentistPerformanceFrom,
+            $dentistPerformanceTo,
+            $dentistPerformanceBranchId,
+            $filters['dentist_id'] ?? null,
         );
 
         return view('reports.index', [
@@ -756,10 +796,16 @@ class ClinicWorkflowController extends Controller
             'selectedBranchId' => $branchId,
             'selectedBranchName' => $selectedBranchName,
             'hasAssignedBranch' => $hasAssignedBranch,
-            'dentistPerformance' => $dentistPerformance,
-            'dentistPerformanceDate' => $dentistPerformanceDay,
+            'dentistPerformance' => $dentistPerformance['performance'],
+            'reportDentists' => $reportDentists,
+            'dentistPerformanceDetails' => $dentistPerformance['details'],
+            'dentistClinicCollected' => $dentistPerformance['clinic_collected'],
+            'dentistUnattributedCollected' => $dentistPerformance['unattributed_collected'],
+            'dentistPerformanceFrom' => $dentistPerformanceFrom->toDateString(),
+            'dentistPerformanceTo' => $dentistPerformanceTo->toDateString(),
             'dentistPerformanceBranchId' => $dentistPerformanceBranchSelection,
             'dentistPerformanceBranchName' => $dentistPerformanceBranchName,
+            'dentistSelection' => $filters['dentist_id'] ?? null,
         ]);
     }
 
@@ -848,6 +894,7 @@ class ClinicWorkflowController extends Controller
                     'bill.appointment.service',
                     'bill.appointment.services',
                     'bill.appointment.dentalRecord.creator',
+                    'bill.appointment.dentalRecord.treatingDentist',
                 ])
                 ->orderBy('created_at')
                 ->orderBy('id');
@@ -873,7 +920,9 @@ class ClinicWorkflowController extends Controller
                     'patient_id' => $payment->bill->patient->patient_number,
                     'bill_number' => $payment->bill->bill_number,
                     'branch' => $payment->bill->appointment?->branch?->name ?? 'Unassigned',
-                    'dentist' => $payment->bill->appointment?->dentalRecord?->creator?->name ?? 'Not recorded',
+                    'dentist' => $payment->bill->appointment?->dentalRecord?->treatingDentist?->name
+                        ?? $payment->bill->appointment?->dentalRecord?->creator?->name
+                        ?? 'Not recorded',
                     'services' => $payment->bill->items->isNotEmpty()
                         ? $payment->bill->items->pluck('service_name')->unique()->join(', ')
                         : ($payment->bill->appointment?->treatmentNames() ?? 'Dental services'),

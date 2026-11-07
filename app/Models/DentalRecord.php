@@ -13,8 +13,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property int $patient_id
  * @property int|null $appointment_id
  * @property int|null $created_by
+ * @property int|null $treating_dentist_id
  */
-#[Fillable(['patient_id', 'appointment_id', 'created_by', 'diagnosis', 'treatment', 'prescription', 'notes', 'follow_up_date'])]
+#[Fillable(['patient_id', 'appointment_id', 'created_by', 'treating_dentist_id', 'diagnosis', 'treatment', 'prescription', 'notes', 'follow_up_date'])]
 class DentalRecord extends Model
 {
     /** @use HasFactory<DentalRecordFactory> */
@@ -38,5 +39,10 @@ class DentalRecord extends Model
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function treatingDentist(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'treating_dentist_id');
     }
 }

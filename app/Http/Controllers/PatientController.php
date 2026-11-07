@@ -44,7 +44,7 @@ class PatientController extends Controller
         abort_if($isBranchDoctor && $user->branch_id === null, 403);
 
         $patients = Patient::query()
-            ->with('user')
+            ->with(['user', 'branch'])
             ->when(
                 $isBranchDoctor,
                 fn ($query) => $query->forBranch((int) $user->branch_id),
@@ -108,7 +108,7 @@ class PatientController extends Controller
                         fn ($appointmentQuery) => $appointmentQuery->where('branch_id', $user->branch_id),
                     ),
                 )
-                ->with(['creator', 'appointment.service', 'appointment.services'])
+                ->with(['treatingDentist', 'appointment.service', 'appointment.services'])
                 ->latest(),
         ]);
 

@@ -19,6 +19,7 @@
             </div>
             <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}" data-confirm="Create this bill with the displayed services, final amounts, and discount?" data-confirm-title="Confirm bill" data-confirm-accept="Create bill">
                 @csrf
+                @include('billing._dentist-select', ['service' => $services->first()])
                 @if ($appointment->service->requires_price_confirmation)
                     <div class="grid gap-2">
                         <p class="text-sm leading-6 text-amber-800">This chart fee is an unverified reference only. Confirm the final amount with the clinic's approved fee schedule and dentist's assessment; the reference amount is not automatically billed.</p>
@@ -31,9 +32,19 @@
                         </label>
                     </div>
                 @endif
-                <label class="form-label">Discount (%)
-                    <input class="form-input max-w-xs" type="number" name="discount_value" min="0" max="100" step="0.01" value="{{ old('discount_value', '0') }}" data-discount-percentage required>
-                </label>
+                <div class="grid gap-3">
+                    <label class="form-label">Discount type
+                        <select class="form-input max-w-xs" name="discount_type" data-discount-type>
+                            <option value="none" @selected(old('discount_type', 'none') === 'none')>None</option>
+                            <option value="senior" @selected(old('discount_type') === 'senior')>Senior (20%)</option>
+                            <option value="pwd" @selected(old('discount_type') === 'pwd')>PWD (20%)</option>
+                            <option value="percentage" @selected(old('discount_type', 'none') === 'percentage')>Custom percentage</option>
+                        </select>
+                    </label>
+                    <label class="form-label">Discount (%)
+                        <input class="form-input max-w-xs" type="number" name="discount_value" min="0" max="100" step="0.01" value="{{ old('discount_value', '0') }}" data-discount-percentage required @disabled(old('discount_type', 'none') !== 'percentage')>
+                    </label>
+                </div>
                 <div class="grid gap-1 rounded-xl border border-teal-100 bg-teal-50/60 p-4 text-sm">
                     <p>Calculated discount amount: <strong data-discount-amount>{{ config('clinic.currency_symbol') }}0.00</strong></p>
                     <p>Final bill total: <strong data-discounted-total>{{ config('clinic.currency_symbol') }}0.00</strong></p>
@@ -65,6 +76,9 @@
 
             <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}" data-confirm="Create this bill with the displayed services, final amounts, and discount?" data-confirm-title="Confirm bill" data-confirm-accept="Create bill">
                 @csrf
+                @foreach ($services as $service)
+                    @include('billing._dentist-select', ['service' => $service])
+                @endforeach
                 @php($hasVariable = $services->contains('requires_price_confirmation', true))
                 @if ($hasVariable)
                     <div class="grid gap-4 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
@@ -85,9 +99,19 @@
                         @endforeach
                     </div>
                 @endif
-                <label class="form-label">Discount (%)
-                    <input class="form-input max-w-xs" type="number" name="discount_value" min="0" max="100" step="0.01" value="{{ old('discount_value', '0') }}" data-discount-percentage required>
-                </label>
+                <div class="grid gap-3">
+                    <label class="form-label">Discount type
+                        <select class="form-input max-w-xs" name="discount_type" data-discount-type>
+                            <option value="none" @selected(old('discount_type', 'none') === 'none')>None</option>
+                            <option value="senior" @selected(old('discount_type') === 'senior')>Senior (20%)</option>
+                            <option value="pwd" @selected(old('discount_type') === 'pwd')>PWD (20%)</option>
+                            <option value="percentage" @selected(old('discount_type', 'none') === 'percentage')>Custom percentage</option>
+                        </select>
+                    </label>
+                    <label class="form-label">Discount (%)
+                        <input class="form-input max-w-xs" type="number" name="discount_value" min="0" max="100" step="0.01" value="{{ old('discount_value', '0') }}" data-discount-percentage required @disabled(old('discount_type', 'none') !== 'percentage')>
+                    </label>
+                </div>
                 <div class="grid gap-1 rounded-xl border border-teal-100 bg-teal-50/60 p-4 text-sm">
                     <p>Calculated discount amount: <strong data-discount-amount>{{ config('clinic.currency_symbol') }}0.00</strong></p>
                     <p>Final bill total: <strong data-discounted-total>{{ config('clinic.currency_symbol') }}0.00</strong></p>

@@ -185,6 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.querySelectorAll('[data-bill-discount]').forEach((form) => {
+        const discountType = form.querySelector('[data-discount-type]');
         const percentageInput = form.querySelector('[data-discount-percentage]');
         const discountAmount = form.querySelector('[data-discount-amount]');
         const discountedTotal = form.querySelector('[data-discounted-total]');
@@ -194,7 +195,36 @@ document.addEventListener('DOMContentLoaded', () => {
             maximumFractionDigits: 2,
         }).format(cents / 100);
 
+        const syncDiscountPreset = () => {
+            if (!discountType || !percentageInput) {
+                return;
+            }
+
+            if (discountType.value === 'senior' || discountType.value === 'pwd') {
+                percentageInput.value = '20';
+                percentageInput.disabled = true;
+                return;
+            }
+
+            if (discountType.value === 'none') {
+                percentageInput.value = '0';
+                percentageInput.disabled = true;
+                return;
+            }
+
+            percentageInput.disabled = false;
+            if (!percentageInput.value.trim()) {
+                percentageInput.value = '0';
+            }
+        };
+
+        discountType?.addEventListener('change', () => {
+            syncDiscountPreset();
+            updateBillTotals();
+        });
+
         const updateBillTotals = () => {
+            syncDiscountPreset();
             const percentage = Number.parseFloat(percentageInput.value);
             if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100) {
                 discountAmount.textContent = 'Enter 0–100%';
@@ -253,6 +283,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const pricePanel = form.querySelector(`[data-addon-price-panel="${service.dataset.serviceId}"]`);
                 const priceInput = form.querySelector(`[data-addon-final-price="${service.dataset.serviceId}"]`);
                 const priceConfirmation = form.querySelector(`[data-addon-price-confirmation="${service.dataset.serviceId}"]`);
+                const dentistInput = form.querySelector(`[data-addon-dentist="${service.dataset.serviceId}"]`);
                 service.closest('[data-addon-card]')?.classList.toggle(
                     'border-teal-500',
                     service.checked,
@@ -269,6 +300,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (priceConfirmation) {
                     priceConfirmation.required = service.checked;
                     priceConfirmation.disabled = !service.checked;
+                }
+                if (dentistInput) {
+                    dentistInput.required = service.checked;
+                    dentistInput.disabled = !service.checked;
                 }
             });
 

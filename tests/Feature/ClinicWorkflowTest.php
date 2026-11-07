@@ -144,6 +144,7 @@ class ClinicWorkflowTest extends TestCase
         $this->actingAs($staff)
             ->get(route('clinic.patients.create'))
             ->assertOk()
+            ->assertSee('data-password-toggle', false)
             ->assertSee('minlength="8"', false)
             ->assertSee('At least 8 characters, one capital letter, and one special character.');
 
@@ -199,6 +200,22 @@ class ClinicWorkflowTest extends TestCase
         $this->actingAs($patientUser)
             ->get(route('clinic.patients.index'))
             ->assertForbidden();
+    }
+
+    public function test_patient_directory_shows_each_patients_assigned_branch(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $branch = Branch::factory()->create(['name' => 'Patient Directory Test Branch']);
+        $patient = $this->createPatient('P-2026-00153');
+        $patient->update(['branch_id' => $branch->id]);
+        $unassignedPatient = $this->createPatient('P-2026-00154');
+
+        $this->actingAs($admin)
+            ->get(route('clinic.patients.index'))
+            ->assertSee($patient->user->name)
+            ->assertSee('Patient Directory Test Branch')
+            ->assertSee($unassignedPatient->user->name)
+            ->assertSee('Not assigned');
     }
 
     #[DataProvider('clinicStaffRoles')]
@@ -310,6 +327,10 @@ class ClinicWorkflowTest extends TestCase
         $appointment = Appointment::factory()->for($patient)->create([
             'status' => 'in_consultation',
         ]);
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
         $otherAppointment = Appointment::factory()->for($patient)->create([
             'status' => 'in_consultation',
         ]);
@@ -333,6 +354,7 @@ class ClinicWorkflowTest extends TestCase
         $this->post(route('clinic.records.store', ['appointment' => $appointment->id, ...$filters]), [
             'diagnosis' => 'Routine examination',
             'treatment' => 'Dental cleaning',
+            'treating_dentist_id' => $treatingDentist->id,
             'prescription' => 'Use fluoride rinse',
             'follow_up_date' => $followUpDate,
         ])
@@ -343,6 +365,7 @@ class ClinicWorkflowTest extends TestCase
             'appointment_id' => $appointment->id,
             'patient_id' => $patient->id,
             'diagnosis' => 'Routine examination',
+            'treating_dentist_id' => $treatingDentist->id,
             'follow_up_date' => $followUpDate.' 00:00:00',
         ]);
         $this->assertDatabaseCount('bills', 0);
@@ -409,11 +432,21 @@ class ClinicWorkflowTest extends TestCase
 
         $this->get(route('clinic.records.create', $appointment))
             ->assertSee('Save dental record')
+            ->assertSee('Treating dentist')
+            ->assertSee('aria-label="Treating dentist" disabled', false)
+            ->assertSee('>'.$doctor->name.'</option>', false)
+            ->assertDontSee('name="treating_dentist_id"', false)
             ->assertSee('Follow-up date');
 
+        $otherDentist = User::factory()->create([
+            'name' => 'Another Branch Dentist',
+            'role' => 'doctor',
+            'branch_id' => $branch->id,
+        ]);
         $this->post(route('clinic.records.store', $appointment), [
             'diagnosis' => 'Follow-up diagnosis',
             'treatment' => 'Follow-up treatment',
+            'treating_dentist_id' => $otherDentist->id,
             'follow_up_date' => '2026-11-17',
         ])
             ->assertRedirect(route('clinic.appointment-records', [
@@ -426,6 +459,7 @@ class ClinicWorkflowTest extends TestCase
         $this->assertDatabaseHas('dental_records', [
             'appointment_id' => $appointment->id,
             'created_by' => $doctor->id,
+            'treating_dentist_id' => $doctor->id,
             'follow_up_date' => '2026-11-17 00:00:00',
         ]);
 
@@ -529,6 +563,12 @@ class ClinicWorkflowTest extends TestCase
         $admin = User::factory()->create(['role' => 'admin']);
         $patient = $this->createPatient('P-2026-00015');
         $patientUser = $patient->user;
+
+        $response = $this->actingAs($admin)
+            ->get(route('clinic.patients.show', $patient))
+            ->assertOk()
+            ->assertSee('Reset patient password');
+        $this->assertSame(2, substr_count($response->getContent(), 'data-password-toggle'));
 
         $response = $this->actingAs($admin)->put(route('clinic.patients.password', $patient), [
             'password' => 'New-secure-password-456!',
@@ -1307,12 +1347,12 @@ class ClinicWorkflowTest extends TestCase
         $this->actingAs($actor)
             ->get(route('clinic.billing.index'))
             ->assertOk()
-            ->assertSee('Page to print')
-            ->assertSee('name="page"', false)
-            ->assertSee('🖨 Print Selected Page')
+            ->assertSee('Filter by date')
+            ->assertSee('name="date"', false)
+            ->assertSee('value="2026-10-21"', false)
+            ->assertSee('🖨 Print Bills for Date')
             ->assertSee('🖨 Print Bill')
             ->assertSee('data-billing-print-report', false)
-            ->assertSee('data-print-all-page', false)
             ->assertSee('Generated October 21, 2026 12:00 PM')
             ->assertSee('class="billing-print-logo"', false)
             ->assertSee('class="bill-print-logo"', false)
@@ -1348,26 +1388,52 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('Doc Brigs Dental Care');
     }
 
-    public function test_billing_print_page_selector_loads_the_selected_page(): void
+    public function test_billing_date_filter_shows_all_bills_created_on_the_selected_clinic_date(): void
     {
         $this->travelTo(Carbon::parse('2026-10-21 12:00:00', config('clinic.timezone')));
         $actor = User::factory()->create(['role' => 'admin']);
 
         foreach (range(1, 21) as $number) {
-            $createdAt = Carbon::parse('2026-10-01 09:00:00', config('clinic.timezone'))->addMinutes($number);
-            Bill::factory()->create([
-                'bill_number' => sprintf('B-2026-PAGE%02d', $number),
-                'created_at' => $createdAt,
-                'updated_at' => $createdAt,
+            $bill = Bill::factory()->create([
+                'bill_number' => sprintf('B-2026-DATE%02d', $number),
+            ]);
+            DB::table('bills')->where('id', $bill->id)->update([
+                'created_at' => '2026-10-02 12:00:00',
             ]);
         }
 
+        $billOnPreviousClinicDate = Bill::factory()->create(['bill_number' => 'B-2026-DATEPREV']);
+        DB::table('bills')->where('id', $billOnPreviousClinicDate->id)->update([
+            'created_at' => '2026-10-01 15:59:59',
+        ]);
+        $billAtClinicDateStart = Bill::factory()->create(['bill_number' => 'B-2026-DATESTART']);
+        DB::table('bills')->where('id', $billAtClinicDateStart->id)->update([
+            'created_at' => '2026-10-01 16:00:00',
+        ]);
+        $billAtClinicDateEnd = Bill::factory()->create(['bill_number' => 'B-2026-DATEEND']);
+        DB::table('bills')->where('id', $billAtClinicDateEnd->id)->update([
+            'created_at' => '2026-10-02 15:59:59',
+        ]);
+
         $this->actingAs($actor)
-            ->get(route('clinic.billing.index', ['page' => 2]))
+            ->get(route('clinic.billing.index', ['date' => '2026-10-02']))
             ->assertOk()
-            ->assertSee('<option value="2" selected>Page 2</option>', false)
-            ->assertSee('B-2026-PAGE01')
-            ->assertDontSee('B-2026-PAGE21');
+            ->assertSee('value="2026-10-02"', false)
+            ->assertSee('B-2026-DATE01')
+            ->assertSee('B-2026-DATE21')
+            ->assertSee('B-2026-DATESTART')
+            ->assertSee('B-2026-DATEEND')
+            ->assertDontSee('B-2026-DATEPREV')
+            ->assertDontSee('name="page"', false);
+    }
+
+    public function test_billing_date_filter_rejects_an_invalid_date(): void
+    {
+        $actor = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAs($actor)
+            ->get(route('clinic.billing.index', ['date' => 'not-a-date']))
+            ->assertSessionHasErrors('date');
     }
 
     public function test_variable_fee_is_confirmed_by_staff_before_it_is_added_to_a_bill(): void
@@ -1385,7 +1451,13 @@ class ClinicWorkflowTest extends TestCase
         $appointment = Appointment::factory()->for($patient)->for($service)->create([
             'status' => 'in_consultation',
         ]);
-        DentalRecord::factory()->for($patient)->for($appointment)->create();
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'treating_dentist_id' => $treatingDentist->id,
+        ]);
 
         $this->actingAs($staff)
             ->get(route('clinic.bills.create', $appointment))
@@ -1450,7 +1522,13 @@ class ClinicWorkflowTest extends TestCase
         $appointment = Appointment::factory()->for($patient)->for($service)->create([
             'status' => 'in_consultation',
         ]);
-        DentalRecord::factory()->for($patient)->for($appointment)->create();
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'treating_dentist_id' => $treatingDentist->id,
+        ]);
         $historicalBill = Bill::factory()->for($patient)->create([
             'subtotal' => '1000.00',
             'discount' => '125.00',
@@ -1520,6 +1598,39 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('₱1,200.00');
     }
 
+    public function test_none_discount_disables_percentage_input_and_creates_bill_without_a_percentage_value(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00152');
+        $service = Service::factory()->create(['price' => 12000]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'in_consultation',
+        ]);
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'treating_dentist_id' => $treatingDentist->id,
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('clinic.bills.create', $appointment))
+            ->assertSee('data-discount-percentage required disabled', false);
+
+        $this->post(route('clinic.bills.store', $appointment), [
+            'discount_type' => 'none',
+        ])->assertRedirectToRoute('clinic.billing.index');
+
+        $this->assertDatabaseHas('bills', [
+            'appointment_id' => $appointment->id,
+            'discount_type' => 'none',
+            'discount_value' => '0.00',
+            'discount' => '0.00',
+            'total' => '12000.00',
+        ]);
+    }
+
     public function test_new_bill_rejects_discount_percentages_outside_zero_to_one_hundred(): void
     {
         $staff = User::factory()->create(['role' => 'staff']);
@@ -1528,7 +1639,13 @@ class ClinicWorkflowTest extends TestCase
         $appointment = Appointment::factory()->for($patient)->for($service)->create([
             'status' => 'in_consultation',
         ]);
-        DentalRecord::factory()->for($patient)->for($appointment)->create();
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'treating_dentist_id' => $treatingDentist->id,
+        ]);
 
         foreach (['-0.01', '100.01'] as $percentage) {
             $this->actingAs($staff)
@@ -1549,7 +1666,13 @@ class ClinicWorkflowTest extends TestCase
         $appointment = Appointment::factory()->for($patient)->for($service)->create([
             'status' => 'in_consultation',
         ]);
-        DentalRecord::factory()->for($patient)->for($appointment)->create();
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'treating_dentist_id' => $treatingDentist->id,
+        ]);
 
         $this->actingAs($staff)
             ->post(route('clinic.bills.store', $appointment), [
@@ -1663,11 +1786,16 @@ class ClinicWorkflowTest extends TestCase
 
         $this->post(route('appointments.transition', [$appointment, 'call']))->assertSessionHasNoErrors();
         $this->post(route('appointments.transition', [$appointment, 'consult']))->assertSessionHasNoErrors();
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
 
         $this->actingAs($admin)
             ->post(route('clinic.records.store', $appointment), [
                 'diagnosis' => 'Routine examination',
                 'treatment' => 'Cleaning completed',
+                'treating_dentist_id' => $treatingDentist->id,
             ])
             ->assertRedirect(route('clinic.appointment-records', [
                 'date' => $appointment->starts_at->toDateString(),
@@ -1762,7 +1890,7 @@ class ClinicWorkflowTest extends TestCase
             ->assertOk()
             ->assertSee('Payment Receipt Preview')
             ->assertSee('Payment date')
-            ->assertSee('Payment method:')
+            ->assertSee('Payment method / provider')
             ->assertSee('Amount applied')
             ->assertSee($receipt->receipt_number)
             ->assertDontSee('data-print-receipt', false)
@@ -2235,11 +2363,16 @@ class ClinicWorkflowTest extends TestCase
             'service_id' => $service->id,
             'status' => 'in_consultation',
         ]);
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
 
         $this->actingAs($admin)
             ->post(route('clinic.records.store', $appointment), [
                 'diagnosis' => 'Routine check',
                 'treatment' => 'No charge',
+                'treating_dentist_id' => $treatingDentist->id,
             ])
             ->assertRedirect(route('clinic.appointment-records', [
                 'date' => $appointment->starts_at->toDateString(),

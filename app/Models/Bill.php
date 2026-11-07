@@ -39,8 +39,16 @@ class Bill extends Model
 
     public function discountLabel(): string
     {
-        if ($this->discount_type !== 'percentage') {
-            return 'Discount';
+        if ($this->discount_type === 'senior') {
+            return 'Senior Discount (20%)';
+        }
+
+        if ($this->discount_type === 'pwd') {
+            return 'PWD Discount (20%)';
+        }
+
+        if ($this->discount_type === 'none') {
+            return 'Discount (0%)';
         }
 
         $percentage = rtrim(rtrim(number_format((float) $this->discount_value, 2, '.', ''), '0'), '.');

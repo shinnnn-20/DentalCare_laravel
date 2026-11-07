@@ -101,7 +101,7 @@ class StaffAccountBranchAccessTest extends TestCase
             'branch_id' => $this->branch('trece')->id,
         ]);
 
-        $this->actingAs($admin)
+        $response = $this->actingAs($admin)
             ->get(route('admin.staff.index'))
             ->assertOk()
             ->assertSee('Create clinic account')
@@ -109,6 +109,7 @@ class StaffAccountBranchAccessTest extends TestCase
             ->assertSee('General Trias Staff')
             ->assertSee('Dasmarinas Doctor')
             ->assertSee('Trece Staff');
+        $this->assertSame(8, substr_count($response->getContent(), 'data-password-toggle'));
 
         $this->patch(route('admin.staff.toggle', $thirdBranchAccount))
             ->assertSessionHas('status', 'Staff account status updated.');

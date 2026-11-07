@@ -33,8 +33,29 @@
                 <div class="form-label">Assigned branch<p class="form-input bg-slate-50">{{ auth()->user()->branch?->name }}</p></div>
             @endif
             <div class="grid items-start gap-4 sm:grid-cols-2 lg:col-span-2">
-                <label class="form-label">Temporary password<input class="form-input" type="password" name="password" minlength="8" required><span class="text-xs font-normal text-slate-500">At least 8 characters, one capital letter, and one special character.</span></label>
-                <label class="form-label">Confirm password<input class="form-input" type="password" name="password_confirmation" required></label>
+                <label class="form-label">Temporary password
+                    <div class="password-input-wrap">
+                        <input class="form-input" type="password" name="password" minlength="8" required>
+                        <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <span class="text-xs font-normal text-slate-500">At least 8 characters, one capital letter, and one special character.</span>
+                </label>
+                <label class="form-label">Confirm password
+                    <div class="password-input-wrap">
+                        <input class="form-input" type="password" name="password_confirmation" required>
+                        <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                    </div>
+                </label>
             </div>
             <button class="btn-primary self-start lg:mt-6">Create account</button>
         </form>
@@ -87,8 +108,24 @@
                                 <form method="POST" action="{{ route('admin.staff.password', $staff) }}" class="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" data-confirm="Reset {{ $staff->name }}'s password? Share the new password securely." data-confirm-title="Confirm password reset" data-confirm-accept="Reset password">
                                     @csrf
                                     @method('PUT')
-                                    <input type="password" class="form-input min-w-0" name="password" placeholder="New password" minlength="8" title="At least 8 characters, one capital letter, and one special character" required>
-                                    <input type="password" class="form-input min-w-0" name="password_confirmation" placeholder="Confirm" required>
+                                    <div class="password-input-wrap">
+                                        <input type="password" class="form-input min-w-0" name="password" placeholder="New password" minlength="8" title="At least 8 characters, one capital letter, and one special character" required>
+                                        <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+                                                <circle cx="12" cy="12" r="3"/>
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <div class="password-input-wrap">
+                                        <input type="password" class="form-input min-w-0" name="password_confirmation" placeholder="Confirm" required>
+                                        <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+                                                <circle cx="12" cy="12" r="3"/>
+                                            </svg>
+                                        </button>
+                                    </div>
                                     <button class="btn-small min-h-11">Reset</button>
                                 </form>
                             @else

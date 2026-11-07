@@ -187,19 +187,54 @@ class DatabaseSeeder extends Seeder
             'Teeth Whitening' => ['description' => 'Professional whitening of natural teeth after the dentist checks that treatment is suitable.', 'duration_minutes' => 90],
         ];
 
+        $fixedPriceServices = [
+            'Consultation' => 500,
+            'Dental Certificate' => 500,
+            'Oral Prophylaxis — Severe' => 3000,
+            'Sealants' => 1000,
+            'Composite Filling (Per Surface)' => 1000,
+            'Direct Composite' => 6000,
+            'Indirect Composite' => 10000,
+            'Indirect Porcelain' => 18000,
+            'Acrylic / Plastic Crown' => 5000,
+            'SS Crown' => 4000,
+            'Space Maintainer (Uni)' => 3500,
+            'In-Office Teeth Whitening (U/L)' => 25000,
+            'At-Home Teeth Whitening (U/L)' => 15000,
+            'Direct Composite Veneers' => 6000,
+            'Indirect Composite Veneers' => 10000,
+            'Root Canal — Mono-Rooted Tooth (Anterior)' => 9000,
+            'Post and Core Build-Up (Fiber Post)' => 5000,
+            "Hawley's Retainer (U/L)" => 12000,
+            'Essix Retainers' => 14000,
+            'Temporary Anchorage Device' => 8000,
+            'Bracket Removal' => 10000,
+            'One Piece Uni' => 12000,
+            'New Acrylic Upper/Lower Denture' => 16000,
+            'New Acrylic Full Set' => 20000,
+            'Flexible Uni' => 15000,
+            'Chairside Reline' => 1500,
+            'Night Guard (Per Arch)' => 7000,
+        ];
+
         foreach ($referenceServices as [$name, $category, $priceDisplay]) {
             $service = Service::query()
                 ->whereNull('branch_id')
                 ->firstOrNew(['name' => $name]);
 
             if (! $service->exists) {
-                $service->price = 0;
+                $service->price = $fixedPriceServices[$name] ?? 0;
                 $service->is_active = true;
             }
 
             $service->category = $category;
 
-            if ($service->price_display === null) {
+            $fixedPrice = $fixedPriceServices[$name] ?? null;
+            if ($fixedPrice !== null) {
+                $service->price = $fixedPrice;
+                $service->requires_price_confirmation = false;
+                $service->price_display = null;
+            } elseif ($service->price_display === null) {
                 $service->price_display = $priceDisplay;
                 $service->requires_price_confirmation = true;
             }

@@ -11,17 +11,13 @@
                     <input type="hidden" name="bill" value="{{ $selectedBillId }}">
                 @endif
                 <div>
-                    <label class="mb-1 block text-sm font-medium text-slate-700" for="billing-page">Page to print</label>
-                    <select class="form-input min-h-11" id="billing-page" name="page">
-                        @foreach (range(1, $bills->lastPage()) as $page)
-                            <option value="{{ $page }}" @selected($page === $bills->currentPage())>Page {{ $page }}</option>
-                        @endforeach
-                    </select>
+                    <label class="mb-1 block text-sm font-medium text-slate-700" for="billing-date">Filter by date</label>
+                    <input class="form-input min-h-11" id="billing-date" name="date" type="date" value="{{ $selectedDate }}" required>
                 </div>
-                <button class="btn-small min-h-11" type="submit">Go</button>
+                <button class="btn-small min-h-11" type="submit">Filter</button>
             </form>
             <button class="btn-secondary gap-2" type="button" data-print-all-bills>
-                🖨 Print Selected Page
+                🖨 Print Bills for Date
             </button>
         </div>
     </div>
@@ -47,6 +43,7 @@
                             @foreach ($originalItems as $item)
                                 <p class="text-sm font-medium">{{ $item->service_name }}</p>
                                 <p class="mb-2 text-xs text-slate-500">{{ $item->quantity }} × ₱{{ number_format((float) $item->unit_price, 2) }} = ₱{{ number_format((float) $item->subtotal, 2) }}</p>
+                                <p class="mb-2 text-xs text-slate-500">Dentist: {{ $item->treatingDentist?->name ?? 'Not recorded' }}</p>
                             @endforeach
                         @endif
                         @if ($addOnItems->isNotEmpty())
@@ -54,6 +51,7 @@
                             @foreach ($addOnItems as $item)
                                 <p class="text-sm font-medium"><span class="mr-1 inline-flex rounded-full bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-800">Add-on Service</span>{{ $item->service_name }}</p>
                                 <p class="mb-2 text-xs text-slate-500">{{ $item->quantity }} × ₱{{ number_format((float) $item->unit_price, 2) }} = ₱{{ number_format((float) $item->subtotal, 2) }}</p>
+                                <p class="mb-2 text-xs text-slate-500">Dentist: {{ $item->treatingDentist?->name ?? 'Not recorded' }}</p>
                             @endforeach
                         @endif
                         @if ($bill->items->isEmpty())
@@ -139,15 +137,14 @@
                         @endif
                     </td>
                 </tr>
-            @empty<tr><td colspan="{{ $isReadOnly ? 8 : 9 }}" class="py-10 text-center text-slate-500">No bills yet. Create a bill from an appointment during consultation.</td></tr>@endforelse
+            @empty<tr><td colspan="{{ $isReadOnly ? 8 : 9 }}" class="py-10 text-center text-slate-500">No bills were created on this date. Choose another date or create a bill from an appointment during consultation.</td></tr>@endforelse
         </tbody></table></div>
-        <div class="p-4">{{ $bills->links() }}</div>
     </section>
     @unless ($isReadOnly)
         <p class="mt-4 text-sm text-slate-500">Manual cash, GCash, and other entries do not charge an external payment. PayMongo test checkouts are available to staff and admins in local test mode only; confirmed test payments are included in bill balances and reports, and are labeled TEST MODE because no real money is transferred.</p>
     @endunless
 
-    <section class="billing-print-report" data-billing-print-report data-print-all-page aria-label="Printable billing report">
+    <section class="billing-print-report" data-billing-print-report aria-label="Printable billing report">
         <header class="billing-print-header">
             <img class="billing-print-logo" src="{{ asset('images/landing/doc-brigs-logo.png') }}" alt="Doc Brigs Dental Care logo">
             <div class="billing-print-brand">
@@ -222,7 +219,7 @@
             </tbody>
         </table>
         <footer class="billing-print-footer">
-            {{ $bills->firstItem() ?? 0 }}–{{ $bills->lastItem() ?? 0 }} of {{ $bills->total() }} displayed billing records
+            {{ $bills->count() }} displayed billing records
         </footer>
     </section>
 

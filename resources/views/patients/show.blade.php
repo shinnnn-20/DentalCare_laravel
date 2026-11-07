@@ -55,8 +55,28 @@
                         @csrf @method('PUT')
                         <h3 class="font-semibold">Reset patient password</h3>
                         <p class="text-sm text-slate-500">Choose a password with at least 8 characters, one capital letter, and one special character, then share it with the patient securely.</p>
-                        <label class="form-label">New password<input class="form-input" type="password" name="password" minlength="8" autocomplete="new-password" required></label>
-                        <label class="form-label">Confirm new password<input class="form-input" type="password" name="password_confirmation" autocomplete="new-password" required></label>
+                        <label class="form-label">New password
+                            <div class="password-input-wrap">
+                                <input class="form-input" type="password" name="password" minlength="8" autocomplete="new-password" required>
+                                <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </label>
+                        <label class="form-label">Confirm new password
+                            <div class="password-input-wrap">
+                                <input class="form-input" type="password" name="password_confirmation" autocomplete="new-password" required>
+                                <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </label>
                         <button class="btn-secondary justify-self-start">Reset password</button>
                     </form>
                 @endif
@@ -108,7 +128,7 @@
                             @if ($record->appointment?->patient_id === $record->patient_id && ($record->appointment?->service || $record->appointment?->services?->isNotEmpty()))
                                 <p class="mt-2 text-sm font-medium">{{ $record->appointment->treatmentNames() }}</p>
                                 <p class="mt-1 text-xs text-slate-500">Visit: {{ $record->appointment->starts_at->format('M j, Y · g:i A') }} · {{ $record->appointment->duration_minutes }} minutes</p>
-                                @if ($record->creator)<p class="mt-1 text-xs text-slate-500">Provider: {{ $record->creator->name }}</p>@endif
+                                <p class="mt-1 text-xs text-slate-500">Treating dentist: {{ $record->treatingDentist?->name ?? 'Not recorded' }}</p>
                                 @if ($record->notes)<p class="mt-1 text-sm text-slate-600">Clinical notes: {{ $record->notes }}</p>@endif
                             @else
                                 <p class="mt-2 text-sm text-slate-500">No services recorded for this dental record.</p>

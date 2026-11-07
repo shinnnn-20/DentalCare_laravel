@@ -10,6 +10,20 @@
         <p class="mt-2 text-sm text-slate-500">Appointment treatment(s): {{ $appointment->treatmentNames() }}</p>
         <form method="POST" action="{{ route('clinic.records.store', ['appointment' => $appointment->id, ...$appointmentListFilters]) }}" class="mt-6 grid gap-5" data-confirm="Save this dental record to the patient's clinical history?" data-confirm-title="Save dental record" data-confirm-accept="Save record">
             @csrf
+            <label class="form-label">Treating dentist
+                @if (auth()->user()->hasRole('doctor'))
+                    <select class="form-input" aria-label="Treating dentist" disabled>
+                        <option selected>{{ auth()->user()->name }}</option>
+                    </select>
+                @else
+                    <select class="form-input" name="treating_dentist_id" required>
+                        <option value="">Choose a dentist</option>
+                        @foreach ($treatingDentists as $dentist)
+                            <option value="{{ $dentist->id }}" @selected((string) old('treating_dentist_id') === (string) $dentist->id)>{{ $dentist->name }}</option>
+                        @endforeach
+                    </select>
+                @endif
+            </label>
             <label class="form-label">Diagnosis<textarea class="form-input" name="diagnosis" rows="3" required>{{ old('diagnosis') }}</textarea></label>
             <label class="form-label">Treatment<textarea class="form-input" name="treatment" rows="3" required>{{ old('treatment') }}</textarea></label>
             <label class="form-label">Prescription <span class="font-normal text-slate-400">(optional)</span><textarea class="form-input" name="prescription" rows="2">{{ old('prescription') }}</textarea></label>

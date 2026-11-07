@@ -5,13 +5,16 @@ namespace App\Http\Controllers;
 use App\Models\Appointment;
 use App\Models\Bill;
 use App\Models\Service;
+use App\Models\User;
 use App\Services\AppointmentCompletionService;
 use App\Services\AuditTrail;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
@@ -20,7 +23,12 @@ class AdditionalServiceController extends Controller
     public function create(Request $request, Bill $bill): View
     {
         $this->authorizeBillBranch($request, $bill);
-        $bill->load(['appointment', 'patient.user', 'items', 'payments']);
+        $bill->load([
+            'appointment.dentalRecord.treatingDentist',
+            'patient.user',
+            'items.treatingDentist',
+            'payments',
+        ]);
         $appointment = $bill->appointment;
         abort_unless($appointment !== null && $this->isEligible($appointment, $bill), 422);
         $canAddServices = ! $this->isPaid($bill);
@@ -29,6 +37,16 @@ class AdditionalServiceController extends Controller
             'bill' => $bill,
             'canAddServices' => $canAddServices,
             'services' => $canAddServices ? $this->availableServices($bill) : collect(),
+            'treatingDentists' => User::query()
+                ->where('role', 'doctor')
+                ->where('is_active', true)
+                ->when(
+                    $appointment->branch_id === null,
+                    fn ($query) => $query->whereNull('branch_id'),
+                    fn ($query) => $query->where('branch_id', $appointment->branch_id),
+                )
+                ->orderBy('name')
+                ->get(['id', 'name']),
         ]);
     }
 
@@ -39,6 +57,13 @@ class AdditionalServiceController extends Controller
         AuditTrail $auditTrail,
     ): RedirectResponse {
         $this->authorizeBillBranch($request, $bill);
+        $appointment = $bill->appointment()->firstOrFail();
+        abort_unless($this->isEligible($appointment, $bill), 422);
+        if ($this->isPaid($bill)) {
+            throw ValidationException::withMessages([
+                'service_ids' => 'Additional services cannot be added to a paid bill.',
+            ]);
+        }
 
         $serviceIdsInput = $request->input('service_ids');
 
@@ -66,7 +91,16 @@ class AdditionalServiceController extends Controller
         ]);
 
         $serviceIds = array_map('intval', $data['service_ids']);
-        $appointment = $bill->appointment()->firstOrFail();
+        $appointment->load('dentalRecord');
+        $serviceDentists = $request->input('service_dentists');
+        $serviceDentists = array_replace(
+            array_fill_keys(
+                array_map('strval', $serviceIds),
+                $appointment->dentalRecord?->treating_dentist_id,
+            ),
+            is_array($serviceDentists) ? $serviceDentists : [],
+        );
+        $request->merge(['service_dentists' => $serviceDentists]);
         $services = Service::query()
             ->when(
                 $appointment->branch_id !== null,
@@ -84,9 +118,35 @@ class AdditionalServiceController extends Controller
             ]);
         }
 
+        $hasDuplicateServiceId = $bill->items()
+            ->whereIn('service_id', $serviceIds)
+            ->exists();
+        $hasMatchingServiceSnapshot = $bill->items()
+            ->whereIn('service_name', $services->pluck('name'))
+            ->exists();
+
+        if ($hasDuplicateServiceId || $hasMatchingServiceSnapshot) {
+            throw ValidationException::withMessages([
+                'service_ids' => 'A service can only be added to this bill once.',
+            ]);
+        }
+
         $rules = [];
 
         foreach ($services as $service) {
+            $rules["service_dentists.{$service->id}"] = [
+                'required',
+                'integer',
+                Rule::exists('users', 'id')->where(function (QueryBuilder $query) use ($appointment): void {
+                    $query->where('role', 'doctor')
+                        ->where('is_active', true)
+                        ->when(
+                            $appointment->branch_id === null,
+                            fn (QueryBuilder $query): QueryBuilder => $query->whereNull('branch_id'),
+                            fn (QueryBuilder $query): QueryBuilder => $query->where('branch_id', $appointment->branch_id),
+                        );
+                }),
+            ];
             if ($service->requires_price_confirmation) {
                 $rules["items.{$service->id}.final_price"] = ['required', 'numeric', 'decimal:0,2', 'min:0', 'max:1000000'];
                 $rules["items.{$service->id}.confirm_final_price"] = ['accepted'];
@@ -148,6 +208,7 @@ class AdditionalServiceController extends Controller
 
                 $itemRows[] = [
                     'service_id' => $service->id,
+                    'treating_dentist_id' => $data['service_dentists'][$serviceId] ?? null,
                     'service_name' => $service->name,
                     'is_add_on' => true,
                     'quantity' => 1,

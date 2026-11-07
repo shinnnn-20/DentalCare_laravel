@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /** @property int $id */
-#[Fillable(['bill_id', 'service_id', 'service_name', 'is_add_on', 'quantity', 'unit_price', 'subtotal'])]
+#[Fillable(['bill_id', 'service_id', 'treating_dentist_id', 'service_name', 'is_add_on', 'quantity', 'unit_price', 'subtotal'])]
 class BillItem extends Model
 {
     /** @use HasFactory<BillItemFactory> */
@@ -32,5 +32,10 @@ class BillItem extends Model
     public function service(): BelongsTo
     {
         return $this->belongsTo(Service::class);
+    }
+
+    public function treatingDentist(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'treating_dentist_id');
     }
 }

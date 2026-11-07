@@ -151,10 +151,24 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
         $this->actingAs($staff)->post(route('appointments.transition', [$appointment, 'consult']))->assertSessionHasNoErrors();
         $appointment->refresh();
         $this->assertSame('in_consultation', $appointment->status);
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+        $secondTreatingDentist = User::factory()->create([
+            'name' => 'Dr. Second Dentist',
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+        $otherBranchDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => Branch::factory()->create()->id,
+        ]);
 
         $this->actingAs($admin)->post(route('clinic.records.store', $appointment), [
             'diagnosis' => 'Multiple dental needs',
             'treatment' => 'Consultation, prophylaxis, composite restoration',
+            'treating_dentist_id' => $treatingDentist->id,
         ])->assertSessionHasNoErrors();
         $this->actingAs($staff)
             ->get(route('clinic.patients.show', $patient))
@@ -171,11 +185,31 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
             ->assertSee('Dental Filling')
             ->assertSee('₱500.00')
             ->assertSee('₱1,000.00')
-            ->assertSee('₱1,800.00');
+            ->assertSee('₱1,800.00')
+            ->assertSee('Dentist Who Performed the Treatment')
+            ->assertSee('name="service_dentists['.$cleaning->id.']"', false);
+
+        $this->actingAs($staff)
+            ->from(route('clinic.bills.create', $appointment))
+            ->post(route('clinic.bills.store', $appointment), [
+                'discount_value' => '3.03',
+                'service_dentists' => [
+                    $consultation->id => $treatingDentist->id,
+                    $cleaning->id => $otherBranchDentist->id,
+                    $filling->id => $treatingDentist->id,
+                ],
+            ])
+            ->assertSessionHasErrors('service_dentists.'.$cleaning->id);
+        $this->assertDatabaseCount('bills', 0);
 
         // Staff creates one bill containing all applicable treatments with a percentage discount
         $this->actingAs($staff)->post(route('clinic.bills.store', $appointment), [
             'discount_value' => '3.03',
+            'service_dentists' => [
+                $consultation->id => $treatingDentist->id,
+                $cleaning->id => $secondTreatingDentist->id,
+                $filling->id => $treatingDentist->id,
+            ],
         ])->assertRedirectToRoute('clinic.billing.index');
 
         $bill = Bill::query()->sole();
@@ -213,6 +247,17 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
             'unit_price' => '1800.00',
             'subtotal' => '1800.00',
         ]);
+        $this->assertDatabaseHas('bill_items', [
+            'bill_id' => $bill->id,
+            'service_id' => $cleaning->id,
+            'treating_dentist_id' => $secondTreatingDentist->id,
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('clinic.billing.index'))
+            ->assertOk()
+            ->assertSee($treatingDentist->name)
+            ->assertSee($secondTreatingDentist->name);
 
         // Confirm patient portal displays the three bill items
         $this->actingAs($patientUser)

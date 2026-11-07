@@ -33,8 +33,29 @@
             <label class="form-label">Email<input class="form-input" type="email" name="email" value="{{ old('email') }}" maxlength="255" required></label>
             <label class="form-label sm:col-span-2">Address<textarea class="form-input" name="address" rows="2" required>{{ old('address') }}</textarea></label>
             <label class="form-label sm:col-span-2">Emergency contact<input class="form-input" name="emergency_contact"></label>
-            <label class="form-label self-start">Patient-set password<input class="form-input h-11" type="password" name="password" minlength="8" required><span class="text-xs font-normal text-slate-500">At least 8 characters, one capital letter, and one special character.</span></label>
-            <label class="form-label self-start">Confirm password<input class="form-input h-11" type="password" name="password_confirmation" required></label>
+            <label class="form-label self-start">Patient-set password
+                <div class="password-input-wrap">
+                    <input class="form-input h-11" type="password" name="password" minlength="8" required>
+                    <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                    </button>
+                </div>
+                <span class="text-xs font-normal text-slate-500">At least 8 characters, one capital letter, and one special character.</span>
+            </label>
+            <label class="form-label self-start">Confirm password
+                <div class="password-input-wrap">
+                    <input class="form-input h-11" type="password" name="password_confirmation" required>
+                    <button type="button" class="password-toggle" data-password-toggle aria-label="Show password" aria-pressed="false">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                    </button>
+                </div>
+            </label>
             <button class="btn-primary sm:col-span-2 sm:justify-self-start">Create patient account</button>
         </form>
     </section>

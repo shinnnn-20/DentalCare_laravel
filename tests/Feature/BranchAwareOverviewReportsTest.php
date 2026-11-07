@@ -176,7 +176,8 @@ class BranchAwareOverviewReportsTest extends TestCase
             ]);
             DentalRecord::factory()->for($patient)->for($appointment)->create([
                 'created_by' => $northDentist->id,
-                'created_at' => '2026-11-02 04:00:00',
+                'treating_dentist_id' => $northDentist->id,
+                'created_at' => '2026-11-03 04:00:00',
             ]);
 
             return Bill::factory()->for($patient)->for($appointment)->create();
@@ -187,7 +188,8 @@ class BranchAwareOverviewReportsTest extends TestCase
         ]);
         DentalRecord::factory()->for($southPatient)->for($southAppointment)->create([
             'created_by' => $southDentist->id,
-            'created_at' => '2026-11-02 04:00:00',
+            'treating_dentist_id' => $southDentist->id,
+            'created_at' => '2026-11-03 04:00:00',
         ]);
         $southBill = Bill::factory()->for($southPatient)->for($southAppointment)->create();
         $previousDayPatient = Patient::factory()->for(User::factory()->state(['role' => 'patient']))->create();
@@ -197,6 +199,7 @@ class BranchAwareOverviewReportsTest extends TestCase
         ]);
         DentalRecord::factory()->for($previousDayPatient)->for($previousDayAppointment)->create([
             'created_by' => $northDentist->id,
+            'treating_dentist_id' => $northDentist->id,
             'created_at' => '2026-11-02 04:00:00',
         ]);
 
@@ -221,30 +224,28 @@ class BranchAwareOverviewReportsTest extends TestCase
         $allBranchesResponse = $this->actingAs($admin)->get(route('admin.reports', [
             'from' => '2026-11-01',
             'to' => '2026-11-30',
+            'dentist_from' => '2026-11-03',
+            'dentist_to' => '2026-11-03',
         ]));
 
         $allBranchesResponse->assertOk()
-            ->assertSee('Dentist performance')
+            ->assertSee('Dentist Performance Statistics')
             ->assertSee('Patients treated')
-            ->assertSee('Revenue collected on selected date')
-            ->assertSee('name="dentist_date"', false)
+            ->assertSee('Amount collected')
+            ->assertSee('name="dentist_from"', false)
             ->assertSee('value="2026-11-03"', false);
-        $this->assertSame([
-            [
-                'dentist_name' => 'Dr. North',
-                'branch_name' => 'North Branch',
-                'patients_treated' => 2,
-                'revenue' => 250.0,
-            ],
-            [
-                'dentist_name' => 'Dr. South',
-                'branch_name' => 'South Branch',
-                'patients_treated' => 1,
-                'revenue' => 475.0,
-            ],
-        ], $allBranchesResponse->viewData('dentistPerformance'));
+        $allBranchesPerformance = $allBranchesResponse->viewData('dentistPerformance');
+        $this->assertCount(2, $allBranchesPerformance);
+        $this->assertSame('Dr. North', $allBranchesPerformance[0]['dentist_name']);
+        $this->assertSame('North Branch', $allBranchesPerformance[0]['branch']);
+        $this->assertSame(2, $allBranchesPerformance[0]['patients_treated']);
+        $this->assertSame(2, $allBranchesPerformance[0]['services_performed']);
+        $this->assertSame(2, $allBranchesPerformance[0]['completed_appointments']);
+        $this->assertSame(250.0, (float) $allBranchesPerformance[0]['revenue']);
+        $this->assertSame('Dr. South', $allBranchesPerformance[1]['dentist_name']);
+        $this->assertSame(475.0, (float) $allBranchesPerformance[1]['total_collected']);
 
-        $this->get(route('admin.reports', [
+        $previousDayResponse = $this->get(route('admin.reports', [
             'from' => '2026-11-01',
             'to' => '2026-11-30',
             'dentist_date' => '2026-11-02',
@@ -252,16 +253,14 @@ class BranchAwareOverviewReportsTest extends TestCase
         ]))
             ->assertOk()
             ->assertSee('November 2, 2026')
-            ->assertSee('Dr. North')
-            ->assertDontSee('Dr. South')
-            ->assertViewHas('dentistPerformance', [[
-                'dentist_name' => 'Dr. North',
-                'branch_name' => 'North Branch',
-                'patients_treated' => 1,
-                'revenue' => 999.0,
-            ]]);
+            ->assertSee('Dr. North');
+        $previousDayPerformance = $previousDayResponse->viewData('dentistPerformance');
+        $this->assertCount(1, $previousDayPerformance);
+        $this->assertSame('Dr. North', $previousDayPerformance[0]['dentist_name']);
+        $this->assertSame(1, $previousDayPerformance[0]['patients_treated']);
+        $this->assertSame(999.0, (float) $previousDayPerformance[0]['total_collected']);
 
-        $this->get(route('admin.reports', [
+        $southBranchResponse = $this->get(route('admin.reports', [
             'from' => '2026-11-01',
             'to' => '2026-11-30',
             'dentist_date' => '2026-11-03',
@@ -269,14 +268,12 @@ class BranchAwareOverviewReportsTest extends TestCase
             'dentist_branch_id' => $southBranch->id,
         ]))
             ->assertOk()
-            ->assertSee('South Branch')
-            ->assertDontSee('Dr. North')
-            ->assertViewHas('dentistPerformance', [[
-                'dentist_name' => 'Dr. South',
-                'branch_name' => 'South Branch',
-                'patients_treated' => 1,
-                'revenue' => 475.0,
-            ]]);
+            ->assertSee('South Branch');
+        $southBranchPerformance = $southBranchResponse->viewData('dentistPerformance');
+        $this->assertCount(1, $southBranchPerformance);
+        $this->assertSame('Dr. South', $southBranchPerformance[0]['dentist_name']);
+        $this->assertSame('South Branch', $southBranchPerformance[0]['branch']);
+        $this->assertSame(475.0, (float) $southBranchPerformance[0]['total_collected']);
 
         $this->get(route('admin.reports', [
             'from' => '2026-11-01',
@@ -288,20 +285,9 @@ class BranchAwareOverviewReportsTest extends TestCase
             ->assertOk()
             ->assertSee('Dr. North')
             ->assertSee('Dr. South')
-            ->assertViewHas('dentistPerformance', [
-                [
-                    'dentist_name' => 'Dr. North',
-                    'branch_name' => 'North Branch',
-                    'patients_treated' => 2,
-                    'revenue' => 250.0,
-                ],
-                [
-                    'dentist_name' => 'Dr. South',
-                    'branch_name' => 'South Branch',
-                    'patients_treated' => 1,
-                    'revenue' => 475.0,
-                ],
-            ]);
+            ->assertViewHas('dentistPerformance', fn (array $rows): bool => count($rows) === 2
+                && $rows[0]['dentist_name'] === 'Dr. North'
+                && $rows[1]['dentist_name'] === 'Dr. South');
 
         $this->get(route('admin.reports', [
             'from' => '2026-11-01',
@@ -310,13 +296,292 @@ class BranchAwareOverviewReportsTest extends TestCase
         ]))
             ->assertOk()
             ->assertSee('Dr. North')
-            ->assertDontSee('Dr. South')
-            ->assertViewHas('dentistPerformance', [[
-                'dentist_name' => 'Dr. North',
-                'branch_name' => 'North Branch',
-                'patients_treated' => 2,
-                'revenue' => 250.0,
-            ]]);
+            ->assertViewHas('dentistPerformance', fn (array $rows): bool => count($rows) === 1
+                && $rows[0]['dentist_name'] === 'Dr. North'
+                && $rows[0]['branch'] === 'North Branch');
+    }
+
+    public function test_dentist_report_allocates_partial_payments_by_service_without_falling_back_to_record_creator(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-03 12:00:00', config('clinic.timezone')));
+        $branch = Branch::factory()->create(['name' => 'Service Attribution Branch']);
+        $patient = Patient::factory()->for(User::factory()->state(['role' => 'patient']))->create();
+        $firstDentist = User::factory()->create([
+            'name' => 'Dr. Ana',
+            'role' => 'doctor',
+            'branch_id' => $branch->id,
+        ]);
+        $secondDentist = User::factory()->create([
+            'name' => 'Dr. Ben',
+            'role' => 'doctor',
+            'branch_id' => $branch->id,
+        ]);
+        $firstService = Service::factory()->create(['name' => 'Cleaning']);
+        $secondService = Service::factory()->create(['name' => 'Filling']);
+        $unattributedService = Service::factory()->create(['name' => 'X-ray']);
+        $appointment = Appointment::factory()->for($patient)->for($branch)->for($firstService)->create([
+            'starts_at' => '2026-11-03 10:00:00',
+            'status' => 'completed',
+        ]);
+        $appointment->services()->sync([$firstService->id, $secondService->id, $unattributedService->id]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'created_by' => $firstDentist->id,
+            'treating_dentist_id' => $firstDentist->id,
+            'created_at' => '2026-11-03 04:00:00',
+        ]);
+        $bill = Bill::factory()->for($patient)->for($appointment)->create([
+            'subtotal' => '600.00',
+            'discount_type' => 'percentage',
+            'discount_value' => '10.00',
+            'discount' => '60.00',
+            'total' => '540.00',
+            'payment_status' => 'partially_paid',
+            'created_at' => '2026-11-03 04:10:00',
+        ]);
+        BillItem::factory()->for($bill)->for($firstService)->create([
+            'treating_dentist_id' => $firstDentist->id,
+            'service_name' => 'Cleaning',
+            'unit_price' => '100.00',
+            'subtotal' => '100.00',
+            'created_at' => '2026-11-03 04:10:00',
+        ]);
+        BillItem::factory()->for($bill)->for($secondService)->create([
+            'treating_dentist_id' => $secondDentist->id,
+            'service_name' => 'Filling',
+            'unit_price' => '200.00',
+            'subtotal' => '200.00',
+            'created_at' => '2026-11-03 04:10:00',
+        ]);
+        BillItem::factory()->for($bill)->for($unattributedService)->create([
+            'treating_dentist_id' => null,
+            'service_name' => 'X-ray',
+            'unit_price' => '300.00',
+            'subtotal' => '300.00',
+            'created_at' => '2026-11-03 04:10:00',
+        ]);
+        Payment::factory()->for($bill)->create([
+            'amount' => '60.00',
+            'applied_amount' => '60.00',
+            'created_at' => '2026-11-03 05:00:00',
+        ]);
+        Payment::factory()->for($bill)->create([
+            'amount' => '30.00',
+            'applied_amount' => '30.00',
+            'created_at' => '2026-11-04 05:00:00',
+        ]);
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $response = $this->actingAs($admin)->get(route('admin.reports', [
+            'from' => '2026-11-03',
+            'to' => '2026-11-03',
+            'dentist_from' => '2026-11-03',
+            'dentist_to' => '2026-11-03',
+            'dentist_branch_id' => $branch->id,
+        ]));
+
+        $response->assertOk()
+            ->assertSee('Cleaning')
+            ->assertSee('Filling')
+            ->assertSee('X-ray')
+            ->assertSee('Not recorded');
+        $performance = $response->viewData('dentistPerformance');
+        $this->assertCount(3, $performance);
+        $this->assertSame(['Dr. Ana', 'Dr. Ben', 'Not recorded'], array_column($performance, 'dentist_name'));
+        $this->assertSame([10.0, 20.0, 30.0], array_map('floatval', array_column($performance, 'total_collected')));
+        $this->assertSame([75.0, 150.0, 225.0], array_map('floatval', array_column($performance, 'outstanding_balance')));
+        $this->assertSame([90.0, 180.0, 270.0], array_map('floatval', array_column($performance, 'total_billed')));
+        $this->assertSame(60.0, (float) $response->viewData('dentistClinicCollected'));
+        $this->assertSame(0.0, (float) $response->viewData('dentistUnattributedCollected'));
+        $this->assertSame(
+            $response->viewData('dentistClinicCollected'),
+            array_sum(array_column($performance, 'total_collected')),
+        );
+
+        $this->get(route('admin.reports', [
+            'from' => '2026-11-03',
+            'to' => '2026-11-03',
+            'dentist_from' => '2026-11-03',
+            'dentist_to' => '2026-11-03',
+            'dentist_branch_id' => $branch->id,
+            'dentist_id' => $secondDentist->id,
+        ]))
+            ->assertOk()
+            ->assertViewHas('dentistPerformance', fn (array $rows): bool => count($rows) === 1
+                && $rows[0]['dentist_name'] === 'Dr. Ben'
+                && (float) $rows[0]['total_collected'] === 20.0);
+    }
+
+    public function test_dentist_report_includes_add_on_service_created_during_the_selected_period(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-03 12:00:00', config('clinic.timezone')));
+        $branch = Branch::factory()->create(['name' => 'Add-on Report Branch']);
+        $patient = Patient::factory()->for(User::factory()->state(['role' => 'patient']))->create();
+        $dentist = User::factory()->create([
+            'name' => 'Dr. Add-on',
+            'role' => 'doctor',
+            'branch_id' => $branch->id,
+        ]);
+        $originalService = Service::factory()->create(['name' => 'Original Service']);
+        $addOnService = Service::factory()->create(['name' => 'Add-on Service']);
+        $appointment = Appointment::factory()->for($patient)->for($branch)->for($originalService)->create([
+            'starts_at' => '2026-11-02 10:00:00',
+            'status' => 'completed',
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'treating_dentist_id' => $dentist->id,
+            'created_at' => '2026-11-02 04:00:00',
+        ]);
+        $bill = Bill::factory()->for($patient)->for($appointment)->create([
+            'subtotal' => '250.00',
+            'total' => '250.00',
+            'created_at' => '2026-11-02 04:10:00',
+        ]);
+        BillItem::factory()->for($bill)->for($addOnService)->create([
+            'treating_dentist_id' => $dentist->id,
+            'service_name' => 'Add-on Service',
+            'is_add_on' => true,
+            'unit_price' => '250.00',
+            'subtotal' => '250.00',
+            'created_at' => '2026-11-03 04:10:00',
+        ]);
+        Payment::factory()->for($bill)->create([
+            'amount' => '50.00',
+            'applied_amount' => '50.00',
+            'created_at' => '2026-11-03 05:00:00',
+        ]);
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $response = $this->actingAs($admin)->get(route('admin.reports', [
+            'from' => '2026-11-03',
+            'to' => '2026-11-03',
+            'dentist_from' => '2026-11-03',
+            'dentist_to' => '2026-11-03',
+            'dentist_branch_id' => $branch->id,
+        ]))->assertOk();
+
+        $performance = $response->viewData('dentistPerformance')[0];
+        $this->assertSame(1, $performance['services_performed']);
+        $this->assertSame(1, $performance['services_billed']);
+        $this->assertSame(1, $performance['patients_treated']);
+        $this->assertSame(0, $performance['completed_appointments']);
+        $this->assertSame(250.0, (float) $performance['total_billed']);
+        $this->assertSame(50.0, (float) $performance['total_collected']);
+        $this->assertSame(200.0, (float) $performance['outstanding_balance']);
+        $this->assertSame('Add-on Service', $response->viewData('dentistPerformanceDetails')[0]['service']);
+    }
+
+    public function test_dentist_performance_counts_treatment_records_created_on_selected_date_even_if_appointment_is_later(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-08 12:00:00', config('clinic.timezone')));
+        $branch = Branch::factory()->create(['name' => 'Trese Branch']);
+        $patient = Patient::factory()->for(User::factory()->state(['role' => 'patient']))->create();
+        $service = Service::factory()->create();
+        $dentist = User::factory()->create(['name' => 'Juan Delos Santos', 'role' => 'doctor']);
+        $appointment = Appointment::factory()->for($patient)->for($branch)->for($service)->create([
+            'starts_at' => '2026-11-09 15:00:00',
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'created_by' => $dentist->id,
+            'treating_dentist_id' => $dentist->id,
+            'created_at' => '2026-11-07 17:23:16',
+        ]);
+        $bill = Bill::factory()->for($patient)->for($appointment)->create();
+        Payment::factory()->for($bill)->create([
+            'applied_amount' => '400.00',
+            'created_at' => '2026-11-07 17:23:40',
+        ]);
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAs($admin)
+            ->get(route('admin.reports', [
+                'dentist_date' => '2026-11-08',
+                'dentist_branch_id' => $branch->id,
+            ]))
+            ->assertOk()
+            ->assertSee('Treatment counts use recorded treatment dates')
+            ->assertViewHas('dentistPerformance', fn (array $rows): bool => count($rows) === 1
+                && $rows[0]['dentist_name'] === 'Juan Delos Santos'
+                && $rows[0]['branch'] === 'Trese Branch'
+                && $rows[0]['patients_treated'] === 1
+                && (float) $rows[0]['total_collected'] === 400.0);
+    }
+
+    public function test_dentist_performance_uses_treating_dentist_and_appointment_branch_not_patient_home_branch(): void
+    {
+        $this->travelTo(Carbon::parse('2026-11-08 12:00:00', config('clinic.timezone')));
+        $treceBranch = Branch::factory()->create(['name' => 'Attribution Home Branch']);
+        $dasmarinasBranch = Branch::factory()->create(['name' => 'Attribution Service Branch']);
+        $patient = Patient::factory()
+            ->for(User::factory()->state(['role' => 'patient', 'name' => 'Patient One']))
+            ->create(['branch_id' => $treceBranch->id]);
+        $treatingDentist = User::factory()->create([
+            'name' => 'Dentist One',
+            'role' => 'doctor',
+            'branch_id' => $dasmarinasBranch->id,
+        ]);
+        $otherBranchDentist = User::factory()->create([
+            'name' => 'Trece Dentist',
+            'role' => 'doctor',
+            'branch_id' => $treceBranch->id,
+        ]);
+        $staff = User::factory()->create([
+            'role' => 'staff',
+            'branch_id' => $dasmarinasBranch->id,
+        ]);
+        $appointment = Appointment::factory()
+            ->for($patient)
+            ->for($dasmarinasBranch)
+            ->for(Service::factory())
+            ->create([
+                'starts_at' => '2026-11-09 10:00:00',
+                'status' => 'in_consultation',
+            ]);
+
+        $this->actingAs($staff)
+            ->get(route('clinic.records.create', $appointment))
+            ->assertSee('Treating dentist')
+            ->assertSee('<option value="'.$treatingDentist->id.'"', false)
+            ->assertDontSee('<option value="'.$otherBranchDentist->id.'"', false);
+
+        $this->from(route('clinic.records.create', $appointment))
+            ->post(route('clinic.records.store', $appointment), [
+                'diagnosis' => 'Routine examination',
+                'treatment' => 'Dental cleaning',
+                'treating_dentist_id' => $otherBranchDentist->id,
+            ])
+            ->assertSessionHasErrors('treating_dentist_id');
+        $this->assertDatabaseMissing('dental_records', ['appointment_id' => $appointment->id]);
+
+        $this->post(route('clinic.records.store', $appointment), [
+            'diagnosis' => 'Routine examination',
+            'treatment' => 'Dental cleaning',
+            'treating_dentist_id' => $treatingDentist->id,
+        ])->assertSessionHas('status', 'Dental record saved.');
+
+        $record = DentalRecord::query()->where('appointment_id', $appointment->id)->firstOrFail();
+        $this->assertSame($staff->id, $record->created_by);
+        $this->assertSame($treatingDentist->id, $record->treating_dentist_id);
+        $this->assertSame($treceBranch->id, $patient->fresh()->branch_id);
+        $this->assertSame($dasmarinasBranch->id, $appointment->fresh()->branch_id);
+
+        $bill = Bill::factory()->for($patient)->for($appointment)->create();
+        Payment::factory()->for($bill)->create([
+            'applied_amount' => '400.00',
+            'created_at' => '2026-11-08 02:00:00',
+        ]);
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAs($admin)
+            ->get(route('admin.reports', [
+                'dentist_date' => '2026-11-08',
+                'dentist_branch_id' => $dasmarinasBranch->id,
+            ]))
+            ->assertOk()
+            ->assertViewHas('dentistPerformance', fn (array $rows): bool => count($rows) === 1
+                && $rows[0]['dentist_name'] === 'Dentist One'
+                && $rows[0]['branch'] === 'Attribution Service Branch'
+                && $rows[0]['patients_treated'] === 1
+                && (float) $rows[0]['total_collected'] === 400.0);
     }
 
     public function test_reports_reject_an_invalid_dentist_performance_date(): void
@@ -328,6 +593,12 @@ class BranchAwareOverviewReportsTest extends TestCase
                 'dentist_date' => 'not-a-date',
             ]))
             ->assertSessionHasErrors('dentist_date');
+
+        $this->get(route('admin.reports', [
+            'dentist_from' => '2026-11-09',
+            'dentist_to' => '2026-11-08',
+        ]))
+            ->assertSessionHasErrors('dentist_to');
     }
 
     public function test_doctors_cannot_view_today_revenue_or_reports(): void

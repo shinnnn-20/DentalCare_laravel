@@ -27,7 +27,7 @@
                 <ul class="mt-1 divide-y divide-slate-100">
                     @foreach ($originalItems as $item)
                         <li class="flex flex-wrap justify-between gap-2 py-2 text-sm">
-                            <span class="min-w-0">{{ $item->service_name }} <span class="text-slate-500">× {{ $item->quantity }}</span></span>
+                            <span class="min-w-0">{{ $item->service_name }} <span class="text-slate-500">× {{ $item->quantity }}</span><span class="mt-1 block text-xs text-slate-500">Dentist: {{ $item->treatingDentist?->name ?? 'Not recorded' }}</span></span>
                             <span class="shrink-0 font-medium">₱{{ number_format((float) $item->subtotal, 2) }}</span>
                         </li>
                     @endforeach
@@ -38,7 +38,7 @@
                 <ul class="mt-1 divide-y divide-slate-100">
                     @foreach ($addOnItems as $item)
                         <li class="flex flex-wrap justify-between gap-2 py-2 text-sm">
-                            <span class="min-w-0">{{ $item->service_name }} <span class="text-slate-500">× {{ $item->quantity }}</span></span>
+                            <span class="min-w-0">{{ $item->service_name }} <span class="text-slate-500">× {{ $item->quantity }}</span><span class="mt-1 block text-xs text-slate-500">Dentist: {{ $item->treatingDentist?->name ?? 'Not recorded' }}</span></span>
                             <span class="shrink-0 font-medium">₱{{ number_format((float) $item->subtotal, 2) }}</span>
                         </li>
                     @endforeach
@@ -97,6 +97,20 @@
                                                         {{ $service->requires_price_confirmation ? 'Reference: '.$service->price_display : '₱'.number_format((float) $service->price, 2) }}
                                                     </span>
                                                 </span>
+                                            </label>
+                                            <label class="form-label sm:col-span-2">Dentist Who Performed the Treatment
+                                                <select
+                                                    class="form-input"
+                                                    name="service_dentists[{{ $service->id }}]"
+                                                    data-addon-dentist="{{ $service->id }}"
+                                                    @required($serviceIsSelected)
+                                                    @disabled(! $serviceIsSelected)
+                                                >
+                                                    <option value="">Select a dentist</option>
+                                                    @foreach ($treatingDentists as $dentist)
+                                                        <option value="{{ $dentist->id }}" @selected((string) old('service_dentists.'.$service->id, $bill->appointment->dentalRecord?->treating_dentist_id) === (string) $dentist->id)>{{ $dentist->name }}</option>
+                                                    @endforeach
+                                                </select>
                                             </label>
                                             @if ($service->requires_price_confirmation)
                                                 <div class="hidden min-w-0 rounded-lg border border-amber-200 bg-amber-50/70 p-3 sm:col-span-2" data-addon-price-panel="{{ $service->id }}">

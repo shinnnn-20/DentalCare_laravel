@@ -71,7 +71,8 @@ class PatientFollowUpPortalTest extends TestCase
         $recordIds = [];
 
         foreach (range(1, 6) as $number) {
-            $createdAt = Carbon::parse('2026-11-01 09:00:00', config('clinic.timezone'))->addDays($number);
+            $createdAt = Carbon::parse('2026-11-01 09:00:00', config('clinic.timezone'))
+                ->addDays(max(2, $number));
             $recordIds[] = DentalRecord::factory()->for($patient)->create([
                 'treatment' => 'Overview record '.$number,
                 'created_at' => $createdAt,
