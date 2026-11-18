@@ -36,6 +36,9 @@
                     <h2 id="follow-up-heading" class="mt-1 text-xl font-bold text-slate-900">
                         {{ $nextFollowUp->follow_up_date->format('l, F j, Y') }}
                     </h2>
+                    @if ($nextFollowUp->formattedFollowUpTime())
+                        <p class="mt-1 text-sm font-medium text-amber-900">Follow-up time: {{ $nextFollowUp->formattedFollowUpTime() }}</p>
+                    @endif
                     <p class="mt-1 text-sm text-slate-700">Scheduled after: {{ $nextFollowUp->treatment }}</p>
                 </div>
             </div>
@@ -50,15 +53,17 @@
             @if ($nextAppointment)
                 <span class="mt-4 inline-flex rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide">Next visit</span>
                 <h2 class="mt-3 text-2xl font-bold">{{ $nextAppointment->treatmentNames() }}</h2>
-                <p class="sr-only">{{ $nextAppointment->starts_at->format('l, F j, Y · g:i A') }}</p>
+                <p class="sr-only">{{ $nextAppointment->starts_at->format($nextAppointment->type === 'walk_in' ? 'l, F j, Y · g:i A' : 'l, F j, Y') }}</p>
                 <div class="mt-3 grid gap-2 text-sm text-teal-50 sm:grid-cols-2" aria-hidden="true">
                     <p class="flex items-center gap-2"><span class="grid h-8 w-8 place-items-center rounded-lg bg-white/10">▦</span>{{ $nextAppointment->starts_at->format('l, F j, Y') }}</p>
-                    <p class="flex items-center gap-2"><span class="grid h-8 w-8 place-items-center rounded-lg bg-white/10">◷</span>{{ $nextAppointment->starts_at->format('g:i A') }}</p>
+                    @if ($nextAppointment->type === 'walk_in')
+                        <p class="flex items-center gap-2"><span class="grid h-8 w-8 place-items-center rounded-lg bg-white/10">◷</span>{{ $nextAppointment->starts_at->format('g:i A') }}</p>
+                    @endif
                 </div>
                 <span class="mt-4 inline-flex rounded-full bg-white/15 px-3 py-1 text-sm capitalize">{{ str_replace('_', ' ', $nextAppointment->status) }}</span>
             @else
                 <h2 class="mt-3 text-2xl font-bold">No upcoming appointments</h2>
-                <p class="mt-2 text-teal-100">Book a visit and the clinic will confirm your requested time.</p>
+                <p class="mt-2 text-teal-100">Choose a clinic date, then the front desk will review your appointment request.</p>
             @endif
             <a href="{{ route('appointments.index') }}" class="btn-primary mt-6 w-full sm:w-auto">Book or manage appointments</a>
         </section>

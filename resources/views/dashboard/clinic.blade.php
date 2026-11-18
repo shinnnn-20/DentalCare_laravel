@@ -204,11 +204,11 @@
         </div>
         <div class="overflow-x-auto">
             <table class="data-table">
-                <thead><tr><th>Time</th><th>Patient</th><th>Service</th><th>Type</th><th>Status</th><th>Queue</th></tr></thead>
+                <thead><tr><th>Date / time</th><th>Patient</th><th>Service</th><th>Type</th><th>Status</th><th>Queue</th></tr></thead>
                 <tbody>
                 @forelse ($appointments as $appointment)
                     <tr>
-                        <td data-label="Time"><span class="inline-flex flex-col gap-1"><span class="font-semibold text-slate-800">{{ $appointment->starts_at->format('g:i A') }}</span><span class="text-xs text-slate-500">{{ $appointment->starts_at->format('M j, Y') }}</span></span></td>
+                        <td data-label="Date / time"><span class="inline-flex flex-col gap-1"><span class="font-semibold text-slate-800">{{ $appointment->starts_at->format('M j, Y') }}</span>@if ($appointment->type === 'walk_in')<span class="text-xs text-slate-500">{{ $appointment->starts_at->format('g:i A') }}</span>@endif</span></td>
                         <td data-label="Patient"><a class="font-semibold text-teal-800 hover:underline" href="{{ route('clinic.patients.show', $appointment->patient) }}">{{ $appointment->patient->user->name }}</a><div class="text-xs text-slate-400">{{ $appointment->patient->patient_number }}</div></td>
                         <td data-label="Service"><span class="inline-flex rounded-lg bg-teal-50 px-2.5 py-1.5 font-semibold text-teal-900">{{ $appointment->treatmentNames() }}</span></td>
                         <td data-label="Type" class="capitalize">{{ str_replace('_', ' ', $appointment->type) }}</td>

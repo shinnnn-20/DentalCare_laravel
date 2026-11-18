@@ -58,7 +58,9 @@ class AppointmentCompletionService
                 'System completed appointment #%d for patient %s on %s at %s after treatment and full payment of PHP %s on bill %s.',
                 $appointment->id,
                 $appointment->patient->user->name,
-                $appointment->starts_at->format('M j, Y g:i A'),
+                $appointment->type === 'walk_in'
+                    ? $appointment->starts_at->format('M j, Y g:i A')
+                    : $appointment->starts_at->format('M j, Y'),
                 $appointment->branch?->name ?? 'an unassigned branch',
                 number_format($totalCents / 100, 2),
                 $bill->bill_number,

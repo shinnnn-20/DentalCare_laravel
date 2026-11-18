@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Database\Factories\BillFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -16,11 +17,13 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string $bill_number
  * @property string $discount_type
  * @property string $discount_value
+ * @property string|null $discount_card_number
  * @property string $discount
  * @property string $total
  * @property string $payment_status
  */
-#[Fillable(['bill_number', 'patient_id', 'appointment_id', 'created_by', 'subtotal', 'discount_type', 'discount_value', 'discount', 'total', 'payment_status'])]
+#[Fillable(['bill_number', 'patient_id', 'appointment_id', 'created_by', 'subtotal', 'discount_type', 'discount_value', 'discount_card_number', 'discount', 'total', 'payment_status'])]
+#[Hidden(['discount_card_number'])]
 class Bill extends Model
 {
     /** @use HasFactory<BillFactory> */
@@ -32,6 +35,7 @@ class Bill extends Model
             'subtotal' => 'decimal:2',
             'discount_type' => 'string',
             'discount_value' => 'decimal:2',
+            'discount_card_number' => 'encrypted',
             'discount' => 'decimal:2',
             'total' => 'decimal:2',
         ];

@@ -16,11 +16,11 @@
                     <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-700 text-lg font-bold text-white" aria-hidden="true">+</span>
                     <div>
                         <h2 class="text-lg font-semibold text-slate-900" data-booking-title>{{ auth()->user()->role === 'patient' ? 'Request an appointment' : 'Register an appointment' }}</h2>
-                        <p class="mt-1 text-sm text-slate-500" data-booking-description>{{ auth()->user()->role === 'patient' ? 'Choose a service, then pick an available date and time. Requests require clinic approval.' : 'Choose a patient, service, date, and available time. Walk-ins join the waiting queue immediately.' }}</p>
+                        <p class="mt-1 text-sm text-slate-500" data-booking-description>{{ auth()->user()->role === 'patient' ? 'Choose a service and date. The front desk will review your request and decide how many appointments to approve for that day.' : 'Choose a patient and service. Walk-ins join the waiting queue immediately.' }}</p>
                     </div>
                 </div>
             </div>
-            <form method="POST" action="{{ route('appointments.store') }}" class="grid gap-5 p-5 sm:grid-cols-2 sm:p-7 xl:grid-cols-12" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-schedule-confirm="{{ auth()->user()->role === 'patient' ? 'Submit this appointment request?' : 'Register this walk-in appointment and add it to the queue?' }}" data-schedule-confirm-title="Confirm appointment" @if (auth()->user()->role === 'patient') data-patient-booking @endif @if (auth()->user()->hasRole('doctor')) data-doctor-booking data-doctor-branch-id="{{ auth()->user()->branch_id }}" @endif>
+            <form method="POST" action="{{ route('appointments.store') }}" class="grid gap-5 p-5 sm:grid-cols-2 sm:p-7 xl:grid-cols-12" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-schedule-confirm="{{ auth()->user()->role === 'patient' ? 'Submit this appointment date for front-desk approval?' : 'Register this walk-in appointment and add it to the queue?' }}" data-schedule-confirm-title="Confirm appointment" @if (auth()->user()->role === 'patient') data-patient-booking data-max-treatments="2" @endif @if (auth()->user()->hasRole('doctor')) data-doctor-booking data-doctor-branch-id="{{ auth()->user()->branch_id }}" @endif>
                 @csrf
                 <label class="form-label sm:col-span-2 xl:col-span-4">Branch
                     <select class="form-input" name="branch_id" data-branch-select required>
@@ -39,14 +39,48 @@
                     </label>
                 @endif
                 @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
-                    <label class="form-label sm:col-span-2 xl:col-span-4">Patient
-                        <select name="patient_id" class="form-input" required>
+                    <div class="form-label relative sm:col-span-2 xl:col-span-4" data-patient-search-picker>
+                        <div class="flex items-end gap-2">
+                            <div class="min-w-0 flex-1">
+                                <label for="appointment-patient-search">Patient</label>
+                                <input
+                                    id="appointment-patient-search"
+                                    class="form-input"
+                                    type="search"
+                                    placeholder="Search patient name or number..."
+                                    autocomplete="off"
+                                    aria-autocomplete="list"
+                                    aria-expanded="false"
+                                    aria-controls="appointment-patient-search-results"
+                                    data-patient-search
+                                    required
+                                >
+                            </div>
+                            <button
+                                class="btn-primary h-11 w-11 shrink-0 justify-center p-0 text-xl"
+                                type="button"
+                                aria-label="Register walk-in patient"
+                                title="Register walk-in patient"
+                                data-walk-in-patient-register
+                                data-requires-branch="{{ auth()->user()->hasRole('admin') ? 'true' : 'false' }}"
+                                @class(['hidden' => auth()->user()->hasRole('doctor') && old('booking_mode', 'walk_in') !== 'walk_in'])
+                                @disabled(auth()->user()->hasRole('admin') && ! old('branch_id'))
+                            >+</button>
+                        </div>
+                        <select name="patient_id" class="hidden" data-patient-select aria-hidden="true" tabindex="-1">
                             <option value="">Choose a patient</option>
                             @foreach ($patients as $patient)
-                                <option value="{{ $patient->id }}" @selected(old('patient_id') == $patient->id)>{{ $patient->patient_number }} · {{ $patient->user->name }}</option>
+                                <option value="{{ $patient->id }}" data-patient-label="{{ $patient->patient_number }} · {{ $patient->user->name }}" data-patient-search="{{ $patient->patient_number }} {{ $patient->user->name }}" @selected(old('patient_id') == $patient->id)>{{ $patient->patient_number }} · {{ $patient->user->name }}</option>
                             @endforeach
                         </select>
-                    </label>
+                        <div class="absolute inset-x-0 top-full z-30 mt-1 hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg" data-patient-search-panel>
+                            <div id="appointment-patient-search-results" class="max-h-60 overflow-y-auto p-1" role="listbox" aria-label="Matching patients" data-patient-search-results></div>
+                            <p class="hidden px-3 py-2 text-sm text-slate-500" role="status" data-patient-search-empty>No patients match that search.</p>
+                        </div>
+                        @if (auth()->user()->hasRole('admin'))
+                            <p class="mt-1 text-xs text-slate-500" @class(['hidden' => old('branch_id')]) data-patient-registration-branch-hint>Choose a branch before registering a walk-in patient.</p>
+                        @endif
+                    </div>
                 @endif
                 <fieldset class="grid min-w-0 gap-4 rounded-2xl border border-teal-100 bg-gradient-to-br from-teal-50/70 via-white to-white p-4 sm:col-span-2 sm:p-5 xl:col-span-12">
                     <legend class="sr-only">Select Dental Treatment</legend>
@@ -59,48 +93,57 @@
                         </span>
                         <div class="min-w-0">
                             <h3 class="text-sm font-semibold text-slate-900">Select Dental Treatment</h3>
-                            <p class="mt-1 text-xs leading-5 text-slate-500">Choose a service to view its fee and appointment details.</p>
+                            <p class="mt-1 text-xs leading-5 text-slate-500">{{ auth()->user()->role === 'patient' ? 'Choose up to 2 treatments for this visit. Book additional treatments in a separate appointment.' : 'Choose a service to view its fee and appointment details.' }}</p>
                         </div>
                     </div>
-                    <div class="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        @foreach ($services->groupBy('category') as $category => $categoryServices)
-                            <label class="grid min-w-0 content-start gap-2 rounded-xl border border-slate-200 bg-white p-3 text-sm font-semibold text-slate-700 shadow-sm transition-colors sm:p-3.5" data-service-category-card>
-                                <span class="flex min-h-10 items-center justify-between gap-2">
-                                    <span>{{ $category ?: 'Other Services' }}</span>
-                                    <span class="hidden shrink-0 rounded-full bg-teal-700 px-2.5 py-1 text-[0.65rem] font-bold uppercase tracking-wide text-white shadow-sm" data-category-active></span>
-                                </span>
-                                <span class="relative block">
-                                    <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-teal-700" aria-hidden="true">
-                                        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                                            <path stroke-linecap="round" d="M9 6h11M9 12h11M9 18h11"></path>
-                                            <circle cx="4.5" cy="6" r=".75" fill="currentColor" stroke="none"></circle>
-                                            <circle cx="4.5" cy="12" r=".75" fill="currentColor" stroke="none"></circle>
-                                            <circle cx="4.5" cy="18" r=".75" fill="currentColor" stroke="none"></circle>
-                                        </svg>
-                                    </span>
-                                    <select
-                                        class="form-input min-h-12 appearance-none border-slate-200 bg-white pl-11 pr-11 font-medium shadow-sm hover:border-teal-300 focus:border-teal-600 focus:ring-4 focus:ring-teal-100/80"
-                                        data-service-category
-                                        aria-label="{{ $category ?: 'Other Services' }}"
-                                        @if ($loop->first) name="service_id" required @endif
-                                    >
-                                        <option value="">Choose a treatment...</option>
-                                        @foreach ($categoryServices as $service)
-                                            @php($displayPrice = $service->requires_price_confirmation && $service->price_display ? $service->price_display : config('clinic.currency_symbol').number_format((float) $service->price, 2))
-                                            <option value="{{ $service->id }}" data-branch-ids="{{ implode(',', $serviceBranchIds[$service->id] ?? []) }}" data-service-name="{{ $service->name }}" data-price="{{ $displayPrice }}" data-price-display="{{ $service->price_display }}" data-raw-price="{{ (float) $service->price }}" data-requires-confirmation="{{ $service->requires_price_confirmation ? 'true' : 'false' }}" data-category="{{ $category ?: 'Other Services' }}" data-duration="{{ (int) $service->duration_minutes }}" @selected(old('service_id') == $service->id || in_array($service->id, (array) old('service_ids', [])))>{{ $service->name }} — {{ $displayPrice }}</option>
-                                        @endforeach
-                                    </select>
-                                    <span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-slate-400" aria-hidden="true">
-                                        <svg class="h-5 w-5 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="m7 10 5 5 5-5"></path>
-                                        </svg>
-                                    </span>
-                                </span>
-                                <span class="hidden rounded-lg border border-teal-300 bg-teal-50 p-2.5 text-teal-950 shadow-inner" data-category-selections></span>
-                            </label>
+                    <button class="inline-flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-teal-200 bg-white px-4 py-2.5 text-left text-sm font-semibold text-teal-800 shadow-sm transition hover:border-teal-400 hover:bg-teal-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700" type="button" aria-expanded="false" aria-controls="appointment-service-browser" data-service-browser-toggle>
+                        <span data-service-browser-label>Browse services</span>
+                        <svg class="h-5 w-5 shrink-0 transition-transform" data-service-browser-chevron viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m7 10 5 5 5-5"></path>
+                        </svg>
+                    </button>
+                    <div id="appointment-service-browser" class="hidden min-w-0" data-service-browser>
+                        <p class="hidden mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status" data-service-browser-empty>Choose a branch to view its available services.</p>
+                        @php($serviceCategories = $services->groupBy('category'))
+                        <label class="form-label">Service category
+                            <select class="form-input" data-service-category-picker disabled>
+                                <option value="">Choose a category...</option>
+                                @foreach ($serviceCategories as $category => $categoryServices)
+                                    <option value="{{ $loop->index }}">{{ $category ?: 'Other Services' }}</option>
+                                @endforeach
+                            </select>
+                        </label>
+                        <div class="min-w-0">
+                        @foreach ($serviceCategories as $category => $categoryServices)
+                            <div class="hidden min-w-0 rounded-xl border border-slate-200 bg-white p-3" data-service-category-card data-category-index="{{ $loop->index }}">
+                                <div class="mb-2 flex items-center justify-between gap-2">
+                                    <h4 class="text-sm font-semibold text-slate-800">{{ $category ?: 'Other Services' }}</h4>
+                                    <span class="hidden shrink-0 rounded-full bg-teal-700 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wide text-white" data-category-active></span>
+                                </div>
+                                <select
+                                    class="hidden"
+                                    data-service-category
+                                    aria-label="{{ $category ?: 'Other Services' }}"
+                                    aria-hidden="true"
+                                    tabindex="-1"
+                                    @if ($loop->first) name="service_id" @endif
+                                >
+                                    <option value="">Choose a treatment...</option>
+                                    @foreach ($categoryServices as $service)
+                                        @php($displayPrice = $service->requires_price_confirmation && $service->price_display ? $service->price_display : config('clinic.currency_symbol').number_format((float) $service->price, 2))
+                                        <option value="{{ $service->id }}" data-branch-ids="{{ implode(',', $serviceBranchIds[$service->id] ?? []) }}" data-service-name="{{ $service->name }}" data-price="{{ $displayPrice }}" data-price-display="{{ $service->price_display }}" data-raw-price="{{ (float) $service->price }}" data-requires-confirmation="{{ $service->requires_price_confirmation ? 'true' : 'false' }}" data-category="{{ $category ?: 'Other Services' }}" data-duration="{{ (int) $service->duration_minutes }}" @selected(old('service_id') == $service->id || in_array($service->id, (array) old('service_ids', [])))>{{ $service->name }} — {{ $displayPrice }}</option>
+                                    @endforeach
+                                </select>
+                                    <span class="mt-2 hidden rounded-lg border border-teal-300 bg-teal-50 p-2.5 text-teal-950 shadow-inner" data-category-selections></span>
+                            </div>
                         @endforeach
+                        </div>
+                        <p class="mt-3 max-w-3xl text-xs leading-5 text-slate-500">Reference fees are transcribed from the supplied chart list and have not been verified against the clinic's approved fee schedule. They are estimates only; clinic staff must confirm the final amount before billing.</p>
                     </div>
-                    <p class="max-w-3xl text-xs leading-5 text-slate-500">Reference fees are transcribed from the supplied chart list and have not been verified against the clinic's approved fee schedule. They are estimates only; clinic staff must confirm the final amount before billing.</p>
+                    <p class="hidden rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800" role="alert" data-service-message></p>
+                    @if (auth()->user()->role === 'patient')
+                        <p class="hidden rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status" aria-live="polite" data-treatment-limit-message>You’ve selected the maximum of 2 treatments. Remove a treatment to choose another, or book additional treatments in a separate appointment.</p>
+                    @endif
                 </fieldset>
                 <div class="sm:col-span-2 xl:col-span-12 rounded-2xl border border-teal-200 bg-gradient-to-br from-teal-50/60 via-white to-white p-5 shadow-sm" data-appointment-summary-box>
                     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-teal-100 pb-3">
@@ -129,73 +172,68 @@
                         <p class="text-xs text-slate-400 max-w-sm">Prices shown are estimates based on standard clinic rates or reference fees. Staff will confirm final prices before billing.</p>
                     </div>
                 </div>
-                <div class="grid min-w-0 content-start gap-2 sm:col-span-2 xl:col-span-6">
-                    <div>
-                        <p class="text-sm font-semibold text-slate-800">Appointment date</p>
-                        <p class="mt-1 text-xs text-slate-500">{{ auth()->user()->role === 'patient' ? 'Choose a highlighted day with open slots.' : 'Choose a highlighted day to see available appointment times.' }}</p>
-                    </div>
-                    <input type="hidden" name="appointment_date" value="{{ old('appointment_date') }}" data-appointment-date>
-                    <div class="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4" data-availability-calendar>
-                        <div class="mb-4 flex items-center justify-between gap-3">
-                            <button class="calendar-nav-button" type="button" data-calendar-previous aria-label="Previous month">←</button>
-                            <p class="text-sm font-bold text-slate-900 sm:text-base" data-calendar-month></p>
-                            <button class="calendar-nav-button" type="button" data-calendar-next aria-label="Next month">→</button>
+                @if (auth()->user()->role === 'patient' || auth()->user()->hasRole('doctor'))
+                    <div class="grid min-w-0 content-start gap-2 sm:col-span-2 xl:col-span-6" data-appointment-date-container>
+                        <div>
+                            <p class="text-sm font-semibold text-slate-800">Appointment date</p>
+                            <p class="mt-1 text-xs text-slate-500">Choose an available clinic date. Appointment requests do not reserve a time slot.</p>
                         </div>
-                        <div class="mb-2 grid grid-cols-7 text-center text-[0.7rem] font-bold uppercase tracking-wide text-slate-400" aria-hidden="true">
-                            <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+                        <input type="hidden" name="appointment_date" value="{{ old('appointment_date') }}" data-appointment-date>
+                        <div class="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4" data-availability-calendar>
+                            <div class="mb-4 flex items-center justify-between gap-3">
+                                <button class="calendar-nav-button" type="button" data-calendar-previous aria-label="Previous month">←</button>
+                                <p class="text-sm font-bold text-slate-900 sm:text-base" data-calendar-month></p>
+                                <button class="calendar-nav-button" type="button" data-calendar-next aria-label="Next month">→</button>
+                            </div>
+                            <div class="mb-2 grid grid-cols-7 text-center text-[0.7rem] font-bold uppercase tracking-wide text-slate-400" aria-hidden="true">
+                                <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+                            </div>
+                            <div class="grid grid-cols-7 gap-1.5" data-calendar-days role="group" aria-label="Available appointment dates"></div>
+                            <div class="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t border-slate-200 pt-3 text-xs text-slate-500">
+                                <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-teal-600"></span>Available date</span>
+                                <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-slate-300"></span>Unavailable</span>
+                                <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-amber-400"></span>Holiday</span>
+                                <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-rose-400"></span>Fully booked</span>
+                            </div>
                         </div>
-                        <div class="grid grid-cols-7 gap-1.5" data-calendar-days role="group" aria-label="Available appointment dates"></div>
-                        <div class="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t border-slate-200 pt-3 text-xs text-slate-500">
-                            <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-teal-600"></span>Available</span>
-                            <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-slate-300"></span>Unavailable</span>
-                            <span class="inline-flex items-center gap-2"><span class="h-2.5 w-2.5 rounded-full bg-amber-400"></span>Holiday</span>
-                        </div>
                     </div>
-                </div>
-                @if (auth()->user()->role === 'patient')
-                    <div class="form-label sm:col-span-2 xl:col-span-4">Appointment Time
-                        <span class="relative block">
-                            <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-teal-700" aria-hidden="true">
-                                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                                    <circle cx="12" cy="12" r="8.5"></circle>
-                                    <path stroke-linecap="round" d="M12 7v5l3 2"></path>
-                                </svg>
-                            </span>
-                            <select class="form-input date-time-input time-select pl-10 pr-10" name="appointment_time" data-appointment-time required disabled>
-                                <option value="">Select time</option>
-                                @foreach ($appointmentTimes as $timeOption)
-                                    <option value="{{ $timeOption }}" @selected(old('appointment_time') === $timeOption)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeOption)->format('g:i A') }}</option>
-                                @endforeach
-                            </select>
-                        </span>
-                        <span class="text-xs font-normal text-slate-500">Select a branch and date to see available 30-minute slots. Clinic hours are 10:00 AM–5:00 PM, with lunch from 12:00 PM–1:00 PM.</span>
-                    </div>
-                @else
-                    <div class="form-label sm:col-span-2 xl:col-span-4">Appointment Time
-                        <span class="relative block">
-                            <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-teal-700" aria-hidden="true">
-                                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                                    <circle cx="12" cy="12" r="8.5"></circle>
-                                    <path stroke-linecap="round" d="M12 7v5l3 2"></path>
-                                </svg>
-                            </span>
-                            <select class="form-input date-time-input time-select pl-10 pr-10" name="appointment_time" data-appointment-time disabled>
-                                <option value="">Select time</option>
-                                @foreach ($appointmentTimes as $timeOption)
-                                    <option value="{{ $timeOption }}" @selected(old('appointment_time') === $timeOption)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeOption)->format('g:i A') }}</option>
-                                @endforeach
-                            </select>
-                        </span>
-                        <span class="text-xs font-normal text-slate-500">Available times are specific to the selected branch. Clinic hours are 10:00 AM–5:00 PM, with lunch from 12:00 PM–1:00 PM.</span>
-                    </div>
+                    <p class="hidden rounded-xl bg-teal-50 px-4 py-3 text-sm font-medium text-teal-900 sm:col-span-2 xl:col-span-12" data-availability-message role="status" aria-live="polite"></p>
+                    <p class="hidden rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800 sm:col-span-2 xl:col-span-12" data-sunday-error role="alert">The Dental Clinic is closed on Sundays. Please select another date.</p>
                 @endif
-                <p class="hidden rounded-xl bg-teal-50 px-4 py-3 text-sm font-medium text-teal-900 sm:col-span-2 xl:col-span-12" data-availability-message role="status" aria-live="polite"></p>
-                <p class="hidden rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800 sm:col-span-2 xl:col-span-12" data-sunday-error role="alert">The Dental Clinic is closed on Sundays. Please select another date.</p>
                 <label class="form-label sm:col-span-2 xl:col-span-12">Notes <span class="font-normal text-slate-400">(optional)</span><input class="form-input" name="notes" maxlength="2000" placeholder="Reason for visit"></label>
                 <div class="sm:col-span-2 xl:col-span-12">
                     <button class="btn-primary w-full sm:w-auto" data-booking-submit>{{ auth()->user()->role === 'patient' ? 'Submit appointment request' : 'Add walk-in to queue' }}</button>
                 </div>
             </form>
+            @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
+                <dialog class="m-auto w-[min(42rem,calc(100vw-2rem))] max-w-none rounded-2xl border border-slate-200 bg-white p-0 text-slate-800 shadow-2xl backdrop:bg-slate-950/50 backdrop:backdrop-blur-sm" aria-labelledby="walk-in-patient-dialog-title" data-walk-in-patient-dialog>
+                    <form method="POST" action="{{ route('clinic.patients.store') }}" data-walk-in-patient-form>
+                        @csrf
+                        <div class="flex items-start justify-between gap-4 border-b border-slate-100 p-5 sm:p-6">
+                            <div>
+                                <h2 class="text-xl font-semibold text-slate-900" id="walk-in-patient-dialog-title">Register a walk-in patient</h2>
+                                <p class="mt-1 text-sm text-slate-500">Create the patient account, then continue with this appointment.</p>
+                            </div>
+                        </div>
+                        <div class="max-h-[70vh] overflow-y-auto p-5 sm:p-6">
+                            <p class="mb-4 hidden rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800" role="alert" data-patient-registration-error></p>
+                            <div class="grid gap-4 sm:grid-cols-2">
+                                <label class="form-label sm:col-span-2">Full name<input class="form-input" name="name" maxlength="255" pattern="[\p{L}\p{M} .'\-]+" title="Use letters, spaces, apostrophes, periods, or hyphens." required></label>
+                                @if (auth()->user()->hasRole('admin'))
+                                    <input type="hidden" name="branch_id" data-patient-registration-branch required>
+                                @elseif (auth()->user()->hasRole('doctor'))
+                                    <input type="hidden" name="branch_id" value="{{ auth()->user()->branch_id }}" data-patient-registration-branch>
+                                @endif
+                                @include('patients._registration-fields')
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap justify-end gap-3 border-t border-slate-100 bg-slate-50 px-5 py-4 sm:px-6">
+                            <button class="btn-secondary" type="button" data-walk-in-patient-close>Cancel</button>
+                            <button class="btn-primary" type="submit" data-patient-registration-submit>Create patient account</button>
+                        </div>
+                    </form>
+                </dialog>
+            @endif
         </section>
     @endif
 
@@ -232,6 +270,43 @@
             </label>
             <button class="btn-secondary self-end">Filter</button>
         </form>
+        @if ($isAppointmentRecordsPage && auth()->user()->hasRole('admin', 'staff'))
+            <section class="grid gap-5 border-b border-slate-100 bg-teal-50/50 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+                <div>
+                    <h2 class="text-base font-semibold text-slate-900">Daily approval limit</h2>
+                    <p class="mt-1 text-sm text-slate-600">Set a maximum of 10 scheduled appointments staff can approve for one branch and date. Filter this list to the same branch and date before approving. Pending requests and walk-ins do not use a spot; cancellations and rejections free one, while completed and no-show appointments still count.</p>
+                    @if ($capacityManagementBranchId !== null)
+                        <div class="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-700" aria-live="polite">
+                            <span><strong>{{ $capacityUsed }}</strong> of <strong>{{ $capacityDailyLimit ?? 'not set' }}</strong> appointments counted</span>
+                            @if ($capacityRemaining !== null)
+                                <span><strong>{{ $capacityRemaining }}</strong> spot(s) remaining</span>
+                            @endif
+                            <span><strong>{{ $capacityPending }}</strong> pending request(s)</span>
+                        </div>
+                    @else
+                        <p class="mt-3 text-sm font-medium text-amber-800">Choose a branch to view its current daily count.</p>
+                    @endif
+                </div>
+                <form method="POST" action="{{ route('clinic.appointment-capacities.store') }}" class="grid items-end gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(8rem,0.7fr)_auto]" data-confirm="Save the daily appointment approval limit for this branch and date?" data-confirm-title="Save daily approval limit" data-confirm-accept="Save limit">
+                    @csrf
+                    <label class="form-label">Branch
+                        <select class="form-input" name="branch_id" required>
+                            <option value="">Choose a branch</option>
+                            @foreach ($branches as $branch)
+                                <option value="{{ $branch->id }}" @selected((string) old('branch_id', $capacityManagementBranchId) === (string) $branch->id)>{{ $branch->name }}</option>
+                            @endforeach
+                        </select>
+                    </label>
+                    <label class="form-label">Appointment date
+                        <input class="form-input date-time-input" type="date" name="appointment_date" min="{{ today(config('clinic.timezone'))->toDateString() }}" value="{{ old('appointment_date', $capacityManagementDate) }}" required>
+                    </label>
+                    <label class="form-label">Maximum approvals
+                        <input class="form-input" type="number" name="daily_limit" min="0" max="10" value="{{ old('daily_limit', $capacityDailyLimit) }}" required>
+                    </label>
+                    <button class="btn-primary sm:col-span-2 xl:col-span-1">Save limit</button>
+                </form>
+            </section>
+        @endif
         <div class="space-y-5 p-4 sm:p-5">
         @foreach ($appointmentSections as $sectionTitle => $sectionAppointments)
             @if ($isAppointmentRecordsPage)
@@ -240,14 +315,16 @@
             @endif
             <div class="overflow-x-auto">
             <table class="data-table">
-                <thead><tr><th>Date & time</th>@if (auth()->user()->hasRole('admin', 'staff', 'doctor'))<th>Patient</th>@endif @if ($isAppointmentRecordsPage)<th>Follow-up date</th>@endif<th>Branch</th><th>Service</th><th>Type</th><th>Status</th><th>Queue</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Appointment date</th>@if (auth()->user()->hasRole('admin', 'staff', 'doctor'))<th>Patient</th>@endif @if ($isAppointmentRecordsPage)<th>Follow-up date</th>@endif<th>Branch</th><th>Service</th><th>Type</th><th>Status</th><th>Queue</th><th>Actions</th></tr></thead>
                 <tbody>
                 @forelse ($sectionAppointments as $appointment)
                     <tr id="appointment-{{ $appointment->id }}" @class(['bg-amber-50 outline outline-2 outline-amber-400 outline-offset-[-2px]' => $highlightedAppointmentId === $appointment->id]) @if ($highlightedAppointmentId === $appointment->id) aria-current="true" @endif>
-                        <td data-label="Date & time">
+                        <td data-label="Appointment date">
                             <span class="inline-flex flex-col gap-1 whitespace-nowrap">
                                 <span class="font-semibold text-slate-800">{{ $appointment->starts_at->format('M j, Y') }}</span>
-                                <span class="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500"><span aria-hidden="true">◷</span>{{ $appointment->starts_at->format('g:i A') }}</span>
+                                @if ($appointment->type === 'walk_in')
+                                    <span class="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500"><span aria-hidden="true">◷</span>{{ $appointment->starts_at->format('g:i A') }}</span>
+                                @endif
                             </span>
                         </td>
                         @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
@@ -261,7 +338,12 @@
                             </td>
                         @endif
                         @if ($isAppointmentRecordsPage)
-                            <td data-label="Follow-up date">{{ $appointment->dentalRecord?->follow_up_date?->format('M j, Y') ?? '—' }}</td>
+                            <td data-label="Follow-up date">
+                                {{ $appointment->dentalRecord?->follow_up_date?->format('M j, Y') ?? '—' }}
+                                @if ($appointment->dentalRecord?->formattedFollowUpTime())
+                                    <span class="block text-xs text-slate-500">{{ $appointment->dentalRecord->formattedFollowUpTime() }}</span>
+                                @endif
+                            </td>
                         @endif
                         <td data-label="Branch"><span class="inline-flex max-w-full rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ $appointment->branch?->name ?? 'Not Assigned' }}</span></td>
                         <td data-label="Service">
@@ -288,13 +370,13 @@
                         <td data-label="Queue">{{ $appointment->queueEntry?->queue_number ?? '—' }}</td>
                         <td data-label="Actions"><div class="flex flex-wrap gap-2">
                             @if (auth()->user()->role === 'patient' && in_array($appointment->status, ['pending', 'approved'], true))
-                                <form method="POST" action="{{ route('appointments.transition', [$appointment, 'cancel']) }}" data-confirm="Cancel this appointment? This will release its reserved time slot." data-confirm-title="Cancel appointment" data-confirm-accept="Cancel appointment" data-confirm-variant="warning">@csrf<button class="btn-danger">Cancel</button></form>
+                                <form method="POST" action="{{ route('appointments.transition', [$appointment, 'cancel']) }}" data-confirm="Cancel this appointment request?" data-confirm-title="Cancel appointment" data-confirm-accept="Cancel appointment" data-confirm-variant="warning">@csrf<button class="btn-danger">Cancel</button></form>
                             @elseif (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                 @if (in_array($appointment->status, ['pending', 'approved'], true))
                                     @if (in_array($appointment->id, $reschedulableAppointmentIds, true))
                                         <details class="min-w-0">
                                             <summary class="btn-small cursor-pointer list-none">Reschedule</summary>
-                                            <form method="POST" action="{{ route('clinic.appointments.reschedule', $appointment) }}" class="mt-2 flex min-w-0 flex-wrap gap-1" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-exclude-appointment-id="{{ $appointment->id }}" data-schedule-confirm="Save this new appointment date and time?" data-schedule-confirm-title="Confirm reschedule">
+                                            <form method="POST" action="{{ route('clinic.appointments.reschedule', $appointment) }}" class="mt-2 grid min-w-0 gap-2" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-exclude-appointment-id="{{ $appointment->id }}" data-exclude-appointment-branch-id="{{ $appointment->branch_id }}" data-schedule-confirm="Save this new appointment date?" data-schedule-confirm-title="Confirm reschedule">
                                                 @csrf @method('PATCH')
                                                 <input type="hidden" name="service_id" value="{{ $appointment->service_id }}">
                                                 @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
@@ -309,26 +391,28 @@
                                                 @else
                                                     <input type="hidden" name="branch_id" data-branch-select value="{{ $appointment->branch_id }}">
                                                 @endif
-                                                <input class="form-input date-time-input w-full min-w-0 sm:w-auto sm:min-w-40" type="date" name="appointment_date" min="{{ today(config('clinic.timezone'))->toDateString() }}" value="{{ old('appointment_date', $appointment->starts_at->format('Y-m-d')) }}" data-appointment-date required>
-                                                <span class="relative block min-w-0 sm:w-44">
-                                                    <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-teal-700" aria-hidden="true">
-                                                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                                                            <circle cx="12" cy="12" r="8.5"></circle>
-                                                            <path stroke-linecap="round" d="M12 7v5l3 2"></path>
-                                                        </svg>
-                                                    </span>
-                                                    <select class="form-input date-time-input time-select min-h-10 pl-9 pr-8 text-xs" name="appointment_time" data-appointment-time required disabled>
-                                                    @php($currentTime = $appointment->starts_at->format('H:i'))
-                                                    <option value="">Select time</option>
-                                                    @foreach ($appointmentTimes as $timeOption)
-                                                        <option value="{{ $timeOption }}" @selected(old('appointment_time', $currentTime) === $timeOption)>{{ \Illuminate\Support\Carbon::createFromFormat('H:i', $timeOption)->format('g:i A') }}</option>
-                                                    @endforeach
-                                                    </select>
-                                                </span>
-                                                <button type="submit" class="btn-small">Save new time</button>
+                                                <input type="hidden" name="appointment_date" value="{{ old('appointment_date', $appointment->starts_at->format('Y-m-d')) }}" data-appointment-date>
+                                                <div class="w-full max-w-sm rounded-xl border border-slate-200 bg-slate-50 p-2" data-availability-calendar>
+                                                    <div class="mb-2 flex items-center justify-between gap-2">
+                                                        <button class="calendar-nav-button" type="button" data-calendar-previous aria-label="Previous month">←</button>
+                                                        <p class="text-sm font-bold text-slate-900" data-calendar-month></p>
+                                                        <button class="calendar-nav-button" type="button" data-calendar-next aria-label="Next month">→</button>
+                                                    </div>
+                                                    <div class="mb-1 grid grid-cols-7 text-center text-[0.65rem] font-bold uppercase text-slate-400" aria-hidden="true">
+                                                        <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+                                                    </div>
+                                                    <div class="grid grid-cols-7 gap-1" data-calendar-days role="group" aria-label="Available reschedule dates"></div>
+                                                    <p class="mt-2 border-t border-slate-200 pt-2 text-xs text-slate-600">Selected: <span class="font-semibold" data-selected-date-label>{{ $appointment->starts_at->format('F j, Y') }}</span></p>
+                                                    <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[0.65rem] text-slate-500">
+                                                        <span class="inline-flex items-center gap-1"><span class="h-2 w-2 rounded-full bg-teal-600"></span>Available</span>
+                                                        <span class="inline-flex items-center gap-1"><span class="h-2 w-2 rounded-full bg-rose-400"></span>Limit reached</span>
+                                                        <span class="inline-flex items-center gap-1"><span class="h-2 w-2 rounded-full bg-amber-400"></span>Holiday</span>
+                                                    </div>
+                                                </div>
+                                                <button type="submit" class="btn-small">Save new date</button>
                                             </form>
                                             <p class="hidden mt-2 text-sm font-medium text-slate-600" data-availability-message role="status" aria-live="polite"></p>
-                                            <p class="mt-2 text-xs text-slate-500">Choose a branch and 30-minute slot; clinic hours are 10:00 AM–5:00 PM, with lunch from 12:00 PM–1:00 PM.</p>
+                                            <p class="mt-2 text-xs text-slate-500">Appointments are scheduled by date only. Sunday, clinic holidays, and full dates are unavailable.</p>
                                             <p class="hidden mt-2 text-sm font-medium text-rose-700" data-sunday-error role="alert">The Dental Clinic is closed on Sundays. Please select another date.</p>
                                         </details>
                                     @else
@@ -336,7 +420,7 @@
                                             @if ($appointment->starts_at->toDateString() < today(config('clinic.timezone'))->toDateString())
                                                 <p class="text-xs font-medium text-slate-500">Past appointments cannot be rescheduled.</p>
                                             @else
-                                                <p class="text-xs font-medium text-slate-500">Appointments cannot be rescheduled after their scheduled time.</p>
+                                                <p class="text-xs font-medium text-slate-500">Past appointments cannot be rescheduled.</p>
                                             @endif
                                         @else
                                             <p class="text-xs font-medium text-slate-500">Appointments must be rescheduled at least one calendar day in advance.</p>
@@ -344,8 +428,22 @@
                                     @endif
                                 @endif
                                 @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
-                                    @if ($appointment->status === 'pending')
-                                        <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}" data-confirm="Approve this appointment and reserve its scheduled time?" data-confirm-title="Approve appointment" data-confirm-accept="Approve">@csrf<button class="btn-small">Approve</button></form>
+                                    @if ($appointment->status === 'pending' && auth()->user()->hasRole('admin', 'staff'))
+                                        @if (! in_array($appointment->type, ['online', 'appointment'], true))
+                                            <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}" data-confirm="Approve this appointment for the selected date?" data-confirm-title="Approve appointment" data-confirm-accept="Approve">@csrf<button class="btn-small">Approve</button></form>
+                                        @elseif (
+                                            $capacityManagementBranchId !== (int) $appointment->branch_id
+                                            || $capacityManagementDate !== $appointment->starts_at->toDateString()
+                                        )
+                                            <a class="btn-small" href="{{ route($isAppointmentRecordsPage ? 'clinic.appointment-records' : 'appointments.index', [
+                                                'branch_id' => $appointment->branch_id ?? 'unassigned',
+                                                'date' => $appointment->starts_at->toDateString(),
+                                            ]) }}">Go to matching filter</a>
+                                        @elseif ($capacityDailyLimit === null || $capacityUsed >= (int) $capacityDailyLimit)
+                                            <button class="btn-small cursor-not-allowed opacity-60" type="button" disabled>{{ $capacityDailyLimit === null ? 'Set daily limit first' : 'Fully booked' }}</button>
+                                        @else
+                                            <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}" data-confirm="Approve this appointment for the selected date?" data-confirm-title="Approve appointment" data-confirm-accept="Approve">@csrf<button class="btn-small">Approve</button></form>
+                                        @endif
                                         <form method="POST" action="{{ route('appointments.transition', [$appointment, 'reject']) }}" data-confirm="Reject this appointment request? The patient will be notified." data-confirm-title="Reject appointment" data-confirm-accept="Reject" data-confirm-variant="warning">@csrf<button class="btn-danger">Reject</button></form>
                                     @elseif ($appointment->status === 'in_consultation')
                                         @if (auth()->user()->hasRole('doctor') && $isAppointmentRecordsPage && ! $appointment->dentalRecord)
@@ -380,56 +478,429 @@
     <script>
         document.querySelectorAll('[data-appointment-schedule-form]').forEach((form) => {
             const dateInput = form.querySelector('[data-appointment-date]');
-            const timeSelect = form.querySelector('[data-appointment-time]');
             const branchSelect = form.querySelector('[data-branch-select]');
             const availabilityMessage = form.querySelector('[data-availability-message]');
             const calendar = form.querySelector('[data-availability-calendar]');
+            const dateContainer = form.querySelector('[data-appointment-date-container]');
             const errorMessage = form.querySelector('[data-sunday-error]');
             const sundayMessage = 'The Dental Clinic is closed on Sundays. Please select another date.';
             const patientBooking = form.hasAttribute('data-patient-booking');
             const doctorBooking = form.hasAttribute('data-doctor-booking');
+            const selectedDateLabel = form.querySelector('[data-selected-date-label]');
             const bookingModeSelect = form.querySelector('[data-booking-mode]');
+            const walkInPatientRegistrationButton = form.querySelector('[data-walk-in-patient-register]');
             const bookingTitle = form.querySelector('[data-booking-title]');
             const bookingDescription = form.querySelector('[data-booking-description]');
             const bookingSubmit = form.querySelector('[data-booking-submit]');
             const excludedAppointmentId = form.dataset.excludeAppointmentId;
+            const excludedAppointmentBranchId = form.dataset.excludeAppointmentBranchId;
             const serviceSelects = form.querySelectorAll('[data-service-category]');
-            const timePicker = document.createElement('div');
-            const timeTrigger = document.createElement('button');
-            const timeMenu = document.createElement('div');
-            const timeOptionsId = `appointment-time-options-${Math.random().toString(36).slice(2)}`;
-            let timeIsRequired = timeSelect.required;
-            const appointmentTimeOptions = Array.from(timeSelect.options)
-                .filter((option) => option.value !== '')
-                .map((option) => ({ value: option.value, label: option.textContent }));
+            const serviceTreatmentPickers = [];
+
+            serviceSelects.forEach((select, index) => {
+                const picker = document.createElement('div');
+                const trigger = document.createElement('button');
+                const menu = document.createElement('div');
+                const menuId = `appointment-treatment-options-${index}`;
+                const options = Array.from(select.options).filter((option) => option.value !== '');
+                const items = [];
+
+                picker.className = 'relative';
+                trigger.type = 'button';
+                trigger.className = 'flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm font-medium text-slate-800 shadow-sm transition hover:border-teal-300 focus:border-teal-600 focus:outline-none focus:ring-4 focus:ring-teal-100/80';
+                trigger.setAttribute('role', 'combobox');
+                trigger.setAttribute('aria-haspopup', 'listbox');
+                trigger.setAttribute('aria-expanded', 'false');
+                trigger.setAttribute('aria-controls', menuId);
+                trigger.setAttribute('aria-label', `Choose a treatment from ${select.getAttribute('aria-label')}`);
+                menu.id = menuId;
+                menu.className = 'absolute left-0 right-0 top-full z-30 mt-1 hidden max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg';
+                menu.setAttribute('role', 'listbox');
+                menu.setAttribute('aria-label', `${select.getAttribute('aria-label')} treatments`);
+
+                options.forEach((option) => {
+                    const item = document.createElement('button');
+                    const name = option.dataset.serviceName || option.textContent.split(' — ')[0].trim();
+                    const price = option.dataset.price || option.textContent.split(' — ').slice(1).join(' — ').trim();
+                    const nameLabel = document.createElement('span');
+                    const priceLabel = document.createElement('span');
+
+                    item.type = 'button';
+                    item.className = 'flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-teal-50 focus-visible:bg-teal-50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
+                    item.setAttribute('role', 'option');
+                    item.setAttribute('aria-label', `${name}, ${price}`);
+                    item.textContent = '';
+                    nameLabel.className = 'min-w-0 flex-1 text-slate-700';
+                    nameLabel.textContent = name;
+                    priceLabel.className = 'shrink-0 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-bold text-teal-800 ring-1 ring-inset ring-teal-200';
+                    priceLabel.textContent = price || 'Price to confirm';
+                    item.append(nameLabel, priceLabel);
+                    menu.appendChild(item);
+                    items.push({ option, item });
+                });
+
+                const closeMenu = (returnFocus = false) => {
+                    menu.classList.add('hidden');
+                    trigger.setAttribute('aria-expanded', 'false');
+                    if (returnFocus) {
+                        trigger.focus();
+                    }
+                };
+                const renderTrigger = () => {
+                    const selectedOption = select.selectedOptions[0];
+                    trigger.replaceChildren();
+
+                    const label = document.createElement('span');
+                    label.className = 'min-w-0 flex-1 truncate';
+                    label.textContent = selectedOption?.value
+                        ? selectedOption.dataset.serviceName || selectedOption.textContent.split(' — ')[0].trim()
+                        : 'Choose a treatment...';
+
+                    const chevron = document.createElement('span');
+                    chevron.className = 'shrink-0 text-slate-400';
+                    chevron.setAttribute('aria-hidden', 'true');
+                    chevron.textContent = '▾';
+                    trigger.append(label, chevron);
+                };
+                const openMenu = () => {
+                    menu.classList.remove('hidden');
+                    trigger.setAttribute('aria-expanded', 'true');
+                    menu.querySelector('button:not(:disabled)')?.focus();
+                };
+
+                trigger.addEventListener('click', () => {
+                    if (menu.classList.contains('hidden')) {
+                        openMenu();
+                    } else {
+                        closeMenu();
+                    }
+                });
+                trigger.addEventListener('keydown', (event) => {
+                    if (['ArrowDown', 'Enter', ' '].includes(event.key)) {
+                        event.preventDefault();
+                        openMenu();
+                    }
+                });
+                items.forEach(({ option, item }) => {
+                    item.addEventListener('click', () => {
+                        select.value = option.value;
+                        closeMenu();
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                        renderTrigger();
+                    });
+                    item.addEventListener('keydown', (event) => {
+                        const availableItems = items.filter(({ item: candidate }) => !candidate.hidden && !candidate.disabled);
+                        const itemIndex = availableItems.findIndex(({ item: candidate }) => candidate === item);
+                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                            event.preventDefault();
+                            availableItems[itemIndex + (event.key === 'ArrowDown' ? 1 : -1)]?.item.focus();
+                        } else if (event.key === 'Home' || event.key === 'End') {
+                            event.preventDefault();
+                            availableItems[event.key === 'Home' ? 0 : availableItems.length - 1]?.item.focus();
+                        } else if (event.key === 'Escape') {
+                            event.preventDefault();
+                            closeMenu(true);
+                        }
+                    });
+                });
+
+                select.parentNode.insertBefore(picker, select);
+                picker.append(trigger, menu, select);
+                select.classList.add('hidden');
+                select.setAttribute('aria-hidden', 'true');
+                select.tabIndex = -1;
+                renderTrigger();
+                serviceTreatmentPickers.push({ select, picker, trigger, menu, items, closeMenu, renderTrigger });
+            });
+
+            form.addEventListener('click', (event) => {
+                serviceTreatmentPickers.forEach(({ picker, closeMenu }) => {
+                    if (!picker.contains(event.target)) {
+                        closeMenu();
+                    }
+                });
+            });
+
+            const refreshServiceTreatmentPickers = () => {
+                serviceTreatmentPickers.forEach(({ items, menu, closeMenu, renderTrigger }) => {
+                    items.forEach(({ option, item }) => {
+                        item.hidden = option.hidden;
+                        item.disabled = option.disabled
+                            || (patientBooking
+                                && treatmentLimit > 0
+                                && selectedTreatments.size >= treatmentLimit
+                                && !selectedTreatments.has(option.value));
+                    });
+                    if (menu.contains(document.activeElement)) {
+                        closeMenu();
+                    }
+                    renderTrigger();
+                });
+            };
+
+            const patientSearch = form.querySelector('[data-patient-search]');
+            const patientSelect = form.querySelector('[data-patient-select]');
+            const patientSearchPanel = form.querySelector('[data-patient-search-panel]');
+            const patientSearchResults = form.querySelector('[data-patient-search-results]');
+            const patientSearchEmpty = form.querySelector('[data-patient-search-empty]');
+
+            if (patientSearch && patientSelect && patientSearchPanel && patientSearchResults && patientSearchEmpty) {
+                const normalizeSearch = (value) => value
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .toLocaleLowerCase()
+                    .trim();
+                const patientOptions = Array.from(patientSelect.options)
+                    .filter((option) => option.value !== '')
+                    .map((option) => ({
+                        option,
+                        label: option.dataset.patientLabel || option.textContent.trim(),
+                        searchText: normalizeSearch(option.dataset.patientSearch || option.textContent),
+                    }));
+                const selectedOption = patientSelect.selectedOptions[0];
+                if (selectedOption?.value) {
+                    patientSearch.value = selectedOption.dataset.patientLabel || selectedOption.textContent.trim();
+                }
+
+                const editDistance = (first, second) => {
+                    if (Math.abs(first.length - second.length) > 2) {
+                        return Infinity;
+                    }
+
+                    let previousRow = Array.from({ length: second.length + 1 }, (_, index) => index);
+                    for (let firstIndex = 1; firstIndex <= first.length; firstIndex += 1) {
+                        const currentRow = [firstIndex];
+                        for (let secondIndex = 1; secondIndex <= second.length; secondIndex += 1) {
+                            currentRow[secondIndex] = Math.min(
+                                currentRow[secondIndex - 1] + 1,
+                                previousRow[secondIndex] + 1,
+                                previousRow[secondIndex - 1] + Number(first[firstIndex - 1] !== second[secondIndex - 1]),
+                            );
+                        }
+                        previousRow = currentRow;
+                    }
+
+                    return previousRow[second.length];
+                };
+                const matchesPatient = (query, candidate) => {
+                    const terms = normalizeSearch(query).split(/\s+/).filter(Boolean);
+                    if (terms.length === 0) {
+                        return false;
+                    }
+
+                    const candidateWords = candidate.searchText.split(/\s+/);
+                    return terms.every((term) => {
+                        if (candidate.searchText.includes(term)) {
+                            return true;
+                        }
+                        if (term.length < 4) {
+                            return false;
+                        }
+
+                        const maxDistance = term.length >= 8 ? 2 : 1;
+                        return candidateWords.some((word) => (
+                            Math.abs(word.length - term.length) <= maxDistance
+                            && editDistance(term, word) <= maxDistance
+                        ));
+                    });
+                };
+                const closePatientSearch = () => {
+                    patientSearchPanel.classList.add('hidden');
+                    patientSearch.setAttribute('aria-expanded', 'false');
+                };
+                const choosePatient = (candidate) => {
+                    patientSelect.value = candidate.option.value;
+                    patientSearch.value = candidate.label;
+                    patientSearch.setCustomValidity('');
+                    closePatientSearch();
+                };
+                const patientRegistrationDialog = document.querySelector('[data-walk-in-patient-dialog]');
+                const patientRegistrationForm = patientRegistrationDialog?.querySelector('[data-walk-in-patient-form]');
+
+                if (walkInPatientRegistrationButton && patientRegistrationDialog && patientRegistrationForm) {
+                    const patientRegistrationError = patientRegistrationForm.querySelector('[data-patient-registration-error]');
+                    const patientRegistrationBranch = patientRegistrationForm.querySelector('[data-patient-registration-branch]');
+                    const patientRegistrationBranchHint = form.querySelector('[data-patient-registration-branch-hint]');
+                    const patientRegistrationSubmit = patientRegistrationForm.querySelector('[data-patient-registration-submit]');
+                    const requiresSelectedBranch = walkInPatientRegistrationButton.dataset.requiresBranch === 'true';
+                    const updatePatientRegistrationBranch = () => {
+                        if (requiresSelectedBranch && patientRegistrationBranch) {
+                            patientRegistrationBranch.value = branchSelect?.value || '';
+                            walkInPatientRegistrationButton.disabled = !patientRegistrationBranch.value;
+                            patientRegistrationBranchHint?.classList.toggle('hidden', Boolean(patientRegistrationBranch.value));
+                            walkInPatientRegistrationButton.title = patientRegistrationBranch.value
+                                ? 'Register walk-in patient'
+                                : 'Choose a branch before registering a patient';
+                        }
+                    };
+                    const showPatientRegistrationError = (message) => {
+                        patientRegistrationError.textContent = message;
+                        patientRegistrationError.classList.remove('hidden');
+                    };
+
+                    updatePatientRegistrationBranch();
+                    branchSelect?.addEventListener('change', updatePatientRegistrationBranch);
+                    walkInPatientRegistrationButton.addEventListener('click', () => {
+                        if (doctorBooking && bookingModeSelect?.value !== 'walk_in') {
+                            return;
+                        }
+
+                        updatePatientRegistrationBranch();
+                        patientRegistrationError.textContent = '';
+                        patientRegistrationError.classList.add('hidden');
+                        patientRegistrationDialog.showModal();
+                        patientRegistrationForm.querySelector('[name="name"]')?.focus();
+                    });
+                    patientRegistrationDialog.querySelectorAll('[data-walk-in-patient-close]').forEach((button) => {
+                        button.addEventListener('click', () => patientRegistrationDialog.close());
+                    });
+                    patientRegistrationDialog.addEventListener('click', (event) => {
+                        if (event.target === patientRegistrationDialog) {
+                            patientRegistrationDialog.close();
+                        }
+                    });
+                    patientRegistrationForm.addEventListener('submit', async (event) => {
+                        event.preventDefault();
+                        patientRegistrationError.textContent = '';
+                        patientRegistrationError.classList.add('hidden');
+                        patientRegistrationSubmit.disabled = true;
+                        patientRegistrationSubmit.textContent = 'Creating account...';
+
+                        try {
+                            const response = await fetch(patientRegistrationForm.action, {
+                                method: 'POST',
+                                headers: {
+                                    Accept: 'application/json',
+                                    'X-Requested-With': 'XMLHttpRequest',
+                                },
+                                body: new FormData(patientRegistrationForm),
+                                credentials: 'same-origin',
+                            });
+                            const result = await response.json();
+
+                            if (!response.ok) {
+                                const validationMessage = Object.values(result.errors || {}).flat()[0];
+                                showPatientRegistrationError(validationMessage || result.message || 'The patient account could not be created.');
+                                return;
+                            }
+
+                            if (!result.patient || result.patient.id === undefined || !result.patient.label) {
+                                showPatientRegistrationError('The patient account was created, but could not be added to this appointment. Refresh and search for the patient.');
+                                return;
+                            }
+
+                            const option = document.createElement('option');
+                            option.value = String(result.patient.id);
+                            option.textContent = result.patient.label;
+                            option.dataset.patientLabel = result.patient.label;
+                            option.dataset.patientSearch = result.patient.search || result.patient.label;
+                            patientSelect.append(option);
+                            choosePatient({ option, label: result.patient.label });
+                            patientRegistrationForm.reset();
+                            patientRegistrationDialog.close();
+                        } catch {
+                            showPatientRegistrationError('A network error prevented patient registration. Check your connection and try again.');
+                        } finally {
+                            patientRegistrationSubmit.disabled = false;
+                            patientRegistrationSubmit.textContent = 'Create patient account';
+                        }
+                    });
+                }
+                const renderPatientMatches = () => {
+                    const query = patientSearch.value.trim();
+                    const selectedLabel = patientSelect.selectedOptions[0]?.dataset.patientLabel;
+                    if (!query || (selectedLabel && normalizeSearch(selectedLabel) === normalizeSearch(query))) {
+                        closePatientSearch();
+                        return;
+                    }
+
+                    const matches = patientOptions
+                        .filter((candidate) => matchesPatient(query, candidate))
+                        .sort((first, second) => {
+                            const normalizedQuery = normalizeSearch(query);
+                            const firstScore = first.searchText.startsWith(normalizedQuery) ? 0
+                                : first.searchText.includes(normalizedQuery) ? 1 : 2;
+                            const secondScore = second.searchText.startsWith(normalizedQuery) ? 0
+                                : second.searchText.includes(normalizedQuery) ? 1 : 2;
+                            return firstScore - secondScore || first.label.localeCompare(second.label);
+                        })
+                        .slice(0, 8);
+
+                    patientSearchResults.replaceChildren();
+                    patientSearchEmpty.classList.toggle('hidden', matches.length > 0);
+                    matches.forEach((candidate) => {
+                        const result = document.createElement('button');
+                        result.type = 'button';
+                        result.className = 'flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition hover:bg-teal-50 focus-visible:bg-teal-50 focus-visible:outline-none';
+                        result.setAttribute('role', 'option');
+                        result.setAttribute('aria-selected', String(patientSelect.value === candidate.option.value));
+
+                        const label = document.createElement('span');
+                        label.className = 'font-medium text-slate-800';
+                        label.textContent = candidate.option.dataset.patientLabel || candidate.label;
+                        result.appendChild(label);
+                        result.addEventListener('click', () => choosePatient(candidate));
+                        result.addEventListener('keydown', (event) => {
+                            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                                event.preventDefault();
+                                const results = Array.from(patientSearchResults.querySelectorAll('[role="option"]'));
+                                const index = results.indexOf(result);
+                                const nextResult = results[index + (event.key === 'ArrowDown' ? 1 : -1)];
+                                (nextResult || (event.key === 'ArrowUp' ? patientSearch : null))?.focus();
+                            } else if (event.key === 'Escape') {
+                                event.preventDefault();
+                                closePatientSearch();
+                                patientSearch.focus();
+                            }
+                        });
+                        patientSearchResults.appendChild(result);
+                    });
+
+                    patientSearchPanel.classList.remove('hidden');
+                    patientSearch.setAttribute('aria-expanded', 'true');
+                };
+
+                patientSearch.setCustomValidity(patientSelect.value ? '' : 'Choose a patient from the matching results.');
+                patientSearch.addEventListener('input', () => {
+                    const selectedLabel = patientSelect.selectedOptions[0]?.dataset.patientLabel;
+                    if (!selectedLabel || normalizeSearch(selectedLabel) !== normalizeSearch(patientSearch.value)) {
+                        patientSelect.value = '';
+                    }
+                    patientSearch.setCustomValidity(patientSelect.value ? '' : 'Choose a patient from the matching results.');
+                    renderPatientMatches();
+                });
+                patientSearch.addEventListener('focus', renderPatientMatches);
+                patientSearch.addEventListener('keydown', (event) => {
+                    if (event.key === 'ArrowDown' && !patientSearchPanel.classList.contains('hidden')) {
+                        event.preventDefault();
+                        patientSearchResults.querySelector('[role="option"]')?.focus();
+                    } else if (event.key === 'Enter' && !patientSearchPanel.classList.contains('hidden')) {
+                        const firstResult = patientSearchResults.querySelector('[role="option"]');
+                        if (firstResult) {
+                            event.preventDefault();
+                            firstResult.click();
+                        }
+                    } else if (event.key === 'Escape') {
+                        closePatientSearch();
+                    }
+                });
+                document.addEventListener('click', (event) => {
+                    if (!patientSearchPanel.parentElement.contains(event.target)) {
+                        closePatientSearch();
+                    }
+                });
+            }
+
             let availability = {};
             let holidays = {};
-            let currentMonth = dateInput.value
+            let fullDates = {};
+            let currentMonth = dateInput?.value
                 ? dateInput.value.slice(0, 7)
                 : form.dataset.currentMonth;
             let availabilityRequest = 0;
-            let preferredTime = timeSelect.value;
-
-            timePicker.className = 'time-picker';
-            timeTrigger.type = 'button';
-            timeTrigger.className = 'time-select-trigger';
-            timeTrigger.setAttribute('role', 'combobox');
-            timeTrigger.setAttribute('aria-label', 'Select appointment time');
-            timeTrigger.setAttribute('aria-haspopup', 'listbox');
-            timeTrigger.setAttribute('aria-expanded', 'false');
-            timeTrigger.setAttribute('aria-controls', timeOptionsId);
-            timeTrigger.setAttribute('aria-required', String(timeIsRequired));
-            timeMenu.id = timeOptionsId;
-            timeMenu.className = 'time-select-menu hidden';
-            timeMenu.setAttribute('role', 'listbox');
-            timeMenu.setAttribute('aria-label', 'Available appointment times');
-            timeSelect.required = false;
-            timeSelect.classList.add('time-select-native');
-            timeSelect.tabIndex = -1;
-            timeSelect.setAttribute('aria-hidden', 'true');
-            timeSelect.parentNode.insertBefore(timePicker, timeSelect);
-            timePicker.append(timeTrigger, timeSelect);
-            document.body.append(timeMenu);
+            const isDateOnlyMode = () => patientBooking
+                || (doctorBooking && bookingModeSelect?.value === 'appointment')
+                || Boolean(excludedAppointmentId);
 
             const updateBookingMode = () => {
                 if (!doctorBooking || !bookingModeSelect) {
@@ -437,8 +908,14 @@
                 }
 
                 const isAppointment = bookingModeSelect.value === 'appointment';
-                timeIsRequired = isAppointment;
-                timeTrigger.setAttribute('aria-required', String(timeIsRequired));
+                dateContainer?.classList.toggle('hidden', !isAppointment);
+                if (dateInput) {
+                    dateInput.disabled = !isAppointment;
+                    if (!isAppointment) {
+                        dateInput.value = '';
+                    }
+                }
+                walkInPatientRegistrationButton?.classList.toggle('hidden', isAppointment);
 
                 if (bookingTitle) {
                     bookingTitle.textContent = 'Register an appointment';
@@ -447,162 +924,37 @@
                     const isCrossBranchAppointment = isAppointment
                         && branchSelect.value !== form.dataset.doctorBranchId;
                     bookingDescription.textContent = isCrossBranchAppointment
-                        ? 'Choose a patient, branch, service, date, and available time. The destination branch must approve this appointment before it is confirmed.'
+                        ? 'Choose a patient, branch, service, and date. The destination branch must approve this request.'
                         : (isAppointment
-                            ? 'Choose a patient, branch, service, date, and available time. The appointment will be confirmed without adding the patient to the walk-in queue.'
-                            : 'Choose a patient, service, date, and available time. Walk-ins join the waiting queue immediately.');
+                            ? 'Choose a patient, branch, service, and date. The front desk will review the request; no time slot is assigned.'
+                            : 'Choose a patient and service. Walk-ins join the waiting queue immediately.');
                 }
                 if (bookingSubmit) {
                     const isCrossBranchAppointment = isAppointment
                         && branchSelect.value !== form.dataset.doctorBranchId;
                     bookingSubmit.textContent = isCrossBranchAppointment
                         ? 'Submit for approval'
-                        : (isAppointment ? 'Schedule appointment' : 'Add walk-in to queue');
+                        : (isAppointment ? 'Submit for approval' : 'Add walk-in to queue');
                 }
 
                 form.dataset.scheduleConfirm = isAppointment
                     ? (branchSelect.value !== form.dataset.doctorBranchId
-                        ? 'Submit this appointment to the destination branch for approval?'
-                        : 'Schedule this appointment for the selected patient?')
+                        ? 'Submit this appointment date to the destination branch for approval?'
+                        : 'Submit this appointment date for front-desk approval?')
                     : 'Register this walk-in appointment and add it to the queue?';
                 form.dataset.scheduleConfirmed = 'false';
             };
 
-            bookingModeSelect?.addEventListener('change', updateBookingMode);
             updateBookingMode();
-
-            const closeTimeMenu = (returnFocus = false) => {
-                timeMenu.classList.add('hidden');
-                timeMenu.classList.remove('time-select-menu-fixed');
-                timeMenu.style.removeProperty('left');
-                timeMenu.style.removeProperty('right');
-                timeMenu.style.removeProperty('width');
-                timeMenu.style.removeProperty('top');
-                timeMenu.style.removeProperty('bottom');
-                timeTrigger.setAttribute('aria-expanded', 'false');
-                if (returnFocus) {
-                    timeTrigger.focus();
-                }
-            };
-
-            const renderTimePicker = () => {
-                const selectedOption = timeSelect.selectedOptions[0];
-                timeTrigger.textContent = selectedOption?.value
-                    ? new Intl.DateTimeFormat(undefined, {
-                        hour: 'numeric',
-                        minute: '2-digit',
-                    }).format(new Date(`2000-01-01T${selectedOption.value}:00`))
-                    : 'Select time';
-                timeTrigger.disabled = form.dataset.availabilityLoaded !== 'true'
-                    || !dateInput.value
-                    || timeSelect.options.length <= 1;
-                timeTrigger.setAttribute('aria-disabled', String(timeTrigger.disabled));
-                timeMenu.replaceChildren();
-
-                Array.from(timeSelect.options).filter((option) => option.value !== '').forEach((option) => {
-                    const item = document.createElement('div');
-                    const timeLabel = document.createElement('span');
-                    const statusLabel = document.createElement('span');
-                    const isAvailable = option.dataset.available === 'true';
-                    item.className = isAvailable
-                        ? 'time-select-option'
-                        : 'time-select-option time-select-option-unavailable';
-                    timeLabel.textContent = option.dataset.timeLabel || option.textContent;
-                    statusLabel.className = 'time-select-status';
-                    statusLabel.textContent = option.dataset.status || 'Checking…';
-                    item.append(timeLabel, statusLabel);
-                    item.setAttribute('role', 'option');
-                    item.setAttribute('aria-selected', String(option.selected));
-                    item.setAttribute('aria-disabled', String(option.disabled));
-                    item.tabIndex = -1;
-                    if (!option.disabled) {
-                        item.addEventListener('click', () => {
-                            timeSelect.value = option.value;
-                            timeSelect.dispatchEvent(new Event('change', { bubbles: true }));
-                            closeTimeMenu(true);
-                        });
-                    }
-                    item.addEventListener('keydown', (event) => {
-                        const options = Array.from(timeMenu.querySelectorAll('[role="option"]:not([aria-disabled="true"])'));
-                        const index = options.indexOf(item);
-                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                            event.preventDefault();
-                            options[(index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus();
-                        } else if (event.key === 'Home' || event.key === 'End') {
-                            event.preventDefault();
-                            options[event.key === 'Home' ? 0 : options.length - 1]?.focus();
-                        } else if (event.key === 'Escape') {
-                            event.preventDefault();
-                            closeTimeMenu(true);
-                        } else if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault();
-                            item.click();
-                        }
-                    });
-                    timeMenu.append(item);
-                });
-            };
-
-            timeTrigger.addEventListener('click', () => {
-                if (timeTrigger.disabled) {
-                    return;
-                }
-                const isOpening = timeMenu.classList.contains('hidden');
-                timeMenu.classList.toggle('hidden', !isOpening);
-                timeTrigger.setAttribute('aria-expanded', String(isOpening));
-                if (isOpening) {
-                    const triggerBounds = timeTrigger.getBoundingClientRect();
-                    const viewportPadding = 8;
-                    const menuHeight = Math.min(timeMenu.scrollHeight, window.innerHeight * 0.4, 192);
-                    const spaceBelow = window.innerHeight - triggerBounds.bottom;
-                    const opensAbove = spaceBelow < menuHeight + viewportPadding && triggerBounds.top > spaceBelow;
-                    const menuWidth = Math.min(triggerBounds.width, window.innerWidth - (viewportPadding * 2));
-                    const menuLeft = Math.max(
-                        viewportPadding,
-                        Math.min(triggerBounds.left, window.innerWidth - menuWidth - viewportPadding),
-                    );
-                    timeMenu.classList.add('time-select-menu-fixed');
-                    timeMenu.style.left = `${menuLeft}px`;
-                    timeMenu.style.right = 'auto';
-                    timeMenu.style.width = `${menuWidth}px`;
-                    timeMenu.style.top = opensAbove ? 'auto' : `${triggerBounds.bottom + 4}px`;
-                    timeMenu.style.bottom = opensAbove
-                        ? `${window.innerHeight - triggerBounds.top + 4}px`
-                        : 'auto';
-                    (timeMenu.querySelector('[aria-selected="true"]:not([aria-disabled="true"])')
-                        || timeMenu.querySelector('[role="option"]:not([aria-disabled="true"])'))?.focus();
-                }
-            });
-            timeTrigger.addEventListener('keydown', (event) => {
-                if (['ArrowDown', 'Enter', ' '].includes(event.key) && !timeTrigger.disabled) {
-                    event.preventDefault();
-                    timeTrigger.click();
-                }
-            });
-            document.addEventListener('click', (event) => {
-                if (!timePicker.contains(event.target) && !timeMenu.contains(event.target)) {
-                    closeTimeMenu();
-                }
-            });
-            timePicker.addEventListener('focusout', (event) => {
-                if (!timePicker.contains(event.relatedTarget) && !timeMenu.contains(event.relatedTarget)) {
-                    closeTimeMenu();
-                }
-            });
-            window.addEventListener('scroll', (event) => {
-                if (!timeMenu.contains(event.target)) {
-                    closeTimeMenu();
-                }
-            }, true);
-            window.addEventListener('resize', () => closeTimeMenu());
-            timeSelect.addEventListener('change', renderTimePicker);
-            renderTimePicker();
 
             const formatMonth = (date) => (
                 `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
             );
 
             const updateSundayValidation = () => {
+                if (!dateInput) {
+                    return;
+                }
                 const isSunday = dateInput.value !== ''
                     && new Date(`${dateInput.value}T12:00:00`).getDay() === 0;
 
@@ -613,102 +965,88 @@
             };
 
             const syncSelectedDateState = () => {
-                if (!dateInput.value) {
-                    preferredTime = '';
-                    timeSelect.value = '';
-                    return;
-                }
-
-                const selectedDateAvailability = availability[dateInput.value] || [];
-                if (form.dataset.availabilityLoaded !== 'true') {
-                    return;
-                }
-
-                if (selectedDateAvailability.length === 0) {
+                if (
+                    dateInput?.value
+                    && form.dataset.availabilityLoaded === 'true'
+                    && availability[dateInput.value] !== true
+                ) {
                     dateInput.value = '';
-                    preferredTime = '';
-                    timeSelect.value = '';
-                    return;
                 }
 
-                if (timeSelect.value && !selectedDateAvailability.includes(timeSelect.value)) {
-                    preferredTime = '';
-                    timeSelect.value = '';
+                if (selectedDateLabel) {
+                    selectedDateLabel.textContent = dateInput?.value
+                        ? new Intl.DateTimeFormat(undefined, { dateStyle: 'long' })
+                            .format(new Date(`${dateInput.value}T12:00:00`))
+                        : 'Choose a date';
                 }
             };
 
-            const updateTimes = () => {
-                const selectedTime = preferredTime || timeSelect.value;
-                const availableTimes = availability[dateInput.value] || [];
-                timeSelect.replaceChildren(new Option('Select time', ''));
-
-                appointmentTimeOptions.forEach(({ value: time, label }) => {
-                    const slotDate = new Date(`2000-01-01T${time}:00`);
-                    const formattedTime = new Intl.DateTimeFormat(undefined, {
-                        hour: 'numeric',
-                        minute: '2-digit',
-                    }).format(slotDate);
-                    const isAvailabilityLoaded = form.dataset.availabilityLoaded === 'true';
-                    const isAvailable = isAvailabilityLoaded && dateInput.value !== '' && availableTimes.includes(time);
-                    const status = !dateInput.value
-                        ? 'Choose a date'
-                        : !isAvailabilityLoaded
-                            ? 'Checking…'
-                            : isAvailable
-                                ? 'Available'
-                                : 'Unavailable';
-                    const option = new Option(
-                        `${formattedTime} — ${status}`,
-                        time,
-                        false,
-                        isAvailable && time === selectedTime,
-                    );
-                    option.disabled = !isAvailable;
-                    option.dataset.available = String(isAvailable);
-                    option.dataset.status = status;
-                    option.dataset.timeLabel = formattedTime || label;
-                    timeSelect.add(option);
-                });
-
-                if (form.dataset.availabilityLoaded === 'true'
-                    && selectedTime
-                    && !availableTimes.includes(selectedTime)) {
-                    preferredTime = '';
-                }
-
-                timeSelect.disabled = form.dataset.availabilityLoaded !== 'true'
-                    || !dateInput.value
-                    || availableTimes.length === 0;
-                timeSelect.setCustomValidity('');
-                renderTimePicker();
-
+            const updateDateMessage = () => {
                 if (!availabilityMessage) {
                     return;
                 }
 
                 availabilityMessage.classList.remove('hidden');
-                if (!dateInput.value) {
-                    availabilityMessage.textContent = patientBooking
-                        ? 'Select a highlighted date to see available times.'
-                        : 'Select a date to see available times.';
-                } else if (availableTimes.length === 0) {
+                if (!isDateOnlyMode()) {
+                    availabilityMessage.classList.add('hidden');
+                } else if (form.dataset.availabilityLoaded !== 'true') {
+                    availabilityMessage.textContent = 'Loading available clinic dates…';
+                } else if (!dateInput?.value) {
+                    availabilityMessage.textContent = 'Choose an available clinic date.';
+                } else if (fullDates[dateInput.value]) {
+                    availabilityMessage.textContent = 'The daily approval limit has been reached for this date. Choose another clinic date.';
+                } else if (availability[dateInput.value] !== true) {
                     availabilityMessage.textContent = holidays[dateInput.value]
                         ? `The clinic is closed for ${holidays[dateInput.value]}. Choose another date.`
-                        : 'No appointment times are available on this date.';
+                        : 'This date is unavailable. Choose another clinic date.';
+                } else if (excludedAppointmentId) {
+                    availabilityMessage.textContent = 'This clinic date is available.';
                 } else {
-                    const unavailableCount = appointmentTimeOptions.length - availableTimes.length;
-                    availabilityMessage.textContent = `${availableTimes.length} times available; ${unavailableCount} unavailable.`;
+                    availabilityMessage.textContent = 'The front desk will review requests and decide how many appointments to approve for this date.';
                 }
             };
 
             const selectedTreatments = new Map();
+            const serviceBrowserToggle = form.querySelector('[data-service-browser-toggle]');
+            const serviceBrowser = form.querySelector('[data-service-browser]');
+            const serviceBrowserLabel = form.querySelector('[data-service-browser-label]');
+            const serviceBrowserChevron = form.querySelector('[data-service-browser-chevron]');
+            const serviceBrowserEmpty = form.querySelector('[data-service-browser-empty]');
+            const serviceMessage = form.querySelector('[data-service-message]');
+            const serviceCategoryPicker = form.querySelector('[data-service-category-picker]');
+            const serviceCategoryCards = Array.from(form.querySelectorAll('[data-service-category-card]'));
             const treatmentsList = form.querySelector('[data-selected-treatments-list]');
             const countBadge = form.querySelector('[data-selected-count-badge]');
             const noTreatmentsMsg = form.querySelector('[data-no-treatments-message]');
+            const treatmentLimit = Number(form.dataset.maxTreatments || 0);
+            const treatmentLimitMessage = form.querySelector('[data-treatment-limit-message]');
             const combinedCostEl = form.querySelector('[data-combined-estimated-cost]');
             const combinedBreakdownEl = form.querySelector('[data-combined-breakdown]');
             const hiddenContainer = form.querySelector('[data-service-ids-container]');
             const formatEstimate = (amount) => `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            const setServiceBrowserOpen = (isOpen) => {
+                serviceBrowser?.classList.toggle('hidden', !isOpen);
+                serviceBrowserToggle?.setAttribute('aria-expanded', String(isOpen));
+                serviceBrowserChevron?.classList.toggle('rotate-180', isOpen);
+                if (serviceBrowserLabel) {
+                    serviceBrowserLabel.textContent = isOpen
+                        ? 'Hide services'
+                        : (selectedTreatments.size > 0 ? 'Add another service' : 'Browse services');
+                }
+            };
+
+            serviceBrowserToggle?.addEventListener('click', () => {
+                setServiceBrowserOpen(serviceBrowserToggle.getAttribute('aria-expanded') !== 'true');
+            });
+            const updateVisibleServiceCategory = () => {
+                serviceCategoryCards.forEach((categoryCard) => {
+                    const isSelectedCategory = categoryCard.dataset.categoryIndex === serviceCategoryPicker?.value
+                        && categoryCard.dataset.available === 'true';
+                    categoryCard.classList.toggle('hidden', !isSelectedCategory);
+                });
+            };
+
+            serviceCategoryPicker?.addEventListener('change', updateVisibleServiceCategory);
 
             const getTreatmentEstimate = (option) => {
                 const rawPrice = Number(option.dataset.rawPrice);
@@ -751,25 +1089,26 @@
 
             const renderSelectedTreatments = () => {
                 const count = selectedTreatments.size;
+                const hasReachedTreatmentLimit = patientBooking && treatmentLimit > 0 && count >= treatmentLimit;
+                treatmentLimitMessage?.classList.toggle('hidden', !hasReachedTreatmentLimit);
+                if (serviceBrowserLabel) {
+                    serviceBrowserLabel.textContent = serviceBrowserToggle?.getAttribute('aria-expanded') === 'true'
+                        ? 'Hide services'
+                        : (count > 0 ? 'Add another service' : 'Browse services');
+                }
                 if (countBadge) {
                     countBadge.textContent = `${count} treatment${count === 1 ? '' : 's'} selected`;
                 }
 
                 serviceSelects.forEach((select) => {
-                    const categoryLabel = select.closest('label');
-                    const activeBadge = categoryLabel?.querySelector('[data-category-active]');
-                    const selectedServices = categoryLabel?.querySelector('[data-category-selections]');
+                    const categoryCard = select.closest('[data-service-category-card]');
+                    const activeBadge = categoryCard?.querySelector('[data-category-active]');
+                    const selectedServices = categoryCard?.querySelector('[data-category-selections]');
                     const catOptions = Array.from(select.options).map((o) => o.value).filter(Boolean);
                     const selectedCategoryTreatments = catOptions
                         .map((id) => selectedTreatments.get(String(id)))
                         .filter(Boolean);
                     const catSelectedCount = selectedCategoryTreatments.length;
-
-                    categoryLabel?.classList.toggle('border-teal-500', catSelectedCount > 0);
-                    categoryLabel?.classList.toggle('bg-teal-50', catSelectedCount > 0);
-                    categoryLabel?.classList.toggle('ring-2', catSelectedCount > 0);
-                    categoryLabel?.classList.toggle('ring-teal-100', catSelectedCount > 0);
-                    categoryLabel?.classList.toggle('shadow-md', catSelectedCount > 0);
 
                     if (activeBadge) {
                         activeBadge.classList.toggle('hidden', catSelectedCount === 0);
@@ -805,6 +1144,7 @@
                         }
                     }
                     select.value = '';
+                    serviceTreatmentPickers.find((picker) => picker.select === select)?.renderTrigger();
                 });
 
                 if (treatmentsList) {
@@ -932,17 +1272,7 @@
                     }
                 }
 
-                if (serviceSelects.length > 0) {
-                    const primarySelect = serviceSelects[0];
-                    primarySelect.name = 'service_id';
-                    if (count > 0) {
-                        primarySelect.required = false;
-                        primarySelect.setCustomValidity('');
-                    } else {
-                        primarySelect.required = true;
-                        primarySelect.setCustomValidity('Choose one or more treatments before continuing.');
-                    }
-                }
+                refreshServiceTreatmentPickers();
             };
 
             const filterServicesForBranch = (clearSelection = false) => {
@@ -974,11 +1304,41 @@
 
                     const categoryCard = select.closest('[data-service-category-card]');
                     if (categoryCard) {
-                        categoryCard.hidden = branchId === '' || availableCount === 0;
+                        const categoryAvailable = branchId !== '' && availableCount > 0;
+                        categoryCard.dataset.available = String(categoryAvailable);
+                        const categoryOption = Array.from(serviceCategoryPicker?.options || [])
+                            .find((option) => option.value === categoryCard.dataset.categoryIndex);
+                        if (categoryOption) {
+                            categoryOption.disabled = !categoryAvailable;
+                        }
                     }
                 });
 
+                refreshServiceTreatmentPickers();
+
+                if (serviceCategoryPicker) {
+                    if (serviceCategoryPicker.selectedOptions[0]?.disabled) {
+                        serviceCategoryPicker.value = '';
+                    }
+                    serviceCategoryPicker.disabled = !Array.from(serviceCategoryPicker.options)
+                        .some((option) => option.value !== '' && !option.disabled);
+                    updateVisibleServiceCategory();
+                }
+
+                if (serviceBrowserEmpty) {
+                    const hasAvailableCategory = serviceCategoryCards
+                        .some((categoryCard) => categoryCard.dataset.available === 'true');
+                    serviceBrowserEmpty.textContent = branchId
+                        ? 'No services are available for this branch.'
+                        : 'Choose a branch to view its available services.';
+                    serviceBrowserEmpty.classList.toggle('hidden', hasAvailableCategory);
+                }
+
                 if (clearSelection) {
+                    if (serviceCategoryPicker) {
+                        serviceCategoryPicker.value = '';
+                    }
+                    updateVisibleServiceCategory();
                     serviceSelects.forEach((select) => {
                         select.value = '';
                     });
@@ -990,11 +1350,17 @@
                 if (!serviceId || selectedTreatments.has(String(serviceId))) {
                     return;
                 }
+                if (patientBooking && treatmentLimit > 0 && selectedTreatments.size >= treatmentLimit) {
+                    treatmentLimitMessage?.classList.remove('hidden');
+                    setServiceBrowserOpen(true);
+                    return;
+                }
                 const opt = getServiceOption(serviceId);
                 if (!opt) {
                     return;
                 }
 
+                serviceMessage?.classList.add('hidden');
                 const estimate = getTreatmentEstimate(opt);
                 selectedTreatments.set(String(serviceId), {
                     id: String(serviceId),
@@ -1011,9 +1377,6 @@
             const removeTreatment = (serviceId) => {
                 selectedTreatments.delete(String(serviceId));
                 renderSelectedTreatments();
-                if (dateInput.value || patientBooking) {
-                    loadAvailability(currentMonth);
-                }
             };
 
             const renderCalendar = () => {
@@ -1044,16 +1407,18 @@
 
                 for (let day = 1; day <= daysInMonth; day += 1) {
                     const date = `${currentMonth}-${String(day).padStart(2, '0')}`;
-                    const times = availability[date] || [];
                     const holidayName = holidays[date];
-                    const isAvailable = times.length > 0;
+                    const isAvailable = availability[date] === true;
+                    const isFull = fullDates[date] === true;
                     const button = document.createElement('button');
                     const isSelected = dateInput.value === date;
                     button.type = 'button';
                     button.disabled = !isAvailable;
                     button.className = isAvailable
                         ? 'calendar-day calendar-day-available'
-                        : holidayName
+                        : isFull
+                            ? 'calendar-day calendar-day-full'
+                            : holidayName
                             ? 'calendar-day calendar-day-holiday'
                             : 'calendar-day calendar-day-unavailable';
                     if (isAvailable && isSelected) {
@@ -1063,9 +1428,11 @@
                     button.setAttribute('aria-pressed', String(isSelected));
                     button.setAttribute(
                         'aria-label',
-                        `${new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(new Date(`${date}T12:00:00`))}: ${holidayName ? `${holidayName}; clinic closed` : isAvailable ? `${times.length} available times` : 'unavailable'}`,
+                        `${new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(new Date(`${date}T12:00:00`))}: ${isFull ? 'fully booked; daily approval limit reached' : holidayName ? `${holidayName}; clinic closed` : isAvailable ? 'available for appointment requests' : 'unavailable'}`,
                     );
-                    if (holidayName) {
+                    if (isFull) {
+                        button.title = 'Fully booked — daily approval limit reached';
+                    } else if (holidayName) {
                         button.title = `${holidayName} — clinic closed`;
                     }
                     button.addEventListener('click', () => {
@@ -1081,17 +1448,16 @@
 
             const loadAvailability = async (month) => {
                 const requestId = ++availabilityRequest;
-                closeTimeMenu();
                 currentMonth = month;
                 availability = {};
                 holidays = {};
+                fullDates = {};
                 form.dataset.availabilityLoaded = 'false';
-                timeSelect.disabled = true;
                 if (availabilityMessage) {
                     availabilityMessage.classList.remove('hidden');
-                    availabilityMessage.textContent = 'Loading available appointment times…';
+                    availabilityMessage.textContent = 'Loading available clinic dates…';
                 }
-                updateTimes();
+                updateDateMessage();
                 renderCalendar();
 
                 const url = new URL(form.dataset.availabilityUrl, window.location.origin);
@@ -1099,24 +1465,16 @@
                 if (!branchSelect?.value) {
                     if (availabilityMessage) {
                         availabilityMessage.classList.remove('hidden');
-                        availabilityMessage.textContent = 'Choose a branch to see its available appointment times.';
+                        availabilityMessage.textContent = 'Choose a branch to see its available clinic dates.';
                     }
                     return false;
                 }
                 url.searchParams.set('branch_id', branchSelect.value);
-                if (excludedAppointmentId) {
+                if (
+                    excludedAppointmentId
+                    && branchSelect.value === excludedAppointmentBranchId
+                ) {
                     url.searchParams.set('exclude_appointment_id', excludedAppointmentId);
-                }
-                if (selectedTreatments.size > 0) {
-                    const sIds = Array.from(selectedTreatments.keys());
-                    url.searchParams.set('service_id', sIds[0]);
-                    sIds.forEach((id) => url.searchParams.append('service_ids[]', id));
-                } else {
-                    const selectedService = form.querySelector('[name="service_id"]:checked')
-                        || form.querySelector('[name="service_id"]:not([type="radio"])');
-                    if (selectedService?.value) {
-                        url.searchParams.set('service_id', selectedService.value);
-                    }
                 }
 
                 try {
@@ -1134,15 +1492,12 @@
                     }
                     availability = result.days;
                     holidays = result.holidays || {};
+                    fullDates = result.full_dates || {};
                     currentMonth = result.month;
                     form.dataset.availabilityLoaded = 'true';
-                    if (dateInput.value && (!availability[dateInput.value] || availability[dateInput.value].length === 0)) {
-                        preferredTime = '';
-                        timeSelect.value = '';
-                        dateInput.value = '';
-                    }
+                    syncSelectedDateState();
                     renderCalendar();
-                    updateTimes();
+                    updateDateMessage();
                     return true;
                 } catch (error) {
                     if (requestId !== availabilityRequest) {
@@ -1157,38 +1512,32 @@
                 }
             };
 
-            dateInput.addEventListener('change', () => {
+            dateInput?.addEventListener('change', () => {
                 updateSundayValidation();
-                if (dateInput.value) {
-                    preferredTime = '';
-                    timeSelect.value = '';
-                    loadAvailability(dateInput.value.slice(0, 7));
-                    return;
-                }
-                preferredTime = '';
-                timeSelect.value = '';
+                syncSelectedDateState();
                 renderCalendar();
-                updateTimes();
-            });
-            timeSelect.addEventListener('change', () => {
-                preferredTime = timeSelect.value;
-                timeSelect.setCustomValidity('');
+                updateDateMessage();
             });
             branchSelect?.addEventListener('change', () => {
                 filterServicesForBranch(true);
                 updateBookingMode();
-                preferredTime = '';
-                timeSelect.value = '';
-                loadAvailability(dateInput.value ? dateInput.value.slice(0, 7) : currentMonth);
+                if (isDateOnlyMode()) {
+                    loadAvailability(dateInput?.value ? dateInput.value.slice(0, 7) : currentMonth);
+                }
             });
             serviceSelects.forEach((select) => select.addEventListener('change', () => {
                 if (select.value) {
                     addTreatment(select.value);
-                    if (dateInput.value || patientBooking) {
-                        loadAvailability(currentMonth);
-                    }
                 }
             }));
+            bookingModeSelect?.addEventListener('change', () => {
+                updateBookingMode();
+                if (isDateOnlyMode()) {
+                    loadAvailability(dateInput?.value ? dateInput.value.slice(0, 7) : currentMonth);
+                } else {
+                    availabilityMessage?.classList.add('hidden');
+                }
+            });
             calendar?.querySelector('[data-calendar-previous]').addEventListener('click', () => {
                 const previous = new Date(`${currentMonth}-01T12:00:00`);
                 previous.setMonth(previous.getMonth() - 1);
@@ -1209,39 +1558,37 @@
                 updateSundayValidation();
 
                 if (serviceSelects.length > 0 && selectedTreatments.size === 0) {
-                    if (availabilityMessage) {
-                        availabilityMessage.classList.remove('hidden');
-                        availabilityMessage.textContent = 'Choose one or more treatments before continuing.';
+                    if (serviceMessage) {
+                        serviceMessage.textContent = branchSelect?.value
+                            ? 'Choose one or more treatments before continuing.'
+                            : 'Choose a branch and one or more treatments before continuing.';
+                        serviceMessage.classList.remove('hidden');
                     }
-                    serviceSelects[0]?.focus();
+                    setServiceBrowserOpen(true);
+                    if (serviceCategoryPicker && !serviceCategoryPicker.value) {
+                        const firstAvailableCategory = Array.from(serviceCategoryPicker.options)
+                            .find((option) => option.value !== '' && !option.disabled);
+                        if (firstAvailableCategory) {
+                            serviceCategoryPicker.value = firstAvailableCategory.value;
+                            updateVisibleServiceCategory();
+                        }
+                    }
+                    const availableSelect = Array.from(serviceSelects).find((select) => (
+                        !select.closest('[data-service-category-card]')?.classList.contains('hidden')
+                    ));
+                    const availablePicker = serviceTreatmentPickers.find((picker) => picker.select === availableSelect);
+                    (availablePicker?.trigger || branchSelect)?.focus();
                     return;
                 }
 
                 const scheduledDoctorAppointment = doctorBooking && bookingModeSelect?.value === 'appointment';
-                if ((patientBooking || scheduledDoctorAppointment) && !dateInput.value) {
+                const requiresDate = patientBooking || scheduledDoctorAppointment || Boolean(excludedAppointmentId);
+                if (requiresDate && !dateInput?.value) {
                     if (availabilityMessage) {
                         availabilityMessage.classList.remove('hidden');
-                        availabilityMessage.textContent = 'Choose an available date and time to continue.';
+                        availabilityMessage.textContent = 'Choose an available clinic date to continue.';
                     }
-                    calendar?.querySelector('.calendar-day-available')?.focus();
-                    return;
-                }
-
-                if ((patientBooking || scheduledDoctorAppointment) && !timeSelect.value) {
-                    if (availabilityMessage) {
-                        availabilityMessage.classList.remove('hidden');
-                        availabilityMessage.textContent = 'Choose one of the available appointment times to continue.';
-                    }
-                    timeTrigger.focus();
-                    return;
-                }
-
-                if (timeIsRequired && !timeSelect.value) {
-                    if (availabilityMessage) {
-                        availabilityMessage.classList.remove('hidden');
-                        availabilityMessage.textContent = 'Choose an available appointment time before continuing.';
-                    }
-                    timeTrigger.focus();
+                    (calendar?.querySelector('.calendar-day-available') || dateInput)?.focus();
                     return;
                 }
 
@@ -1249,22 +1596,19 @@
                     return;
                 }
 
-                const selectedMonth = dateInput.value
-                    ? dateInput.value.slice(0, 7)
-                    : currentMonth;
-                if (!await loadAvailability(selectedMonth)) {
-                    return;
-                }
-
-                const availableTimes = availability[dateInput.value] || [];
-                if (dateInput.value && !availableTimes.includes(timeSelect.value)) {
-                    timeSelect.setCustomValidity('That time is no longer available. Choose another time.');
-                    if (availabilityMessage) {
-                        availabilityMessage.classList.remove('hidden');
-                        availabilityMessage.textContent = 'That time is no longer available. Choose another time.';
+                if (requiresDate) {
+                    if (!await loadAvailability(dateInput.value.slice(0, 7))) {
+                        return;
                     }
-                    timeTrigger.focus();
-                    return;
+
+                    if (availability[dateInput.value] !== true) {
+                        if (availabilityMessage) {
+                            availabilityMessage.classList.remove('hidden');
+                            availabilityMessage.textContent = 'That clinic date is no longer available. Choose another date.';
+                        }
+                        dateInput.focus();
+                        return;
+                    }
                 }
 
                 if (form.hasAttribute('data-schedule-confirm') && form.dataset.scheduleConfirmed !== 'true') {
@@ -1273,9 +1617,9 @@
                         confirmLabel: patientBooking
                             ? 'Submit request'
                             : excludedAppointmentId
-                                ? 'Save reschedule'
+                                ? 'Save date'
                                 : scheduledDoctorAppointment
-                                    ? 'Schedule appointment'
+                                    ? 'Submit for approval'
                                     : 'Register walk-in',
                         variant: 'warning',
                     });
@@ -1294,13 +1638,19 @@
             serviceSelects.forEach((select) => {
                 Array.from(select.options).forEach((opt) => {
                     if (opt.selected && opt.value) {
+                        const categoryCard = select.closest('[data-service-category-card]');
+                        if (serviceCategoryPicker && categoryCard) {
+                            serviceCategoryPicker.value = categoryCard.dataset.categoryIndex;
+                        }
                         addTreatment(opt.value);
                     }
                 });
             });
             filterServicesForBranch();
             renderSelectedTreatments();
-            loadAvailability(currentMonth);
+            if (isDateOnlyMode()) {
+                loadAvailability(currentMonth);
+            }
         });
     </script>
 @endsection

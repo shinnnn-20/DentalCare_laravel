@@ -339,6 +339,10 @@
         @apply cursor-not-allowed border-transparent bg-slate-100 text-slate-300;
     }
 
+    .calendar-day-full {
+        @apply cursor-not-allowed border-rose-200 bg-rose-50 font-medium text-rose-700;
+    }
+
     .calendar-day-holiday {
         @apply cursor-not-allowed border-amber-200 bg-amber-50 font-medium text-amber-700;
     }
@@ -509,6 +513,11 @@ a {
         margin: 12mm;
     }
 
+    @page queue-ticket {
+        size: 80mm 110mm;
+        margin: 4mm;
+    }
+
     .app-sidebar,
     .print-hidden {
         display: none !important;
@@ -530,6 +539,90 @@ a {
         width: 100% !important;
         max-width: none !important;
         margin: 0 !important;
+    }
+
+    body.printing-queue-ticket .app-shell main > .mx-auto > :not(:has(.queue-print-ticket.is-print-target)),
+    body.printing-queue-ticket .app-shell main > .mx-auto > :has(.queue-print-ticket.is-print-target) > :not(:has(.queue-print-ticket.is-print-target)) {
+        display: none !important;
+    }
+
+    body.printing-queue-ticket * {
+        visibility: hidden !important;
+    }
+
+    body.printing-queue-ticket .queue-print-ticket.is-print-target,
+    body.printing-queue-ticket .queue-print-ticket.is-print-target * {
+        visibility: visible !important;
+    }
+
+    body.printing-queue-ticket .queue-print-ticket.is-print-target {
+        page: queue-ticket;
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 99999;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 100%;
+        margin: 0 !important;
+        background: white !important;
+    }
+
+    .queue-ticket-paper {
+        box-sizing: border-box;
+        width: 72mm;
+        min-height: 96mm;
+        padding: 7mm 5mm;
+        border: 1px dashed #64748b;
+        background: white;
+        color: #0f172a;
+        font-family: Arial, sans-serif;
+        text-align: center;
+    }
+
+    .queue-ticket-clinic {
+        font-size: 12pt;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    .queue-ticket-label {
+        margin-top: 5mm;
+        color: #475569;
+        font-size: 10pt;
+    }
+
+    .queue-ticket-number {
+        margin: 4mm 0;
+        border: 2px solid #0f766e;
+        padding: 2mm;
+        color: #0f766e;
+        font-size: 34pt;
+        font-weight: 800;
+        line-height: 1.1;
+    }
+
+    .queue-ticket-patient {
+        font-size: 14pt;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+    }
+
+    .queue-ticket-detail {
+        margin-top: 2mm;
+        color: #334155;
+        font-size: 9pt;
+        overflow-wrap: anywhere;
+    }
+
+    .queue-ticket-note {
+        margin-top: 6mm;
+        border-top: 1px solid #cbd5e1;
+        padding-top: 3mm;
+        color: #475569;
+        font-size: 9pt;
     }
 
     body:has(.billing-print-report) * {

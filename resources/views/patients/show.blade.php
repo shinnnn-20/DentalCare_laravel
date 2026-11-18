@@ -101,7 +101,7 @@
             <div class="divide-y divide-slate-100">
                 @forelse ($patient->appointments as $appointment)
                     <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-                        <div><p class="font-medium">{{ $appointment->treatmentNames() }}</p><p class="mt-1 text-sm text-slate-500">{{ $appointment->starts_at->format('M j, Y · g:i A') }} · {{ str_replace('_', ' ', $appointment->type) }}</p></div>
+                        <div><p class="font-medium">{{ $appointment->treatmentNames() }}</p><p class="mt-1 text-sm text-slate-500">{{ $appointment->starts_at->format($appointment->type === 'walk_in' ? 'M j, Y · g:i A' : 'M j, Y') }} · {{ str_replace('_', ' ', $appointment->type) }}</p></div>
                         <span class="status-badge capitalize">{{ str_replace('_', ' ', $appointment->status) }}</span>
                     </div>
                 @empty
@@ -127,7 +127,7 @@
                             <h4 class="text-sm font-semibold">Services Performed</h4>
                             @if ($record->appointment?->patient_id === $record->patient_id && ($record->appointment?->service || $record->appointment?->services?->isNotEmpty()))
                                 <p class="mt-2 text-sm font-medium">{{ $record->appointment->treatmentNames() }}</p>
-                                <p class="mt-1 text-xs text-slate-500">Visit: {{ $record->appointment->starts_at->format('M j, Y · g:i A') }} · {{ $record->appointment->duration_minutes }} minutes</p>
+                                <p class="mt-1 text-xs text-slate-500">Visit: {{ $record->appointment->starts_at->format($record->appointment->type === 'walk_in' ? 'M j, Y · g:i A' : 'M j, Y') }} · {{ $record->appointment->duration_minutes }} minutes</p>
                                 <p class="mt-1 text-xs text-slate-500">Treating dentist: {{ $record->treatingDentist?->name ?? 'Not recorded' }}</p>
                                 @if ($record->notes)<p class="mt-1 text-sm text-slate-600">Clinical notes: {{ $record->notes }}</p>@endif
                             @else

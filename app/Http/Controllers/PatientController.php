@@ -7,6 +7,7 @@ use App\Models\Patient;
 use App\Models\User;
 use App\Services\AuditTrail;
 use App\Services\ClinicNotificationService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -200,7 +201,7 @@ class PatientController extends Controller
         Request $request,
         AuditTrail $auditTrail,
         ClinicNotificationService $notifications,
-    ): RedirectResponse {
+    ): RedirectResponse|JsonResponse {
         $this->ensureDoctorHasBranch($request);
         $user = $request->user();
         $branchId = $user->hasRole('staff', 'doctor')
@@ -266,6 +267,18 @@ class PatientController extends Controller
             'patient',
             $patient->id,
         );
+
+        if ($request->expectsJson()) {
+            $patient->loadMissing('user');
+
+            return response()->json([
+                'patient' => [
+                    'id' => $patient->id,
+                    'label' => $patient->patient_number.' · '.$patient->user->name,
+                    'search' => $patient->patient_number.' '.$patient->user->name,
+                ],
+            ], 201);
+        }
 
         return redirect()->route('clinic.patients.show', $patient)->with('status', 'Patient account created.');
     }

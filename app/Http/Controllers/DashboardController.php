@@ -39,7 +39,7 @@ class DashboardController extends Controller
                     && $rfidCard->valid_until->toDateString() <= $rfidExpirationWarningThrough,
                 'nextAppointment' => $patient->appointments()
                     ->with(['service', 'services'])
-                    ->where('starts_at', '>=', now())
+                    ->whereDate('starts_at', '>=', today(config('clinic.timezone')))
                     ->whereNotIn('status', ['cancelled', 'rejected', 'completed', 'no_show', 'billed'])
                     ->orderBy('starts_at')
                     ->first(),
@@ -330,7 +330,7 @@ class DashboardController extends Controller
         $columns = [
             'name' => 'Patient name',
             'patient_id' => 'Patient ID',
-            'date_time' => 'Appointment date and time',
+            'date_time' => 'Appointment date',
             'branch' => 'Branch',
             'services' => 'Services / treatments',
             'type' => 'Appointment type',
@@ -349,7 +349,9 @@ class DashboardController extends Controller
                 $record = [
                     'name' => $appointment->patient->user->name,
                     'patient_id' => $appointment->patient->patient_number,
-                    'date_time' => $appointment->starts_at->format('M j, Y · g:i A'),
+                    'date_time' => $appointment->type === 'walk_in'
+                        ? $appointment->starts_at->format('M j, Y · g:i A')
+                        : $appointment->starts_at->format('M j, Y'),
                     'branch' => $appointment->branch?->name ?? 'Unassigned',
                     'services' => $appointment->treatmentNames(),
                     'type' => match ($appointment->type) {
@@ -404,7 +406,7 @@ class DashboardController extends Controller
                 'queue_number' => 'Queue number',
                 'name' => 'Patient name',
                 'patient_id' => 'Patient ID',
-                'appointment_time' => 'Appointment time',
+                'appointment_time' => 'Queue entry time',
                 'branch' => 'Branch',
                 'type' => 'Appointment type',
                 'status' => 'Queue status',
@@ -414,7 +416,7 @@ class DashboardController extends Controller
                 'queue_number' => $entry->queue_number,
                 'name' => $entry->appointment->patient->user->name,
                 'patient_id' => $entry->appointment->patient->patient_number,
-                'appointment_time' => $entry->appointment->starts_at->format('g:i A'),
+                'appointment_time' => $entry->created_at->format('g:i A'),
                 'branch' => $entry->appointment->branch?->name ?? 'Unassigned',
                 'type' => match ($entry->appointment->type) {
                     'walk_in' => 'Walk-in',

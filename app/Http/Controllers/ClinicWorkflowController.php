@@ -117,7 +117,8 @@ class ClinicWorkflowController extends Controller
             'treatment' => ['required', 'string', 'max:5000'],
             'prescription' => ['nullable', 'string', 'max:5000'],
             'notes' => ['nullable', 'string', 'max:5000'],
-            'follow_up_date' => ['nullable', 'date', 'after_or_equal:today'],
+            'follow_up_date' => ['nullable', 'date', 'after_or_equal:today', 'required_with:follow_up_time'],
+            'follow_up_time' => ['nullable', 'date_format:H:i'],
         ]);
 
         $record = DentalRecord::create([
@@ -127,13 +128,16 @@ class ClinicWorkflowController extends Controller
             'created_by' => $request->user()->id,
             'treating_dentist_id' => $data['treating_dentist_id'],
         ]);
+        $followUpDescription = $record->follow_up_date === null
+            ? 'no follow-up date set.'
+            : 'follow-up scheduled for '.$record->follow_up_date->toDateString()
+                .($record->formattedFollowUpTime() === null ? '' : ' at '.$record->formattedFollowUpTime()).'.';
         $auditTrail->record(
             $request->user(),
             'dental_record_created',
             'dental_records',
             $record,
-            "Created dental record #{$record->id} for patient {$appointment->patient->patient_number} from appointment #{$appointment->id}"
-                .($record->follow_up_date === null ? '; no follow-up date set.' : '; follow-up scheduled for '.$record->follow_up_date->toDateString().'.'),
+            "Created dental record #{$record->id} for patient {$appointment->patient->patient_number} from appointment #{$appointment->id}; {$followUpDescription}",
         );
         $notifications->notifyClinicStaff(
             $request->user(),
@@ -265,6 +269,10 @@ class ClinicWorkflowController extends Controller
         $rules = [
             'discount_type' => ['required', 'string', Rule::in(['none', 'senior', 'pwd', 'percentage'])],
             'discount_value' => $discountValueRules,
+            'discount_card_number' => ['nullable', 'string', 'max:100', 'required_if:discount_type,senior,pwd'],
+        ];
+        $messages = [
+            'discount_card_number.required_if' => 'Enter the Senior or PWD card number before applying this discount.',
         ];
 
         if ($services->count() === 1) {
@@ -301,9 +309,12 @@ class ClinicWorkflowController extends Controller
             ];
         }
 
-        $data = $request->validate($rules);
+        $data = $request->validate($rules, $messages);
 
         $discountType = $data['discount_type'];
+        $discountCardNumber = in_array($discountType, ['senior', 'pwd'], true)
+            ? $data['discount_card_number']
+            : null;
         $discountValue = match ($discountType) {
             'none' => 0.0,
             'senior', 'pwd' => 20.0,
@@ -338,7 +349,7 @@ class ClinicWorkflowController extends Controller
         $discountBasisPoints = (int) round($discountValue * 100);
         $discountCents = intdiv($subtotalCents * $discountBasisPoints + 5000, 10000);
 
-        $bill = DB::transaction(function () use ($appointment, $request, $subtotalCents, $discountType, $discountValue, $discountCents, $itemRows, $appointmentCompletion): Bill {
+        $bill = DB::transaction(function () use ($appointment, $request, $subtotalCents, $discountType, $discountCardNumber, $discountValue, $discountCents, $itemRows, $appointmentCompletion): Bill {
             $totalCents = $subtotalCents - $discountCents;
             $bill = Bill::create([
                 'bill_number' => 'B-PENDING-'.Str::uuid(),
@@ -348,6 +359,7 @@ class ClinicWorkflowController extends Controller
                 'subtotal' => number_format($subtotalCents / 100, 2, '.', ''),
                 'discount_type' => $discountType,
                 'discount_value' => number_format($discountValue, 2, '.', ''),
+                'discount_card_number' => $discountCardNumber,
                 'discount' => number_format($discountCents / 100, 2, '.', ''),
                 'total' => number_format($totalCents / 100, 2, '.', ''),
                 'payment_status' => $totalCents === 0 ? 'paid' : 'unpaid',
@@ -954,7 +966,7 @@ class ClinicWorkflowController extends Controller
             [
                 'name' => 'Patient name',
                 'patient_id' => 'Patient ID',
-                'date_time' => 'Appointment date and time',
+                'date_time' => 'Appointment date',
                 'branch' => 'Branch',
                 'services' => 'Services / treatments',
                 'type' => 'Appointment type',
@@ -964,7 +976,9 @@ class ClinicWorkflowController extends Controller
             static fn (Appointment $appointment): array => [
                 'name' => $appointment->patient->user->name,
                 'patient_id' => $appointment->patient->patient_number,
-                'date_time' => $appointment->starts_at->format('M j, Y · g:i A'),
+                'date_time' => $appointment->type === 'walk_in'
+                    ? $appointment->starts_at->format('M j, Y · g:i A')
+                    : $appointment->starts_at->format('M j, Y'),
                 'branch' => $appointment->branch?->name ?? 'Unassigned',
                 'services' => $appointment->treatmentNames(),
                 'type' => match ($appointment->type) {

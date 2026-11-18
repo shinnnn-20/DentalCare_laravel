@@ -137,6 +137,63 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('type="password"', false);
     }
 
+    public function test_staff_can_register_a_walk_in_patient_and_receive_selectable_account_data(): void
+    {
+        $branch = Branch::factory()->create();
+        $staff = User::factory()->create([
+            'role' => 'staff',
+            'branch_id' => $branch->id,
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('appointments.index'))
+            ->assertSee('aria-label="Register walk-in patient"', false)
+            ->assertSee('aria-labelledby="walk-in-patient-dialog-title"', false)
+            ->assertSee('data-walk-in-patient-form>', false)
+            ->assertSee('Cancel')
+            ->assertDontSee('aria-label="Close registration form"', false);
+
+        $response = $this->postJson(route('clinic.patients.store'), [
+            'name' => 'Walk-in Registration Patient',
+            'date_of_birth' => '1990-03-10',
+            'gender' => 'prefer_not_to_say',
+            'phone' => '09170000000',
+            'email' => 'walk.in.patient@example.test',
+            'address' => 'Clinic Street',
+            'password' => 'Abcdef1!',
+            'password_confirmation' => 'Abcdef1!',
+        ])->assertCreated();
+
+        $patient = Patient::query()
+            ->whereHas('user', fn ($query) => $query->where('email', 'walk.in.patient@example.test'))
+            ->firstOrFail();
+
+        $response
+            ->assertJsonPath('patient.id', $patient->id)
+            ->assertJsonPath('patient.label', $patient->patient_number.' · '.$patient->user->name)
+            ->assertJsonPath('patient.search', $patient->patient_number.' '.$patient->user->name);
+
+        $this->assertDatabaseHas('patients', [
+            'id' => $patient->id,
+            'branch_id' => $branch->id,
+        ]);
+        $this->assertDatabaseHas('users', [
+            'id' => $patient->user_id,
+            'role' => 'patient',
+            'email' => 'walk.in.patient@example.test',
+        ]);
+    }
+
+    public function test_patient_appointment_page_does_not_offer_walk_in_patient_registration(): void
+    {
+        $patient = $this->createPatient('P-2026-00156');
+
+        $this->actingAs($patient->user)
+            ->get(route('appointments.index'))
+            ->assertDontSee('aria-label="Register walk-in patient"', false)
+            ->assertDontSee('aria-labelledby="walk-in-patient-dialog-title"', false);
+    }
+
     public function test_staff_cannot_create_a_patient_account_with_a_password_without_a_special_character(): void
     {
         $staff = User::factory()->create(['role' => 'staff']);
@@ -436,7 +493,13 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('aria-label="Treating dentist" disabled', false)
             ->assertSee('>'.$doctor->name.'</option>', false)
             ->assertDontSee('name="treating_dentist_id"', false)
-            ->assertSee('Follow-up date');
+            ->assertSee('Follow-up date')
+            ->assertSee('data-follow-up-time-picker', false)
+            ->assertSee('data-follow-up-time-trigger', false)
+            ->assertSee('data-availability-url="'.route('appointments.availability').'"', false)
+            ->assertSee('data-branch-id="'.$branch->id.'"', false)
+            ->assertSee('data-exclude-appointment-id="'.$appointment->id.'"', false)
+            ->assertSee('name="follow_up_time"', false);
 
         $otherDentist = User::factory()->create([
             'name' => 'Another Branch Dentist',
@@ -448,6 +511,7 @@ class ClinicWorkflowTest extends TestCase
             'treatment' => 'Follow-up treatment',
             'treating_dentist_id' => $otherDentist->id,
             'follow_up_date' => '2026-11-17',
+            'follow_up_time' => '14:30',
         ])
             ->assertRedirect(route('clinic.appointment-records', [
                 'date' => $appointment->starts_at->toDateString(),
@@ -462,6 +526,7 @@ class ClinicWorkflowTest extends TestCase
             'treating_dentist_id' => $doctor->id,
             'follow_up_date' => '2026-11-17 00:00:00',
         ]);
+        $this->assertSame('2:30 PM', $appointment->fresh()->dentalRecord->formattedFollowUpTime());
 
         $this->get(route('clinic.appointment-records', [
             'date' => $appointment->starts_at->toDateString(),
@@ -477,6 +542,7 @@ class ClinicWorkflowTest extends TestCase
             ->get(route('clinic.appointment-records'))
             ->assertSee('Follow-up appointments')
             ->assertSee('Nov 17, 2026')
+            ->assertSee('2:30 PM')
             ->assertDontSee('Nov 17, 2026 12:00 AM')
             ->assertSee($patient->user->name);
     }
@@ -498,6 +564,31 @@ class ClinicWorkflowTest extends TestCase
             ])
             ->assertRedirect($formUrl)
             ->assertSessionHasErrors(['diagnosis', 'treatment']);
+
+        $this->assertDatabaseCount('dental_records', 0);
+    }
+
+    public function test_follow_up_time_requires_a_follow_up_date(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $dentist = User::factory()->create(['role' => 'doctor']);
+        $appointment = Appointment::factory()->create([
+            'branch_id' => null,
+            'status' => 'in_consultation',
+        ]);
+
+        $this->actingAs($staff)
+            ->from(route('clinic.records.create', $appointment))
+            ->post(route('clinic.records.store', $appointment), [
+                'treating_dentist_id' => $dentist->id,
+                'diagnosis' => 'Routine review',
+                'treatment' => 'Follow-up examination',
+                'follow_up_time' => '14:30',
+            ])
+            ->assertRedirect(route('clinic.records.create', $appointment))
+            ->assertSessionHasErrors([
+                'follow_up_date' => 'The follow up date field is required when follow up time is present.',
+            ]);
 
         $this->assertDatabaseCount('dental_records', 0);
     }
@@ -715,13 +806,14 @@ class ClinicWorkflowTest extends TestCase
                 'patient_id' => $otherPatient->id,
                 'service_id' => $service->id,
                 'appointment_date' => $bookingStart->format('Y-m-d'),
-                'appointment_time' => '10:00',
             ])
             ->assertRedirectToRoute('appointments.index');
 
         $appointment = Appointment::firstOrFail();
         $this->assertSame($patient->id, $appointment->patient_id);
         $this->assertSame('pending', $appointment->status);
+        $this->assertSame('00:00:00', $appointment->starts_at->format('H:i:s'));
+        $this->assertDatabaseCount('appointment_slots', 0);
 
         $this->post(route('appointments.transition', [$appointment, 'cancel']))
             ->assertSessionHasNoErrors();
@@ -797,7 +889,7 @@ class ClinicWorkflowTest extends TestCase
 
             $response->assertSee(
                 $user->role === 'patient'
-                    ? 'data-schedule-confirm="Submit this appointment request?"'
+                    ? 'data-schedule-confirm="Submit this appointment date for front-desk approval?"'
                     : 'data-schedule-confirm="Register this walk-in appointment and add it to the queue?"',
                 false,
             );
@@ -811,56 +903,316 @@ class ClinicWorkflowTest extends TestCase
         $this->assertDatabaseHas('services', ['name' => 'Recementation of Crown (Per Unit)', 'category' => 'Crowns, Bridges, and Dental Implants']);
     }
 
-    public function test_patient_booking_reserves_a_slot_against_a_second_patient_request(): void
+    public function test_multiple_patient_requests_can_share_a_date_until_staff_approves_them(): void
     {
         $this->travelTo('2026-10-04 08:00:00');
 
         $firstPatient = $this->createPatient('P-2026-00020');
         $secondPatient = $this->createPatient('P-2026-00021');
-        $service = Service::create(['name' => 'Slot reservation test', 'price' => 500, 'is_active' => true]);
+        $service = Service::create(['name' => 'Date-only booking test', 'price' => 500, 'is_active' => true]);
         $booking = [
             'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'appointment_date' => '2026-10-05',
-            'appointment_time' => '10:00',
         ];
 
         $this->actingAs($firstPatient->user)
             ->post(route('appointments.store'), $booking)
             ->assertRedirectToRoute('appointments.index');
-        $appointment = Appointment::firstOrFail();
-        $this->assertDatabaseHas('appointment_slots', [
-            'starts_at' => '2026-10-05 10:00:00',
-            'appointment_id' => $appointment->id,
-        ]);
-        $this->assertSame(0, DB::table('appointment_slots')->insertOrIgnore([
-            'branch_id' => $this->generalTriasBranchId(),
-            'starts_at' => '2026-10-05 10:00:00',
-            'appointment_id' => null,
-        ]));
-
-        $availability = $this->actingAs($secondPatient->user)
-            ->getJson(route('appointments.availability', [
-                'month' => '2026-10',
-                'branch_id' => $this->generalTriasBranchId(),
-            ]));
-        $availability->assertOk();
-        $this->assertNotContains('10:00', $availability->json('days')['2026-10-05']);
-
+        $firstAppointment = Appointment::query()->where('patient_id', $firstPatient->id)->firstOrFail();
         $this->actingAs($secondPatient->user)
             ->post(route('appointments.store'), $booking)
-            ->assertSessionHasErrors([
-                'starts_at' => 'That time is no longer available. Choose another time.',
-            ]);
+            ->assertRedirectToRoute('appointments.index')
+            ->assertSessionHasNoErrors();
 
-        $this->assertDatabaseCount('appointments', 1);
+        $secondAppointment = Appointment::query()->where('patient_id', $secondPatient->id)->firstOrFail();
+        $this->assertSame('2026-10-05 00:00:00', $firstAppointment->starts_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-05 00:00:00', $secondAppointment->starts_at->format('Y-m-d H:i:s'));
+        $this->assertDatabaseCount('appointment_slots', 0);
+
+        $staff = User::factory()->create([
+            'role' => 'staff',
+            'branch_id' => $this->generalTriasBranchId(),
+        ]);
+        $this->actingAs($staff)
+            ->post(route('clinic.appointment-capacities.store'), [
+                'branch_id' => $this->generalTriasBranchId(),
+                'appointment_date' => '2026-10-05',
+                'daily_limit' => 1,
+            ])
+            ->assertRedirect(route('clinic.appointment-records', [
+                'branch_id' => $this->generalTriasBranchId(),
+                'date' => '2026-10-05',
+            ]));
+
+        $this->actingAs($staff)
+            ->post(route('appointments.transition', [$firstAppointment, 'approve']))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('approved', $firstAppointment->fresh()->status);
+        $this->assertSame('pending', $secondAppointment->fresh()->status);
+        $this->post(route('appointments.transition', [$secondAppointment, 'approve']))
+            ->assertSessionHasErrors([
+                'status' => 'The daily appointment approval limit has been reached for this branch and date.',
+            ]);
+        $this->assertSame('pending', $secondAppointment->fresh()->status);
+        $this->assertDatabaseCount('appointment_slots', 0);
     }
 
-    public function test_availability_endpoint_marks_taken_and_closed_slots_unavailable(): void
+    public function test_daily_capacity_cannot_exceed_ten_appointments(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $admin = User::factory()->create(['role' => 'admin']);
+        $branchId = $this->generalTriasBranchId();
+
+        $this->actingAs($admin)
+            ->get(route('clinic.appointment-records', [
+                'branch_id' => $branchId,
+                'date' => '2026-10-05',
+            ]))
+            ->assertSee('max="10"', false);
+
+        $this->post(route('clinic.appointment-capacities.store'), [
+            'branch_id' => $branchId,
+            'appointment_date' => '2026-10-05',
+            'daily_limit' => 11,
+        ])
+            ->assertSessionHasErrors('daily_limit');
+
+        $this->assertDatabaseMissing('appointment_day_capacities', [
+            'branch_id' => $branchId,
+            'appointment_date' => '2026-10-05',
+        ]);
+    }
+
+    public function test_daily_capacity_is_required_and_cancellation_releases_an_approval_spot(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $branchId = $this->generalTriasBranchId();
+        $firstPatient = $this->createPatient('P-2026-CAP001');
+        $secondPatient = $this->createPatient('P-2026-CAP002');
+        $service = Service::create(['name' => 'Daily capacity test', 'price' => 500, 'is_active' => true]);
+        $firstAppointment = Appointment::factory()->for($firstPatient)->for($service)->create([
+            'branch_id' => $branchId,
+            'type' => 'online',
+            'starts_at' => '2026-10-05 00:00:00',
+            'status' => 'pending',
+        ]);
+        $secondAppointment = Appointment::factory()->for($secondPatient)->for($service)->create([
+            'branch_id' => $branchId,
+            'type' => 'online',
+            'starts_at' => '2026-10-05 00:00:00',
+            'status' => 'pending',
+        ]);
+        $staff = User::factory()->create(['role' => 'staff', 'branch_id' => $branchId]);
+
+        $this->actingAs($staff)
+            ->post(route('appointments.transition', [$firstAppointment, 'approve']))
+            ->assertSessionHasErrors([
+                'status' => 'Set a daily appointment limit for this branch and date before approving requests.',
+            ]);
+        $this->assertSame('pending', $firstAppointment->fresh()->status);
+        $this->get(route('clinic.appointment-records'))
+            ->assertSee('Go to matching filter')
+            ->assertSee('branch_id='.$branchId.'&amp;date=2026-10-05', false);
+
+        $this->get(route('clinic.appointment-records', [
+            'branch_id' => $branchId,
+            'date' => '2026-10-05',
+        ]))
+            ->assertSee('Set daily limit first')
+            ->assertDontSee('Go to matching filter');
+
+        $this->post(route('clinic.appointment-capacities.store'), [
+            'branch_id' => $branchId,
+            'appointment_date' => '2026-10-05',
+            'daily_limit' => 1,
+        ])->assertRedirect(route('clinic.appointment-records', [
+            'branch_id' => $branchId,
+            'date' => '2026-10-05',
+        ]));
+        $this->get(route('clinic.appointment-records', [
+            'branch_id' => $branchId,
+            'date' => '2026-10-05',
+        ]))
+            ->assertSee('Daily approval limit')
+            ->assertSee('spot(s) remaining')
+            ->assertSee('pending request(s)')
+            ->assertSee('name="daily_limit"', false);
+        $this->assertDatabaseHas('appointment_day_capacities', [
+            'branch_id' => $branchId,
+            'appointment_date' => '2026-10-05',
+            'daily_limit' => 1,
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $staff->id,
+            'action' => 'appointment_capacity_updated',
+        ]);
+
+        $this->post(route('appointments.transition', [$firstAppointment, 'approve']))
+            ->assertSessionHasNoErrors();
+        $this->post(route('appointments.transition', [$secondAppointment, 'approve']))
+            ->assertSessionHasErrors('status');
+        $this->assertSame('approved', $firstAppointment->fresh()->status);
+        $this->assertSame('pending', $secondAppointment->fresh()->status);
+        $this->get(route('clinic.appointment-records', [
+            'branch_id' => $branchId,
+            'date' => '2026-10-05',
+        ]))
+            ->assertSee('type="button" disabled>Fully booked</button>', false)
+            ->assertDontSee('data-confirm="Approve this appointment for the selected date?"', false);
+
+        $this->actingAs($firstPatient->user)
+            ->post(route('appointments.transition', [$firstAppointment, 'cancel']))
+            ->assertSessionHasNoErrors();
+        $this->actingAs($staff)
+            ->post(route('appointments.transition', [$secondAppointment, 'approve']))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('cancelled', $firstAppointment->fresh()->status);
+        $this->assertSame('approved', $secondAppointment->fresh()->status);
+    }
+
+    public function test_daily_limits_are_scoped_by_branch_and_date_and_cannot_be_lowered_below_usage(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $generalTriasId = $this->generalTriasBranchId();
+        $dasmarinasId = (int) Branch::query()->where('slug', 'dasmarinas')->value('id');
+        $patient = $this->createPatient('P-2026-CAP003');
+        $service = Service::create(['name' => 'Branch capacity scope test', 'price' => 500, 'is_active' => true]);
+        $appointments = collect([
+            [$generalTriasId, '2026-10-05'],
+            [$dasmarinasId, '2026-10-05'],
+            [$generalTriasId, '2026-10-06'],
+        ])->map(fn (array $schedule): Appointment => Appointment::factory()->for($patient)->for($service)->create([
+            'branch_id' => $schedule[0],
+            'type' => 'online',
+            'starts_at' => $schedule[1].' 00:00:00',
+            'status' => 'pending',
+        ]));
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        foreach ([
+            [$generalTriasId, '2026-10-05'],
+            [$dasmarinasId, '2026-10-05'],
+            [$generalTriasId, '2026-10-06'],
+        ] as [$branchId, $date]) {
+            $this->actingAs($admin)
+                ->post(route('clinic.appointment-capacities.store'), [
+                    'branch_id' => $branchId,
+                    'appointment_date' => $date,
+                    'daily_limit' => 1,
+                ])
+                ->assertRedirect();
+        }
+
+        foreach ($appointments as $appointment) {
+            $this->post(route('appointments.transition', [$appointment, 'approve']))
+                ->assertSessionHasNoErrors();
+        }
+
+        $this->post(route('clinic.appointment-capacities.store'), [
+            'branch_id' => $generalTriasId,
+            'appointment_date' => '2026-10-05',
+            'daily_limit' => 0,
+        ])->assertSessionHasErrors([
+            'daily_limit' => 'The daily limit cannot be lower than the 1 appointment(s) already counted for this date.',
+        ]);
+
+        $this->assertDatabaseHas('appointment_day_capacities', [
+            'branch_id' => $generalTriasId,
+            'appointment_date' => '2026-10-05',
+            'daily_limit' => 1,
+        ]);
+    }
+
+    public function test_daily_capacity_management_rejects_doctors_and_staff_from_other_branches(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $generalTriasId = $this->generalTriasBranchId();
+        $dasmarinasId = (int) Branch::query()->where('slug', 'dasmarinas')->value('id');
+        $staff = User::factory()->create(['role' => 'staff', 'branch_id' => $generalTriasId]);
+        $doctor = User::factory()->create(['role' => 'doctor', 'branch_id' => $generalTriasId]);
+        $capacity = [
+            'branch_id' => $dasmarinasId,
+            'appointment_date' => '2026-10-05',
+            'daily_limit' => 5,
+        ];
+
+        $this->actingAs($staff)
+            ->post(route('clinic.appointment-capacities.store'), $capacity)
+            ->assertNotFound();
+        $this->actingAs($doctor)
+            ->post(route('clinic.appointment-capacities.store'), $capacity)
+            ->assertForbidden();
+
+        $this->assertDatabaseCount('appointment_day_capacities', 0);
+    }
+
+    public function test_approved_appointments_cannot_be_rescheduled_beyond_the_new_date_capacity(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $branchId = $this->generalTriasBranchId();
+        $patient = $this->createPatient('P-2026-CAP004');
+        $otherPatient = $this->createPatient('P-2026-CAP005');
+        $secondOtherPatient = $this->createPatient('P-2026-CAP006');
+        $service = Service::create(['name' => 'Approved reschedule capacity test', 'price' => 500, 'is_active' => true]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'branch_id' => $branchId,
+            'type' => 'online',
+            'starts_at' => '2026-10-05 00:00:00',
+            'status' => 'approved',
+        ]);
+        Appointment::factory()->for($otherPatient)->for($service)->create([
+            'branch_id' => $branchId,
+            'type' => 'online',
+            'starts_at' => '2026-10-06 00:00:00',
+            'status' => 'approved',
+        ]);
+        Appointment::factory()->for($secondOtherPatient)->for($service)->create([
+            'branch_id' => $branchId,
+            'type' => 'appointment',
+            'starts_at' => '2026-10-06 00:00:00',
+            'status' => 'approved',
+        ]);
+        $staff = User::factory()->create(['role' => 'staff', 'branch_id' => $branchId]);
+
+        $this->actingAs($staff)
+            ->post(route('clinic.appointment-capacities.store'), [
+                'branch_id' => $branchId,
+                'appointment_date' => '2026-10-06',
+                'daily_limit' => 1,
+            ])
+            ->assertSessionHasErrors('daily_limit');
+        $this->assertDatabaseMissing('appointment_day_capacities', [
+            'branch_id' => $branchId,
+            'appointment_date' => '2026-10-06',
+        ]);
+
+        $this->post(route('clinic.appointment-capacities.store'), [
+            'branch_id' => $branchId,
+            'appointment_date' => '2026-10-06',
+            'daily_limit' => 2,
+        ])->assertRedirect();
+
+        $this->patch(route('clinic.appointments.reschedule', $appointment), [
+            'appointment_date' => '2026-10-06',
+        ])->assertSessionHasErrors('appointment_date');
+
+        $this->assertSame('2026-10-05 00:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+    }
+
+    public function test_availability_endpoint_reports_open_dates_independently_of_bookings_and_slots(): void
     {
         $this->travelTo('2026-10-04 08:00:00');
 
         $patient = $this->createPatient('P-2026-00022');
+        $branchId = $this->generalTriasBranchId();
         $service = Service::create([
             'name' => 'Availability endpoint test',
             'price' => 500,
@@ -876,53 +1228,80 @@ class ClinicWorkflowTest extends TestCase
             'duration_minutes' => 10,
             'status' => 'pending',
         ]);
-        foreach (range(0, 480, 10) as $minutes) {
-            Appointment::create([
-                'patient_id' => $patient->id,
-                'branch_id' => $this->generalTriasBranchId(),
-                'service_id' => $service->id,
-                'type' => 'online',
-                'starts_at' => Carbon::parse('2026-10-06 09:00:00')->addMinutes($minutes),
-                'duration_minutes' => 10,
-                'status' => 'pending',
-            ]);
-        }
+        DB::table('appointment_slots')->insert([
+            'branch_id' => $branchId,
+            'starts_at' => '2026-10-05 10:00:00',
+            'appointment_id' => null,
+        ]);
+        $staff = User::factory()->create(['role' => 'staff', 'branch_id' => $branchId]);
+        $this->actingAs($staff)
+            ->post(route('clinic.appointment-capacities.store'), [
+                'branch_id' => $branchId,
+                'appointment_date' => '2026-10-06',
+                'daily_limit' => 1,
+            ])
+            ->assertRedirect();
+        $fullDateAppointment = Appointment::create([
+            'patient_id' => $patient->id,
+            'branch_id' => $branchId,
+            'service_id' => $service->id,
+            'type' => 'online',
+            'starts_at' => '2026-10-06 00:00:00',
+            'duration_minutes' => 10,
+            'status' => 'approved',
+        ]);
 
         $response = $this->actingAs($patient->user)
             ->getJson(route('appointments.availability', [
                 'month' => '2026-10',
-                'branch_id' => $this->generalTriasBranchId(),
+                'branch_id' => $branchId,
             ]));
 
         $response->assertOk();
-        $this->assertNotContains('10:00', $response->json('days')['2026-10-05']);
-        $this->assertContains('10:30', $response->json('days')['2026-10-05']);
-        $this->assertContains('10:30', $response->json('days')['2026-10-05']);
-        $this->assertNotContains('17:00', $response->json('days')['2026-10-05']);
-        $this->assertNotContains('12:00', $response->json('days')['2026-10-05']);
-        $this->assertNotContains('12:30', $response->json('days')['2026-10-05']);
-        $this->assertSame([], $response->json('days')['2026-10-06']);
-        $this->assertSame([], $response->json('days')['2026-10-11']);
+        $response->assertJsonPath('days.2026-10-05', true);
+        $response->assertJsonPath('days.2026-10-06', false);
+        $response->assertJsonPath('full_dates.2026-10-06', true);
+        $response->assertJsonPath('days.2026-10-10', true);
+        $response->assertJsonPath('days.2026-10-03', false);
+        $response->assertJsonPath('days.2026-10-11', false);
+
+        $this->actingAs($patient->user)
+            ->post(route('appointments.store'), [
+                'branch_id' => $branchId,
+                'service_id' => $service->id,
+                'appointment_date' => '2026-10-06',
+            ])
+            ->assertSessionHasErrors('appointment_date');
 
         foreach (['staff', 'admin'] as $role) {
             $user = User::factory()->create(['role' => $role]);
             $roleResponse = $this->actingAs($user)
                 ->getJson(route('appointments.availability', [
                     'month' => '2026-10',
-                    'branch_id' => $this->generalTriasBranchId(),
+                    'branch_id' => $branchId,
                 ]));
 
             $roleResponse->assertOk()->assertJsonPath('month', '2026-10');
-            $this->assertNotContains('10:00', $roleResponse->json('days')['2026-10-05']);
-            $this->assertContains('10:30', $roleResponse->json('days')['2026-10-05']);
-            $this->assertNotContains('10:00', $roleResponse->json('days')['2026-10-05']);
+            $roleResponse->assertJsonPath('days.2026-10-05', true);
+            $roleResponse->assertJsonPath('days.2026-10-06', false);
+            $roleResponse->assertJsonPath('full_dates.2026-10-06', true);
         }
 
-        $this->get(route('appointments.index'))
+        $rescheduleAvailability = $this->actingAs($staff)
+            ->getJson(route('appointments.availability', [
+                'month' => '2026-10',
+                'branch_id' => $branchId,
+                'exclude_appointment_id' => $fullDateAppointment->id,
+            ]));
+        $rescheduleAvailability->assertOk()
+            ->assertJsonPath('days.2026-10-06', true);
+
+        $this->actingAs($patient->user)->get(route('appointments.index'))
             ->assertSee('data-availability-calendar', false)
-            ->assertSee('Appointment Time')
-            ->assertSee('Available')
-            ->assertSee('Unavailable');
+            ->assertDontSee('name="appointment_time"', false)
+            ->assertSee('Available date')
+            ->assertSee('Unavailable')
+            ->assertSee('Fully booked');
     }
 
     public function test_nationwide_philippine_holidays_are_unavailable_and_cannot_be_booked(): void
@@ -941,8 +1320,8 @@ class ClinicWorkflowTest extends TestCase
 
         $decemberAvailability->assertOk()
             ->assertJsonPath('holidays.2026-12-08', 'Feast of the Immaculate Conception')
-            ->assertJsonPath('days.2026-12-08', []);
-        $this->assertContains('10:00', $decemberAvailability->json('days')['2026-12-09']);
+            ->assertJsonPath('days.2026-12-08', false)
+            ->assertJsonPath('days.2026-12-09', true);
 
         $march2027Availability = $this->getJson(route('appointments.availability', [
             'month' => '2027-03',
@@ -952,7 +1331,7 @@ class ClinicWorkflowTest extends TestCase
 
         $march2027Availability->assertOk()
             ->assertJsonPath('holidays.2027-03-25', 'Maundy Thursday')
-            ->assertJsonPath('days.2027-03-25', []);
+            ->assertJsonPath('days.2027-03-25', false);
 
         $this->get(route('appointments.index'))
             ->assertSee('calendar-day-holiday', false)
@@ -972,33 +1351,31 @@ class ClinicWorkflowTest extends TestCase
 
             $availability->assertOk()
                 ->assertJsonPath("holidays.{$holidayDate}", $holidayName)
-                ->assertJsonPath("days.{$holidayDate}", []);
+                ->assertJsonPath("days.{$holidayDate}", false);
         }
 
         $this->post(route('appointments.store'), [
             'branch_id' => $branchId,
             'service_id' => $service->id,
             'appointment_date' => '2026-12-08',
-            'appointment_time' => '10:00',
         ])->assertSessionHasErrors([
-            'starts_at' => 'Appointments cannot be booked on Feast of the Immaculate Conception. Please select another date.',
+            'appointment_date' => 'Appointments cannot be booked on Feast of the Immaculate Conception. Please select another date.',
         ]);
 
         $this->assertDatabaseCount('appointments', 0);
     }
 
-    public function test_cancelling_an_appointment_releases_its_slot_for_rebooking(): void
+    public function test_cancelling_a_date_request_does_not_leave_a_reserved_slot(): void
     {
         $this->travelTo('2026-10-04 08:00:00');
 
         $firstPatient = $this->createPatient('P-2026-00023');
         $secondPatient = $this->createPatient('P-2026-00024');
-        $service = Service::create(['name' => 'Released slot test', 'price' => 500, 'is_active' => true]);
+        $service = Service::create(['name' => 'Cancelled date request test', 'price' => 500, 'is_active' => true]);
         $booking = [
             'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'appointment_date' => '2026-10-05',
-            'appointment_time' => '10:00',
         ];
 
         $this->actingAs($firstPatient->user)
@@ -1006,22 +1383,18 @@ class ClinicWorkflowTest extends TestCase
             ->assertRedirectToRoute('appointments.index');
         $appointment = Appointment::firstOrFail();
         $this->get(route('appointments.index'))
-            ->assertSee('data-confirm="Cancel this appointment? This will release its reserved time slot."', false)
+            ->assertSee('data-confirm="Cancel this appointment request?"', false)
             ->assertSee('<button class="btn-danger">Cancel</button>', false);
 
         $this->post(route('appointments.transition', [$appointment, 'cancel']))
             ->assertSessionHasNoErrors();
 
-        $this->assertDatabaseMissing('appointment_slots', [
-            'starts_at' => '2026-10-05 10:00:00',
-        ]);
-
         $this->actingAs($secondPatient->user)
             ->post(route('appointments.store'), $booking)
-            ->assertRedirectToRoute('appointments.index');
+            ->assertRedirectToRoute('appointments.index')
+            ->assertSessionHasNoErrors();
         $this->assertDatabaseCount('appointments', 2);
-        $this->assertDatabaseHas('appointment_slots', ['starts_at' => '2026-10-05 10:00:00']);
-        $this->assertDatabaseCount('appointment_slots', 3);
+        $this->assertDatabaseCount('appointment_slots', 0);
     }
 
     public function test_staff_is_prompted_before_rejecting_an_appointment(): void
@@ -1036,13 +1409,13 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('<button class="btn-danger">Reject</button>', false);
     }
 
-    public function test_staff_rescheduling_moves_the_slot_reservation_atomically(): void
+    public function test_staff_rescheduling_changes_only_the_appointment_date(): void
     {
         $this->travelTo('2026-10-04 08:00:00');
 
         $staff = User::factory()->create(['role' => 'staff']);
         $patient = $this->createPatient('P-2026-00025');
-        $service = Service::create(['name' => 'Rescheduled slot test', 'price' => 500, 'is_active' => true]);
+        $service = Service::create(['name' => 'Rescheduled date test', 'price' => 500, 'is_active' => true]);
         $appointment = Appointment::create([
             'patient_id' => $patient->id,
             'branch_id' => $this->generalTriasBranchId(),
@@ -1056,33 +1429,26 @@ class ClinicWorkflowTest extends TestCase
             ->getJson(route('appointments.availability', [
                 'month' => '2026-10',
                 'branch_id' => $this->generalTriasBranchId(),
-                'exclude_appointment_id' => $appointment->id,
             ]));
-        $availability->assertOk();
-        $this->assertContains('10:00', $availability->json('days')['2026-10-05']);
+        $availability->assertOk()->assertJsonPath('days.2026-10-05', true);
 
         $this->patch(route('clinic.appointments.reschedule', $appointment), [
             'appointment_date' => '2026-10-06',
-            'appointment_time' => '10:30',
         ])->assertRedirect();
 
-        $this->assertDatabaseHas('appointment_slots', [
-            'starts_at' => '2026-10-06 10:30:00',
-            'appointment_id' => $appointment->id,
-        ]);
-        $this->assertDatabaseMissing('appointment_slots', ['starts_at' => '2026-10-05 10:00:00']);
-        $this->assertSame('2026-10-06 10:30:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-06 00:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+        $this->assertDatabaseCount('appointment_slots', 0);
     }
 
     #[DataProvider('clinicStaffRoles')]
-    public function test_admin_and_staff_can_reschedule_future_appointments_on_the_scheduled_clinic_date(string $role): void
+    public function test_admin_and_staff_can_reschedule_appointments_to_a_different_date(string $role): void
     {
         $this->travelTo('2026-10-09 16:30:00');
 
         $user = User::factory()->create(['role' => $role]);
         $patient = $this->createPatient('P-2026-00041');
         $service = Service::create([
-            'name' => 'Same-day reschedule test',
+            'name' => 'Date-only reschedule test',
             'price' => 500,
             'duration_minutes' => 30,
             'is_active' => true,
@@ -1096,32 +1462,18 @@ class ClinicWorkflowTest extends TestCase
             'duration_minutes' => 30,
             'status' => 'pending',
         ]);
-        DB::table('appointment_slots')->insert([
-            ['branch_id' => $this->generalTriasBranchId(), 'starts_at' => '2026-10-10 15:10:00', 'appointment_id' => $appointment->id],
-            ['branch_id' => $this->generalTriasBranchId(), 'starts_at' => '2026-10-10 15:20:00', 'appointment_id' => $appointment->id],
-            ['branch_id' => $this->generalTriasBranchId(), 'starts_at' => '2026-10-10 15:30:00', 'appointment_id' => $appointment->id],
-        ]);
-
         $this->actingAs($user)
             ->get(route('clinic.appointment-records'))
             ->assertSee('Reschedule')
             ->assertSee('name="appointment_date"', false)
-            ->assertDontSee('Appointments must be rescheduled at least one calendar day in advance.');
+            ->assertDontSee('name="appointment_time"', false);
 
         $this->patch(route('clinic.appointments.reschedule', $appointment), [
-            'appointment_date' => '2026-10-10',
-            'appointment_time' => '16:00',
+            'appointment_date' => '2026-10-12',
         ])->assertRedirect();
 
-        $this->assertSame('2026-10-10 16:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
-        $this->assertDatabaseHas('appointment_slots', [
-            'starts_at' => '2026-10-10 16:00:00',
-            'appointment_id' => $appointment->id,
-        ]);
-        $this->assertDatabaseMissing('appointment_slots', [
-            'starts_at' => '2026-10-10 15:10:00',
-            'appointment_id' => $appointment->id,
-        ]);
+        $this->assertSame('2026-10-12 00:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+        $this->assertDatabaseCount('appointment_slots', 0);
         $this->assertDatabaseHas('audit_logs', [
             'user_id' => $user->id,
             'action' => 'appointment_rescheduled',
@@ -1164,19 +1516,15 @@ class ClinicWorkflowTest extends TestCase
             ->get(route('appointments.index'))
             ->assertSee($patient->user->name)
             ->assertSee('Reschedule')
-            ->assertSee('>Approve<', false)
-            ->assertSee('>Reject<', false);
+            ->assertDontSee('>Approve<', false)
+            ->assertDontSee('>Reject<', false);
 
         $this->patch(route('clinic.appointments.reschedule', $appointment), [
             'appointment_date' => '2026-10-06',
-            'appointment_time' => '10:30',
         ])->assertRedirect();
 
-        $this->assertSame('2026-10-06 10:30:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
-        $this->assertDatabaseHas('appointment_slots', [
-            'starts_at' => '2026-10-06 10:30:00',
-            'appointment_id' => $appointment->id,
-        ]);
+        $this->assertSame('2026-10-06 00:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+        $this->assertDatabaseCount('appointment_slots', 0);
         $this->assertDatabaseHas('audit_logs', [
             'user_id' => $doctor->id,
             'action' => 'appointment_rescheduled',
@@ -1231,7 +1579,7 @@ class ClinicWorkflowTest extends TestCase
         $this->assertFalse($doctor->fresh()->is_active);
     }
 
-    public function test_staff_rescheduling_persists_a_date_and_thirty_minute_time_selection(): void
+    public function test_staff_rescheduling_persists_a_date_without_assigning_a_time(): void
     {
         $this->travelTo('2026-10-01 08:00:00');
 
@@ -1247,27 +1595,30 @@ class ClinicWorkflowTest extends TestCase
             'status' => 'approved',
         ]);
 
-        $newStart = now()->addDays(4)->setTime(15, 30);
+        $newDate = now()->addDays(4)->startOfDay();
         $this->actingAs($staff)
-            ->patch(route('clinic.appointments.reschedule', $appointment), [
-                'appointment_date' => $newStart->format('Y-m-d'),
-                'appointment_time' => $newStart->format('H:i'),
+            ->post(route('clinic.appointment-capacities.store'), [
+                'branch_id' => $this->generalTriasBranchId(),
+                'appointment_date' => $newDate->format('Y-m-d'),
+                'daily_limit' => 1,
             ])
+            ->assertRedirect();
+        $this->patch(route('clinic.appointments.reschedule', $appointment), [
+            'appointment_date' => $newDate->format('Y-m-d'),
+        ])
             ->assertRedirect()
-            ->assertSessionHas('status', 'Appointment rescheduled to '.$newStart->format('F j, Y \a\t g:i A').'.');
+            ->assertSessionHas('status', 'Appointment rescheduled to '.$newDate->format('F j, Y').'.');
 
         $this->assertSame(
-            $newStart->format('Y-m-d H:i:s'),
+            $newDate->format('Y-m-d H:i:s'),
             $appointment->fresh()->starts_at->format('Y-m-d H:i:s'),
         );
-        $this->assertDatabaseHas('appointment_slots', [
-            'starts_at' => $newStart->format('Y-m-d H:i:s'),
-            'appointment_id' => $appointment->id,
-        ]);
+        $this->assertDatabaseCount('appointment_slots', 0);
         $this->actingAs($patient->user)
             ->get(route('dashboard'))
             ->assertOk()
-            ->assertSee($newStart->format('l, F j, Y · g:i A'));
+            ->assertSee($newDate->format('l, F j, Y'))
+            ->assertDontSee($newDate->format('l, F j, Y · g:i A'));
         $this->assertDatabaseHas('audit_logs', [
             'action' => 'appointment_rescheduled',
             'record_id' => (string) $appointment->id,
@@ -1276,12 +1627,15 @@ class ClinicWorkflowTest extends TestCase
             ->get(route('clinic.appointment-records'))
             ->assertSee('<details class="min-w-0">', false)
             ->assertSee('<summary class="btn-small cursor-pointer list-none">Reschedule</summary>', false)
-            ->assertSee('data-schedule-confirm="Save this new appointment date and time?"', false)
+            ->assertSee('data-schedule-confirm="Save this new appointment date?"', false)
             ->assertSee('name="appointment_date"', false)
-            ->assertSee('>Save new time</button>', false);
+            ->assertDontSee('name="appointment_time"', false)
+            ->assertSee('data-exclude-appointment-id="'.$appointment->id.'"', false)
+            ->assertSee('data-selected-date-label', false)
+            ->assertSee('>Save new date</button>', false);
     }
 
-    public function test_rescheduling_rejects_a_taken_time_without_changing_the_appointment(): void
+    public function test_rescheduling_allows_multiple_appointments_on_the_same_date(): void
     {
         $this->travelTo('2026-10-01 08:00:00');
 
@@ -1296,27 +1650,28 @@ class ClinicWorkflowTest extends TestCase
             'starts_at' => now()->addDays(2)->setTime(10, 0),
             'status' => 'pending',
         ]);
-        $takenStart = now()->addDays(4)->setTime(15, 30);
+        $takenDate = now()->addDays(4)->startOfDay();
         Appointment::create([
             'patient_id' => $patient->id,
             'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'type' => 'online',
-            'starts_at' => $takenStart,
+            'starts_at' => $takenDate->copy()->setTime(15, 30),
             'status' => 'approved',
         ]);
 
         $this->actingAs($staff)
             ->patch(route('clinic.appointments.reschedule', $appointment), [
-                'appointment_date' => $takenStart->format('Y-m-d'),
-                'appointment_time' => $takenStart->format('H:i'),
+                'appointment_date' => $takenDate->format('Y-m-d'),
             ])
-            ->assertSessionHasErrors('starts_at');
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
 
         $this->assertSame(
-            now()->addDays(2)->setTime(10, 0)->format('Y-m-d H:i:s'),
+            $takenDate->format('Y-m-d H:i:s'),
             $appointment->fresh()->starts_at->format('Y-m-d H:i:s'),
         );
+        $this->assertDatabaseCount('appointment_slots', 0);
     }
 
     #[DataProvider('clinicStaffRoles')]
@@ -1596,6 +1951,68 @@ class ClinicWorkflowTest extends TestCase
             ->get(route('receipts.show', $receipt))
             ->assertSee('Discount (10%)')
             ->assertSee('₱1,200.00');
+    }
+
+    #[DataProvider('cardDiscountTypes')]
+    public function test_senior_and_pwd_discounts_require_and_encrypt_the_card_number(
+        string $discountType,
+        string $cardNumber,
+    ): void {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00155');
+        $service = Service::factory()->create(['price' => 12000]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'in_consultation',
+        ]);
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'treating_dentist_id' => $treatingDentist->id,
+        ]);
+        $this->actingAs($staff)
+            ->get(route('clinic.bills.create', $appointment))
+            ->assertSee('Senior/PWD Card ID')
+            ->assertSee('data-discount-card-number', false)
+            ->assertSee('RR-PPMM-BBB-NNNNNNN')
+            ->assertSee('SS-PPMM-BBB-NNNNNN');
+
+        $this->from(route('clinic.bills.create', $appointment))
+            ->post(route('clinic.bills.store', $appointment), [
+                'discount_type' => $discountType,
+            ])
+            ->assertRedirect(route('clinic.bills.create', $appointment))
+            ->assertSessionHasErrors([
+                'discount_card_number' => 'Enter the Senior or PWD card number before applying this discount.',
+            ]);
+
+        $this->assertDatabaseCount('bills', 0);
+
+        $this->post(route('clinic.bills.store', $appointment), [
+            'discount_type' => $discountType,
+            'discount_card_number' => $cardNumber,
+        ])->assertRedirectToRoute('clinic.billing.index');
+
+        $bill = Bill::query()->where('appointment_id', $appointment->id)->firstOrFail();
+        $this->assertSame($cardNumber, $bill->discount_card_number);
+        $this->assertNotSame($cardNumber, $bill->getRawOriginal('discount_card_number'));
+        $this->assertArrayNotHasKey('discount_card_number', $bill->toArray());
+        $this->assertDatabaseHas('bills', [
+            'id' => $bill->id,
+            'discount_type' => $discountType,
+            'discount_value' => '20.00',
+            'discount' => '2400.00',
+            'total' => '9600.00',
+        ]);
+    }
+
+    public static function cardDiscountTypes(): array
+    {
+        return [
+            'senior LGU variation' => ['senior', '01-02030-004-1234567'],
+            'PWD standard format' => ['pwd', '01-0203-004-1234567'],
+        ];
     }
 
     public function test_none_discount_disables_percentage_input_and_creates_bill_without_a_percentage_value(): void
@@ -2055,49 +2472,79 @@ class ClinicWorkflowTest extends TestCase
             ->assertSee('Appointments');
     }
 
-    public function test_booking_and_rescheduling_require_thirty_minute_time_slots(): void
+    public function test_doctor_scheduled_appointments_are_date_only_and_require_front_desk_approval(): void
     {
-        $this->travelTo(now()->startOfDay()->setTime(8, 0));
+        $this->travelTo('2026-10-04 08:00:00');
 
-        $patientUser = User::factory()->create(['role' => 'patient']);
-        $patient = Patient::create([
-            'user_id' => $patientUser->id,
-            'patient_number' => 'P-2026-00011',
-            'date_of_birth' => '1990-01-01',
-            'gender' => 'other',
-            'address' => 'Test address',
+        $doctor = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $this->generalTriasBranchId(),
         ]);
-        $service = Service::create(['name' => 'Checkup', 'price' => 500, 'is_active' => true]);
-        $invalidStart = now()->next(UnitValue::MONDAY)->setTime(10, 15);
+        $patient = $this->createPatient('P-2026-00011');
+        $service = Service::create(['name' => 'Date-only doctor booking', 'price' => 500, 'is_active' => true]);
 
-        $this->actingAs($patientUser)->get(route('appointments.index'))
-            ->assertOk()
-            ->assertSee('name="appointment_time"', false)
-            ->assertDontSee('type="datetime-local"', false)
-            ->assertDontSee('value="00:01"', false)
-            ->assertDontSee('value="00:09"', false)
-            ->assertSee('value="10:30"', false)
-            ->assertDontSee('value="10:10"', false)
-            ->assertDontSee('value="12:00"', false)
-            ->assertDontSee('value="12:30"', false)
-            ->assertDontSee('value="paid"', false);
-        $this->actingAs($patientUser)
-            ->post(route('appointments.store'), [
+        $this->actingAs($doctor)
+            ->get(route('appointments.index'))
+            ->assertDontSee('name="appointment_time"', false)
+            ->assertSee('no time slot is assigned')
+            ->assertDontSee('>Approve<', false)
+            ->assertDontSee('>Reject<', false);
+
+        $this->post(route('appointments.store'), [
+            'branch_id' => $this->generalTriasBranchId(),
+            'patient_id' => $patient->id,
+            'booking_mode' => 'appointment',
+            'service_id' => $service->id,
+            'appointment_date' => '2026-10-05',
+        ])->assertRedirectToRoute('clinic.appointment-records')
+            ->assertSessionHas('status', 'Appointment request submitted for front-desk approval.');
+
+        $appointment = Appointment::firstOrFail();
+        $this->assertSame('appointment', $appointment->type);
+        $this->assertSame('pending', $appointment->status);
+        $this->assertSame('2026-10-05 00:00:00', $appointment->starts_at->format('Y-m-d H:i:s'));
+        $this->assertDatabaseCount('appointment_slots', 0);
+
+        $this->post(route('appointments.transition', [$appointment, 'approve']))
+            ->assertForbidden();
+        $this->assertSame('pending', $appointment->fresh()->status);
+
+        $frontDesk = User::factory()->create([
+            'role' => 'staff',
+            'branch_id' => $this->generalTriasBranchId(),
+        ]);
+        $this->actingAs($frontDesk)
+            ->post(route('clinic.appointment-capacities.store'), [
                 'branch_id' => $this->generalTriasBranchId(),
-                'service_id' => $service->id,
-                'appointment_date' => $invalidStart->format('Y-m-d'),
-                'appointment_time' => $invalidStart->format('H:i'),
+                'appointment_date' => '2026-10-05',
+                'daily_limit' => 1,
             ])
-            ->assertSessionHasErrors('appointment_time');
-        $this->actingAs(User::factory()->create(['role' => 'staff']))
-            ->post(route('appointments.store'), [
-                'branch_id' => $this->generalTriasBranchId(),
-                'patient_id' => $patient->id,
-                'service_id' => $service->id,
-                'appointment_date' => $invalidStart->format('Y-m-d'),
-                'appointment_time' => '12:30',
-            ])
-            ->assertSessionHasErrors('appointment_time');
+            ->assertRedirect();
+        $this->post(route('appointments.transition', [$appointment, 'approve']))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('approved', $appointment->fresh()->status);
+        $this->assertDatabaseCount('appointment_slots', 0);
+    }
+
+    public function test_patient_booking_and_rescheduling_reject_time_based_input(): void
+    {
+        $this->travelTo('2026-10-04 08:00:00');
+
+        $patient = $this->createPatient('P-2026-00015');
+        $service = Service::create(['name' => 'Date-only service', 'price' => 500, 'is_active' => true]);
+        $this->actingAs($patient->user)->get(route('appointments.index'))
+            ->assertDontSee('name="appointment_time"', false)
+            ->assertDontSee('Appointment Time');
+
+        $this->post(route('appointments.store'), [
+            'branch_id' => $this->generalTriasBranchId(),
+            'service_id' => $service->id,
+            'appointment_date' => '2026-10-05',
+            'appointment_time' => '10:00',
+            'starts_at' => '2026-10-05T10:00',
+        ])->assertSessionHasErrors(['appointment_time', 'starts_at']);
+
         $this->assertDatabaseCount('appointments', 0);
 
         $appointment = Appointment::create([
@@ -2105,166 +2552,22 @@ class ClinicWorkflowTest extends TestCase
             'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'type' => 'online',
-            'starts_at' => now()->addDays(2)->setTime(10, 0),
-            'status' => 'approved',
+            'starts_at' => '2026-10-05 00:00:00',
+            'status' => 'pending',
         ]);
-        $staff = User::factory()->create(['role' => 'staff']);
+        $staff = User::factory()->create([
+            'role' => 'staff',
+            'branch_id' => $this->generalTriasBranchId(),
+        ]);
 
         $this->actingAs($staff)
             ->patch(route('clinic.appointments.reschedule', $appointment), [
-                'appointment_date' => $invalidStart->format('Y-m-d'),
-                'appointment_time' => $invalidStart->format('H:i'),
+                'appointment_date' => '2026-10-06',
+                'appointment_time' => '10:00',
             ])
             ->assertSessionHasErrors('appointment_time');
-        $this->patch(route('clinic.appointments.reschedule', $appointment), [
-            'appointment_date' => $invalidStart->format('Y-m-d'),
-            'appointment_time' => '12:30',
-        ])->assertSessionHasErrors('appointment_time');
-        $this->assertSame(
-            now()->addDays(2)->setTime(10, 0)->format('Y-m-d H:i:s'),
-            $appointment->fresh()->starts_at->format('Y-m-d H:i:s'),
-        );
-    }
 
-    public function test_patient_booking_is_limited_to_monday_through_saturday_from_ten_to_five(): void
-    {
-        $this->travelTo('2026-10-04 08:00:00');
-
-        $patient = $this->createPatient('P-2026-00015');
-        $patientUser = $patient->user;
-        $service = Service::create([
-            'name' => 'Availability test',
-            'price' => 500,
-            'duration_minutes' => 10,
-            'is_active' => true,
-        ]);
-
-        $this->actingAs($patientUser)
-            ->get(route('appointments.index'))
-            ->assertSee('The Dental Clinic is closed on Sundays. Please select another date.')
-            ->assertDontSee('value="09:00"', false)
-            ->assertSee('value="10:00"', false)
-            ->assertSee('value="16:30"', false)
-            ->assertDontSee('value="12:00"', false)
-            ->assertDontSee('value="12:30"', false)
-            ->assertDontSee('value="08:50"', false);
-
-        foreach (range(5, 10) as $day) {
-            foreach (['10:00', '16:30'] as $time) {
-                $this->post(route('appointments.store'), [
-                    'branch_id' => $this->generalTriasBranchId(),
-                    'service_id' => $service->id,
-                    'appointment_date' => sprintf('2026-10-%02d', $day),
-                    'appointment_time' => $time,
-                ])->assertRedirectToRoute('appointments.index')
-                    ->assertSessionHasNoErrors();
-            }
-        }
-
-        $this->assertDatabaseCount('appointments', 12);
-        $availability = $this->getJson(route('appointments.availability', [
-            'month' => '2026-10',
-            'branch_id' => $this->generalTriasBranchId(),
-            'service_id' => $service->id,
-        ]));
-        $availability->assertOk();
-        $this->assertContains('16:00', $availability->json('days')['2026-10-05']);
-        $this->assertNotContains('16:30', $availability->json('days')['2026-10-05']);
-        $this->assertNotContains('17:00', $availability->json('days')['2026-10-05']);
-
-        foreach ([
-            ['appointment_date' => '2026-10-05', 'appointment_time' => '08:50', 'error' => 'appointment_time'],
-            ['appointment_date' => '2026-10-05', 'appointment_time' => '12:00', 'error' => 'appointment_time'],
-            ['appointment_date' => '2026-10-05', 'appointment_time' => '12:30', 'error' => 'appointment_time'],
-            ['appointment_date' => '2026-10-07', 'appointment_time' => '17:00', 'error' => 'appointment_time'],
-            ['appointment_date' => '2026-10-07', 'appointment_time' => '17:10', 'error' => 'appointment_time'],
-            ['appointment_date' => '2026-10-11', 'appointment_time' => '10:00', 'error' => 'appointment_date'],
-        ] as $invalidSlot) {
-            $response = $this->post(route('appointments.store'), [
-                'branch_id' => $this->generalTriasBranchId(),
-                'service_id' => $service->id,
-                'appointment_date' => $invalidSlot['appointment_date'],
-                'appointment_time' => $invalidSlot['appointment_time'],
-            ])->assertSessionHasErrors($invalidSlot['error']);
-
-            if ($invalidSlot['appointment_date'] === '2026-10-11') {
-                $response->assertSessionHasErrors([
-                    'appointment_date' => 'The Dental Clinic is closed on Sundays. Please select another date.',
-                ]);
-            }
-        }
-
-        $this->post(route('appointments.store'), [
-            'branch_id' => $this->generalTriasBranchId(),
-            'service_id' => $service->id,
-            'starts_at' => '2026-10-11T10:00',
-        ])->assertSessionHasErrors([
-            'starts_at' => 'The Dental Clinic is closed on Sundays. Please select another date.',
-        ]);
-        $this->post(route('appointments.store'), [
-            'branch_id' => $this->generalTriasBranchId(),
-            'service_id' => $service->id,
-            'starts_at' => '2026-10-05T08:50',
-        ])->assertSessionHasErrors('starts_at');
-        $this->post(route('appointments.store'), [
-            'branch_id' => $this->generalTriasBranchId(),
-            'service_id' => $service->id,
-            'starts_at' => '2026-10-07T17:10',
-        ])->assertSessionHasErrors('starts_at');
-        $this->post(route('appointments.store'), [
-            'branch_id' => $this->generalTriasBranchId(),
-            'service_id' => $service->id,
-            'starts_at' => '2026-10-07T12:30',
-        ])->assertSessionHasErrors('starts_at');
-
-        $this->assertDatabaseCount('appointments', 12);
-    }
-
-    public function test_availability_and_booking_respect_the_lunch_break_and_service_duration(): void
-    {
-        $this->travelTo('2026-10-04 08:00:00');
-
-        $patient = $this->createPatient('P-2026-00043');
-        $service = Service::create([
-            'name' => 'Long lunch-break appointment',
-            'price' => 500,
-            'duration_minutes' => 60,
-            'is_active' => true,
-        ]);
-        $availability = $this->actingAs($patient->user)
-            ->getJson(route('appointments.availability', [
-                'month' => '2026-10',
-                'branch_id' => $this->generalTriasBranchId(),
-                'service_id' => $service->id,
-            ]));
-
-        $availability->assertOk();
-        $availableTimes = $availability->json('days')['2026-10-05'];
-        $this->assertContains('11:00', $availableTimes);
-        $this->assertNotContains('11:30', $availableTimes);
-        $this->assertNotContains('12:00', $availableTimes);
-        $this->assertNotContains('12:30', $availableTimes);
-        $this->assertContains('13:00', $availableTimes);
-
-        $this->post(route('appointments.store'), [
-            'branch_id' => $this->generalTriasBranchId(),
-            'service_id' => $service->id,
-            'appointment_date' => '2026-10-05',
-            'appointment_time' => '11:30',
-        ])->assertSessionHasErrors('starts_at');
-
-        $this->post(route('appointments.store'), [
-            'branch_id' => $this->generalTriasBranchId(),
-            'service_id' => $service->id,
-            'appointment_date' => '2026-10-05',
-            'appointment_time' => '13:00',
-        ])->assertRedirectToRoute('appointments.index')
-            ->assertSessionHasNoErrors();
-
-        $this->assertDatabaseHas('appointments', [
-            'patient_id' => $patient->id,
-            'starts_at' => '2026-10-05 13:00:00',
-        ]);
+        $this->assertSame('2026-10-05 00:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
     }
 
     public function test_full_schedule_shows_all_historical_appointments_until_a_date_is_selected(): void
@@ -2435,14 +2738,15 @@ class ClinicWorkflowTest extends TestCase
             'patient_id' => $patient->id,
             'service_id' => $service->id,
             'status' => 'approved',
-            'starts_at' => '2026-10-23 10:00:00',
+            'starts_at' => '2026-10-23 00:00:00',
         ]);
 
         $this->actingAs($staff)
             ->get(route('clinic.queue.index'))
             ->assertSee('Approved appointments ready for check-in')
             ->assertSee('appointments scheduled for another day')
-            ->assertSee('Oct 23, 2026 at 10:00 AM');
+            ->assertSee('Oct 23, 2026')
+            ->assertDontSee('Oct 23, 2026 at');
 
         $this->post(route('clinic.queue.check-in', $appointment))
             ->assertRedirectToRoute('clinic.queue.index')
@@ -2454,7 +2758,7 @@ class ClinicWorkflowTest extends TestCase
             'queue_date' => '2026-10-20 00:00:00',
             'status' => 'waiting',
         ]);
-        $this->assertSame('2026-10-23 10:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-23 00:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
     }
 
     public function test_staff_cannot_check_in_an_approved_appointment_from_a_past_day(): void
@@ -2486,87 +2790,89 @@ class ClinicWorkflowTest extends TestCase
         $this->assertDatabaseCount('queue_entries', 0);
     }
 
-    public function test_doctor_rescheduling_is_rejected_on_the_scheduled_clinic_date(): void
+    public function test_doctors_can_reschedule_appointments_by_date_without_slot_reservations(): void
     {
         $this->travelTo('2026-10-09 16:30:00');
 
-        $doctor = User::factory()->create(['role' => 'doctor']);
+        $doctor = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $this->generalTriasBranchId(),
+        ]);
         $patient = $this->createPatient('P-2026-00035');
-        $service = Service::create(['name' => 'Same-day restriction test', 'price' => 500, 'is_active' => true]);
+        $service = Service::create(['name' => 'Doctor date reschedule test', 'price' => 500, 'is_active' => true]);
         $appointment = Appointment::factory()->create([
             'patient_id' => $patient->id,
+            'branch_id' => $this->generalTriasBranchId(),
             'service_id' => $service->id,
             'status' => 'approved',
             'starts_at' => '2026-10-10 10:00:00',
         ]);
-        DB::table('appointment_slots')->insert([
-            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:00:00', 'appointment_id' => $appointment->id],
-            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:10:00', 'appointment_id' => $appointment->id],
-            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:20:00', 'appointment_id' => $appointment->id],
+
+        $frontDesk = User::factory()->create([
+            'role' => 'staff',
+            'branch_id' => $this->generalTriasBranchId(),
         ]);
+        $this->actingAs($frontDesk)
+            ->post(route('clinic.appointment-capacities.store'), [
+                'branch_id' => $this->generalTriasBranchId(),
+                'appointment_date' => '2026-10-12',
+                'daily_limit' => 1,
+            ])
+            ->assertRedirect();
 
         $this->actingAs($doctor)
             ->patch(route('clinic.appointments.reschedule', $appointment), [
                 'appointment_date' => '2026-10-12',
-                'appointment_time' => '10:00',
             ])
-            ->assertSessionHasErrors([
-                'starts_at' => 'Appointments must be rescheduled at least one calendar day in advance.',
-            ]);
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
 
-        $this->assertSame('2026-10-10 10:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
-        $this->assertDatabaseHas('appointment_slots', [
-            'starts_at' => '2026-10-10 10:00:00',
-            'appointment_id' => $appointment->id,
-        ]);
-        $this->assertDatabaseMissing('audit_logs', ['action' => 'appointment_rescheduled']);
+        $this->assertSame('2026-10-12 00:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+        $this->assertDatabaseCount('appointment_slots', 0);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'appointment_rescheduled']);
     }
 
     #[DataProvider('clinicStaffRoles')]
-    public function test_admin_and_staff_cannot_reschedule_an_appointment_after_its_scheduled_time(string $role): void
+    public function test_admin_and_staff_can_reschedule_a_scheduled_date_without_time_cutoffs(string $role): void
     {
         $this->travelTo('2026-10-10 05:30:00');
 
         $user = User::factory()->create(['role' => $role]);
         $patient = $this->createPatient('P-2026-00042');
-        $service = Service::create(['name' => 'Past appointment test', 'price' => 500, 'is_active' => true]);
+        $service = Service::create(['name' => 'Date-only cutoff test', 'price' => 500, 'is_active' => true]);
         $appointment = Appointment::factory()->create([
             'patient_id' => $patient->id,
             'service_id' => $service->id,
             'status' => 'approved',
             'starts_at' => '2026-10-10 10:00:00',
         ]);
-        DB::table('appointment_slots')->insert([
-            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:00:00', 'appointment_id' => $appointment->id],
-            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:10:00', 'appointment_id' => $appointment->id],
-            ['branch_id' => $appointment->branch_id, 'starts_at' => '2026-10-10 10:20:00', 'appointment_id' => $appointment->id],
-        ]);
-
+        $this->actingAs($user)
+            ->post(route('clinic.appointment-capacities.store'), [
+                'branch_id' => $appointment->branch_id,
+                'appointment_date' => '2026-10-12',
+                'daily_limit' => 1,
+            ])
+            ->assertRedirect();
         $this->actingAs($user)
             ->patch(route('clinic.appointments.reschedule', $appointment), [
                 'appointment_date' => '2026-10-12',
-                'appointment_time' => '10:00',
             ])
-            ->assertSessionHasErrors([
-                'starts_at' => 'Past appointments cannot be rescheduled.',
-            ]);
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
 
-        $this->assertSame('2026-10-10 10:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
-        $this->assertDatabaseHas('appointment_slots', [
-            'starts_at' => '2026-10-10 10:00:00',
-            'appointment_id' => $appointment->id,
-        ]);
-        $this->assertDatabaseMissing('audit_logs', ['action' => 'appointment_rescheduled']);
+        $this->assertSame('2026-10-12 00:00:00', $appointment->fresh()->starts_at->format('Y-m-d H:i:s'));
+        $this->assertDatabaseCount('appointment_slots', 0);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'appointment_rescheduled']);
     }
 
-    public function test_service_duration_blocks_overlapping_booking_slots(): void
+    public function test_service_duration_does_not_limit_date_only_requests(): void
     {
         $this->travelTo('2026-10-04 08:00:00');
 
         $firstPatient = $this->createPatient('P-2026-00036');
         $secondPatient = $this->createPatient('P-2026-00037');
         $service = Service::create([
-            'name' => 'Sixty-minute treatment',
+            'name' => 'Sixty-minute date-only treatment',
             'price' => 500,
             'duration_minutes' => 60,
             'is_active' => true,
@@ -2577,7 +2883,6 @@ class ClinicWorkflowTest extends TestCase
                 'branch_id' => $this->generalTriasBranchId(),
                 'service_id' => $service->id,
                 'appointment_date' => '2026-10-05',
-                'appointment_time' => '10:00',
             ])
             ->assertRedirectToRoute('appointments.index');
 
@@ -2586,14 +2891,12 @@ class ClinicWorkflowTest extends TestCase
                 'branch_id' => $this->generalTriasBranchId(),
                 'service_id' => $service->id,
                 'appointment_date' => '2026-10-05',
-                'appointment_time' => '10:30',
             ])
-            ->assertSessionHasErrors([
-                'starts_at' => 'That time is no longer available. Choose another time.',
-            ]);
+            ->assertRedirectToRoute('appointments.index')
+            ->assertSessionHasNoErrors();
 
-        $this->assertDatabaseCount('appointments', 1);
-        $this->assertDatabaseCount('appointment_slots', 6);
+        $this->assertDatabaseCount('appointments', 2);
+        $this->assertDatabaseCount('appointment_slots', 0);
     }
 
     public function test_call_and_no_show_are_available_only_from_patient_queue(): void

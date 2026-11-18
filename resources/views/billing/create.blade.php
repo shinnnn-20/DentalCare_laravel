@@ -45,6 +45,7 @@
                         <input class="form-input max-w-xs" type="number" name="discount_value" min="0" max="100" step="0.01" value="{{ old('discount_value', '0') }}" data-discount-percentage required @disabled(old('discount_type', 'none') !== 'percentage')>
                     </label>
                 </div>
+                @include('billing._discount-card-number')
                 <div class="grid gap-1 rounded-xl border border-teal-100 bg-teal-50/60 p-4 text-sm">
                     <p>Calculated discount amount: <strong data-discount-amount>{{ config('clinic.currency_symbol') }}0.00</strong></p>
                     <p>Final bill total: <strong data-discounted-total>{{ config('clinic.currency_symbol') }}0.00</strong></p>
@@ -112,6 +113,7 @@
                         <input class="form-input max-w-xs" type="number" name="discount_value" min="0" max="100" step="0.01" value="{{ old('discount_value', '0') }}" data-discount-percentage required @disabled(old('discount_type', 'none') !== 'percentage')>
                     </label>
                 </div>
+                @include('billing._discount-card-number')
                 <div class="grid gap-1 rounded-xl border border-teal-100 bg-teal-50/60 p-4 text-sm">
                     <p>Calculated discount amount: <strong data-discount-amount>{{ config('clinic.currency_symbol') }}0.00</strong></p>
                     <p>Final bill total: <strong data-discounted-total>{{ config('clinic.currency_symbol') }}0.00</strong></p>

@@ -14,6 +14,9 @@
                             <p class="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
                                 Follow-up date
                                 <time class="mt-1 block" datetime="{{ $record->follow_up_date->toDateString() }}">{{ $record->follow_up_date->format('M j, Y') }}</time>
+                                @if ($record->formattedFollowUpTime())
+                                    <span class="mt-1 block text-amber-800">{{ $record->formattedFollowUpTime() }}</span>
+                                @endif
                             </p>
                         @endif
                     </div>

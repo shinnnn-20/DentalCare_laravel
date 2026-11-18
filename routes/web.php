@@ -81,6 +81,9 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::get('/appointments/availability', [AppointmentController::class, 'availability'])->name('appointments.availability');
     Route::get('/appointments', [AppointmentController::class, 'index'])->name('appointments.index');
     Route::post('/appointments', [AppointmentController::class, 'store'])->name('appointments.store');
+    Route::post('/clinic/appointment-capacities', [AppointmentController::class, 'storeDailyCapacity'])
+        ->middleware('role:admin,staff')
+        ->name('clinic.appointment-capacities.store');
     Route::post('/appointments/{appointment}/action/{action}', [AppointmentController::class, 'transition'])
         ->whereIn('action', ['approve', 'reject', 'cancel', 'call', 'consult', 'no-show'])
         ->name('appointments.transition');

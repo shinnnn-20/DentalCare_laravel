@@ -57,8 +57,8 @@
                                     @endif
                                 </div>
                                 @if ($nextAppointment)
-                                    <time class="mt-3 block text-base font-semibold text-slate-800" datetime="{{ $nextAppointment->starts_at->toIso8601String() }}">
-                                        {{ $nextAppointment->starts_at->format('M j, Y g:i A') }}
+                                    <time class="mt-3 block text-base font-semibold text-slate-800" datetime="{{ $nextAppointment->starts_at->format($nextAppointment->type === 'walk_in' ? 'Y-m-d\TH:i:sP' : 'Y-m-d') }}">
+                                        {{ $nextAppointment->starts_at->format($nextAppointment->type === 'walk_in' ? 'M j, Y g:i A' : 'M j, Y') }}
                                     </time>
                                     <p class="mt-2 text-sm text-slate-600">Branch: {{ $nextAppointment->branch?->name ?? 'Branch not assigned' }}</p>
                                 @else
@@ -122,7 +122,7 @@
                                     <p class="mt-1 text-sm text-slate-600">Prescription: {{ $record->prescription }}</p>
                                 @endif
                                 @if ($record->follow_up_date)
-                                    <p class="mt-1 text-sm text-slate-600">Follow-up: {{ $record->follow_up_date->format('M j, Y') }}</p>
+                                    <p class="mt-1 text-sm text-slate-600">Follow-up: {{ $record->follow_up_date->format('M j, Y') }}@if ($record->formattedFollowUpTime()) · {{ $record->formattedFollowUpTime() }}@endif</p>
                                 @endif
                             </div>
                         @empty
@@ -174,7 +174,7 @@
                         @forelse ($appointments as $appointment)
                             <div class="flex flex-col gap-3 rounded-xl bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
-                                    <p class="font-medium">{{ $appointment->starts_at->format('M j, Y g:i A') }} · {{ $appointment->treatmentNames() }}</p>
+                                    <p class="font-medium">{{ $appointment->starts_at->format($appointment->type === 'walk_in' ? 'M j, Y g:i A' : 'M j, Y') }} · {{ $appointment->treatmentNames() }}</p>
                                     <p class="mt-1 text-xs text-slate-500">Branch: {{ $appointment->branch?->name ?? 'Branch not assigned' }}</p>
                                     <p class="mt-1 text-xs capitalize text-slate-500">Status: {{ str_replace('_', ' ', $appointment->status) }}</p>
                                 </div>

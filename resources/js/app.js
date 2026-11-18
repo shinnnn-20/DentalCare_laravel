@@ -187,17 +187,100 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('[data-bill-discount]').forEach((form) => {
         const discountType = form.querySelector('[data-discount-type]');
         const percentageInput = form.querySelector('[data-discount-percentage]');
+        const discountCardField = form.querySelector('[data-discount-card-field]');
+        const discountCardInput = form.querySelector('[data-discount-card-number]');
         const discountAmount = form.querySelector('[data-discount-amount]');
         const discountedTotal = form.querySelector('[data-discounted-total]');
         const calculationStatus = form.querySelector('[data-bill-calculation-status]');
+        let preserveSeniorCardIdFormat = discountType?.value === 'senior'
+            && Boolean(discountCardInput?.value.includes('-'));
         const formatCurrency = (cents) => new Intl.NumberFormat('en-PH', {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
         }).format(cents / 100);
 
+        const formatCardNumber = () => {
+            if (!discountCardInput || !discountType
+                || (discountType.value === 'senior' && preserveSeniorCardIdFormat)) {
+                return;
+            }
+
+            const originalValue = discountCardInput.value;
+            const digits = originalValue.replace(/\D/g, '');
+            const digitGroups = [];
+            let digitOffset = 0;
+
+            for (const groupLength of [2, 4, 3]) {
+                if (digitOffset >= digits.length) {
+                    break;
+                }
+
+                digitGroups.push(digits.slice(digitOffset, digitOffset + groupLength));
+                digitOffset += groupLength;
+            }
+
+            if (digitOffset < digits.length) {
+                digitGroups.push(digits.slice(digitOffset));
+            }
+
+            const formattedValue = digitGroups.join('-');
+            if (discountType.value === 'senior'
+                && originalValue.includes('-')
+                && formattedValue !== originalValue) {
+                preserveSeniorCardIdFormat = true;
+                return;
+            }
+
+            if (formattedValue === originalValue) {
+                return;
+            }
+
+            const countDigits = (value) => (value.match(/\d/g) ?? []).length;
+            const positionAfterDigits = (value, digitCount) => {
+                if (digitCount === 0) {
+                    return 0;
+                }
+
+                let digitsSeen = 0;
+                for (let index = 0; index < value.length; index += 1) {
+                    if (/\d/.test(value[index])) {
+                        digitsSeen += 1;
+                        if (digitsSeen === digitCount) {
+                            return index + 1;
+                        }
+                    }
+                }
+
+                return value.length;
+            };
+            const selectionStart = discountCardInput.selectionStart ?? originalValue.length;
+            const selectionEnd = discountCardInput.selectionEnd ?? selectionStart;
+            const startDigitCount = countDigits(originalValue.slice(0, selectionStart));
+            const endDigitCount = countDigits(originalValue.slice(0, selectionEnd));
+
+            discountCardInput.value = formattedValue;
+            discountCardInput.setSelectionRange(
+                positionAfterDigits(formattedValue, startDigitCount),
+                positionAfterDigits(formattedValue, endDigitCount),
+            );
+        };
+
         const syncDiscountPreset = () => {
             if (!discountType || !percentageInput) {
                 return;
+            }
+
+            const requiresDiscountCard = discountType.value === 'senior' || discountType.value === 'pwd';
+            discountCardField?.classList.toggle('hidden', !requiresDiscountCard);
+            if (discountCardInput) {
+                discountCardInput.required = requiresDiscountCard;
+                discountCardInput.disabled = !requiresDiscountCard;
+                discountCardInput.placeholder = discountType.value === 'pwd'
+                    ? 'RR-PPMM-BBB-NNNNNNN'
+                    : 'SS-PPMM-BBB-NNNNNN';
+                if (!requiresDiscountCard) {
+                    discountCardInput.value = '';
+                }
             }
 
             if (discountType.value === 'senior' || discountType.value === 'pwd') {
@@ -219,8 +302,20 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         discountType?.addEventListener('change', () => {
+            preserveSeniorCardIdFormat = false;
             syncDiscountPreset();
+            formatCardNumber();
             updateBillTotals();
+        });
+
+        discountCardInput?.addEventListener('input', (event) => {
+            if (discountType?.value === 'senior'
+                && ((event.inputType === 'insertFromPaste' && discountCardInput.value.includes('-'))
+                    || event.data === '-')) {
+                preserveSeniorCardIdFormat = true;
+            }
+
+            formatCardNumber();
         });
 
         const updateBillTotals = () => {
@@ -248,6 +343,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     + Number.parseInt(`${fraction}00`.slice(0, 2), 10);
             }
 
+            const requiresDiscountCard = discountType.value === 'senior' || discountType.value === 'pwd';
+            if (requiresDiscountCard && !discountCardInput?.value.trim()) {
+                discountAmount.textContent = `₱${formatCurrency(0)}`;
+                discountedTotal.textContent = `₱${formatCurrency(subtotalCents)}`;
+                calculationStatus.textContent = 'Enter the Senior/PWD card ID to apply this discount.';
+                return;
+            }
+
             const discountBasisPoints = Math.round(percentage * 100);
             const discountCents = Math.floor((subtotalCents * discountBasisPoints + 5000) / 10000);
             discountAmount.textContent = `₱${formatCurrency(discountCents)}`;
@@ -257,6 +360,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         form.addEventListener('input', updateBillTotals);
         form.addEventListener('change', updateBillTotals);
+        formatCardNumber();
         updateBillTotals();
     });
 
@@ -375,6 +479,238 @@ document.addEventListener('DOMContentLoaded', () => {
                 input.value = input.value.replace(/,/g, '');
             });
         });
+    });
+
+    document.querySelectorAll('[data-follow-up-time-picker]').forEach((picker) => {
+        const trigger = picker.querySelector('[data-follow-up-time-trigger]');
+        const triggerLabel = picker.querySelector('[data-follow-up-time-label]');
+        const timeInput = picker.querySelector('[data-follow-up-time-value]');
+        const dateInput = picker.closest('form').querySelector('[name="follow_up_date"]');
+        const status = picker.querySelector('[data-follow-up-time-status]');
+        const timeMenu = document.createElement('div');
+        const timeOptionsId = `follow-up-time-options-${Math.random().toString(36).slice(2)}`;
+        const branchId = picker.dataset.branchId;
+        const appointmentId = picker.dataset.excludeAppointmentId;
+        let selectedTime = timeInput.value;
+        let availableTimes = [];
+        let availabilityLoaded = false;
+        let availabilityRequest = 0;
+        let lastDate = dateInput.value;
+
+        timeMenu.id = timeOptionsId;
+        timeMenu.className = 'time-select-menu hidden';
+        timeMenu.setAttribute('role', 'listbox');
+        timeMenu.setAttribute('aria-label', 'Available follow-up times');
+        trigger.setAttribute('aria-controls', timeOptionsId);
+        document.body.append(timeMenu);
+
+        const formatTime = (time) => new Intl.DateTimeFormat(undefined, {
+            hour: 'numeric',
+            minute: '2-digit',
+        }).format(new Date(`2000-01-01T${time}:00`));
+
+        const updatePicker = () => {
+            triggerLabel.textContent = selectedTime ? formatTime(selectedTime) : 'Select time';
+            timeInput.value = selectedTime;
+            dateInput.required = selectedTime !== '';
+            dateInput.setCustomValidity(selectedTime && !dateInput.value
+                ? 'Choose a follow-up date when setting a time.'
+                : '');
+            trigger.disabled = !dateInput.value || !availabilityLoaded || availableTimes.length === 0;
+            trigger.setAttribute('aria-disabled', String(trigger.disabled));
+        };
+
+        const closeTimeMenu = (returnFocus = false) => {
+            timeMenu.classList.add('hidden');
+            timeMenu.classList.remove('time-select-menu-fixed');
+            timeMenu.style.removeProperty('left');
+            timeMenu.style.removeProperty('right');
+            timeMenu.style.removeProperty('width');
+            timeMenu.style.removeProperty('top');
+            timeMenu.style.removeProperty('bottom');
+            trigger.setAttribute('aria-expanded', 'false');
+            if (returnFocus) {
+                trigger.focus();
+            }
+        };
+
+        const renderTimeOptions = () => {
+            const items = availableTimes.map((time) => {
+                const item = document.createElement('div');
+                item.className = 'time-select-option';
+                item.textContent = formatTime(time);
+                item.setAttribute('role', 'option');
+                item.setAttribute('aria-selected', String(time === selectedTime));
+                item.tabIndex = -1;
+                item.addEventListener('click', () => {
+                    selectedTime = time;
+                    updatePicker();
+                    renderTimeOptions();
+                    closeTimeMenu(true);
+                });
+                item.addEventListener('keydown', (event) => {
+                    const options = Array.from(timeMenu.querySelectorAll('[role="option"]'));
+                    const index = options.indexOf(item);
+                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        options[(index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus();
+                    } else if (event.key === 'Home' || event.key === 'End') {
+                        event.preventDefault();
+                        options[event.key === 'Home' ? 0 : options.length - 1]?.focus();
+                    } else if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeTimeMenu(true);
+                    } else if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        item.click();
+                    }
+                });
+
+                return item;
+            });
+
+            timeMenu.replaceChildren(...items);
+        };
+
+        const setStatus = (message) => {
+            status.textContent = message;
+            status.hidden = message === '';
+        };
+
+        const loadAvailability = async () => {
+            const requestedDate = dateInput.value;
+            const requestId = ++availabilityRequest;
+            availableTimes = [];
+            availabilityLoaded = false;
+            closeTimeMenu();
+            renderTimeOptions();
+            updatePicker();
+
+            if (!requestedDate) {
+                setStatus('Choose a follow-up date to see available times.');
+                return;
+            }
+
+            if (!branchId) {
+                selectedTime = '';
+                updatePicker();
+                setStatus('This appointment has no assigned branch, so times cannot be loaded.');
+                return;
+            }
+
+            setStatus('Loading times...');
+
+            const url = new URL(picker.dataset.availabilityUrl, window.location.origin);
+            url.searchParams.set('month', requestedDate.slice(0, 7));
+            url.searchParams.set('branch_id', branchId);
+            if (appointmentId) {
+                url.searchParams.set('exclude_appointment_id', appointmentId);
+            }
+
+            try {
+                const response = await fetch(url, {
+                    cache: 'no-store',
+                    headers: { Accept: 'application/json' },
+                });
+                if (!response.ok) {
+                    throw new Error(`Availability request failed with status ${response.status}.`);
+                }
+
+                const result = await response.json();
+                if (requestId !== availabilityRequest) {
+                    return;
+                }
+
+                availableTimes = Array.isArray(result.days?.[requestedDate])
+                    ? result.days[requestedDate]
+                    : [];
+                availabilityLoaded = true;
+                if (selectedTime && !availableTimes.includes(selectedTime)) {
+                    selectedTime = '';
+                    setStatus('The selected time is no longer available. Choose another time.');
+                } else {
+                    setStatus(availableTimes.length === 0 ? 'No times are available on this date.' : '');
+                }
+                renderTimeOptions();
+                updatePicker();
+            } catch (error) {
+                if (requestId !== availabilityRequest) {
+                    return;
+                }
+
+                console.error(error);
+                selectedTime = '';
+                availableTimes = [];
+                availabilityLoaded = false;
+                renderTimeOptions();
+                updatePicker();
+                setStatus('Unable to load times. Change the date and try again.');
+            }
+        };
+
+        trigger.addEventListener('click', () => {
+            if (trigger.disabled) {
+                return;
+            }
+
+            const isOpening = timeMenu.classList.contains('hidden');
+            timeMenu.classList.toggle('hidden', !isOpening);
+            trigger.setAttribute('aria-expanded', String(isOpening));
+            if (isOpening) {
+                const triggerBounds = trigger.getBoundingClientRect();
+                const viewportPadding = 8;
+                const menuHeight = Math.min(timeMenu.scrollHeight, window.innerHeight * 0.4, 192);
+                const spaceBelow = window.innerHeight - triggerBounds.bottom;
+                const opensAbove = spaceBelow < menuHeight + viewportPadding && triggerBounds.top > spaceBelow;
+                const menuWidth = Math.min(triggerBounds.width, window.innerWidth - (viewportPadding * 2));
+                const menuLeft = Math.max(
+                    viewportPadding,
+                    Math.min(triggerBounds.left, window.innerWidth - menuWidth - viewportPadding),
+                );
+                timeMenu.classList.add('time-select-menu-fixed');
+                timeMenu.style.left = `${menuLeft}px`;
+                timeMenu.style.right = 'auto';
+                timeMenu.style.width = `${menuWidth}px`;
+                timeMenu.style.top = opensAbove ? 'auto' : `${triggerBounds.bottom + 4}px`;
+                timeMenu.style.bottom = opensAbove
+                    ? `${window.innerHeight - triggerBounds.top + 4}px`
+                    : 'auto';
+                (timeMenu.querySelector('[aria-selected="true"]')
+                    || timeMenu.querySelector('[role="option"]'))?.focus();
+            }
+        });
+        trigger.addEventListener('keydown', (event) => {
+            if (['ArrowDown', 'Enter', ' '].includes(event.key) && !trigger.disabled) {
+                event.preventDefault();
+                trigger.click();
+            }
+        });
+        document.addEventListener('click', (event) => {
+            if (!picker.contains(event.target) && !timeMenu.contains(event.target)) {
+                closeTimeMenu();
+            }
+        });
+        window.addEventListener('scroll', (event) => {
+            if (!timeMenu.contains(event.target)) {
+                closeTimeMenu();
+            }
+        }, true);
+        window.addEventListener('resize', () => closeTimeMenu());
+        dateInput.addEventListener('change', () => {
+            const preserveOldTime = lastDate === '' && selectedTime !== '';
+            if (!preserveOldTime) {
+                selectedTime = '';
+            }
+            lastDate = dateInput.value;
+            loadAvailability();
+        });
+
+        updatePicker();
+        if (dateInput.value) {
+            loadAvailability();
+        } else {
+            setStatus('Choose a follow-up date to see available times.');
+        }
     });
 
     document.querySelectorAll('[data-password-toggle]').forEach((button) => {

@@ -24,6 +24,27 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_patient_can_book_two_treatments_in_one_appointment(): void
+    {
+        $this->travelTo(Carbon::parse('2026-10-04 08:00:00', config('clinic.timezone')));
+
+        $patient = Patient::factory()->for(User::factory()->create(['role' => 'patient']))->create();
+        $branch = Branch::query()->where('slug', 'general-trias')->firstOrFail();
+        $firstService = Service::factory()->create();
+        $secondService = Service::factory()->create();
+
+        $this->actingAs($patient->user)
+            ->post(route('appointments.store'), [
+                'branch_id' => $branch->id,
+                'service_ids' => [$firstService->id, $secondService->id],
+                'appointment_date' => '2026-10-05',
+            ])
+            ->assertRedirectToRoute('appointments.index');
+
+        $appointment = Appointment::query()->sole();
+        $this->assertCount(2, $appointment->services);
+    }
+
     /**
      * Test A — Multiple treatments:
      * - Book an appointment with three different treatments.
@@ -91,22 +112,39 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
             ->assertSee('data-selected-treatments-list', false)
             ->assertSee('data-service-category-card', false)
             ->assertSee('data-category-selections', false)
+            ->assertSee('data-max-treatments="2"', false)
+            ->assertSee('Choose up to 2 treatments for this visit.')
             ->assertSee('data-price-display="₱45,000 and up"', false)
             ->assertSee('data-combined-estimated-cost', false)
             ->assertSee('Consultation — ₱500.00')
             ->assertSee('Dental Cleaning — ₱1,000.00')
             ->assertSee('Dental Filling — ₱1,800.00');
 
-        // Book appointment with all 3 treatments
-        $response = $this->actingAs($patientUser)->post(route('appointments.store'), [
-            'branch_id' => Branch::query()->where('slug', 'general-trias')->firstOrFail()->id,
+        $branchId = Branch::query()->where('slug', 'general-trias')->firstOrFail()->id;
+
+        $this->actingAs($patientUser)
+            ->post(route('appointments.store'), [
+                'branch_id' => $branchId,
+                'service_ids' => [$consultation->id, $consultation->id, $cleaning->id, $filling->id],
+                'appointment_date' => '2026-10-05',
+            ])
+            ->assertSessionHasErrors([
+                'service_ids' => 'You can select up to 2 treatments per appointment. Book additional treatments in a separate appointment.',
+            ]);
+        $this->assertDatabaseCount('appointments', 0);
+
+        // Clinic staff can still schedule a visit containing multiple treatments.
+        $doctor = User::factory()->create(['role' => 'doctor', 'branch_id' => $branchId]);
+        $response = $this->actingAs($doctor)->post(route('appointments.store'), [
+            'branch_id' => $branchId,
+            'patient_id' => $patient->id,
+            'booking_mode' => 'appointment',
             'service_ids' => [$consultation->id, $consultation->id, $cleaning->id, $filling->id],
             'appointment_date' => '2026-10-05',
-            'appointment_time' => '10:00',
             'notes' => 'Need consultation, cleaning, and filling.',
         ]);
 
-        $response->assertRedirectToRoute('appointments.index');
+        $response->assertRedirectToRoute('clinic.appointment-records');
         $appointment = Appointment::query()->sole();
 
         // Confirm appointment services relation contains all 3 treatments
@@ -134,6 +172,13 @@ class MultipleTreatmentsAndPayMongoCheckoutTest extends TestCase
             ->assertSee('Consultation, Dental Cleaning, Dental Filling');
 
         // Advance through workflow: staff approves, checks in, starts consult, doctor adds dental record
+        $this->actingAs($staff)
+            ->post(route('clinic.appointment-capacities.store'), [
+                'branch_id' => $branchId,
+                'appointment_date' => '2026-10-05',
+                'daily_limit' => 1,
+            ])
+            ->assertRedirect();
         $this->actingAs($staff)->post(route('appointments.transition', [$appointment, 'approve']))->assertSessionHasNoErrors();
         $appointment->refresh();
         $this->assertSame('approved', $appointment->status);
