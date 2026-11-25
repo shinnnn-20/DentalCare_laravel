@@ -33,7 +33,6 @@
                 @php($isPaid = $bill->payment_status === 'paid' || $paid >= (float) $bill->total)
                 @php($originalItems = $bill->items->where('is_add_on', false))
                 @php($addOnItems = $bill->items->where('is_add_on', true))
-                @php($unreconciledPaymongoCheckout = $bill->payMongoBillCheckouts->contains(fn ($checkout) => $checkout->status === 'paid' && (! $checkout->paid_payment_id || ! $bill->payments->contains(fn ($payment) => $payment->provider === 'paymongo' && $payment->is_test && $payment->provider_transaction_id === $checkout->paid_payment_id))))
                 <tr id="bill-{{ $bill->id }}" @class(['selected-bill' => $selectedBillId === $bill->id])>
                     <td data-label="Bill" class="font-semibold">{{ $bill->bill_number }}<div class="text-xs font-normal text-slate-400">{{ $bill->created_at->timezone(config('clinic.timezone'))->format('M j, Y') }}</div></td>
                     <td data-label="Patient">{{ $bill->patient->user->name }}<div class="text-xs text-slate-400">{{ $bill->patient->patient_number }}</div></td>
@@ -74,34 +73,12 @@
                     @endunless
                     <td data-label="{{ $isReadOnly ? 'Payment history' : 'Record payment' }}" class="min-w-80">
                         @unless ($isReadOnly)
-                        @if ($bill->payMongoBillCheckouts->contains('status', 'review'))
-                            <p class="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
-                                A PayMongo test payment was confirmed, but could not be safely applied. Review this payment before starting another checkout.
-                            </p>
-                        @elseif ($unreconciledPaymongoCheckout)
-                            <p class="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-                                A PayMongo test payment was confirmed but is not yet in this bill’s payment history. Reconcile it before starting another checkout.
-                            </p>
-                        @endif
-                        @foreach ($bill->payMongoBillCheckouts as $checkout)
-                            @if ($paymongoTestCheckoutAvailable && $checkout->status === 'pending' && $checkout->checkout_session_id)
-                                <form method="POST" action="{{ route('clinic.billing.paymongo.reconcile', $checkout) }}" class="mb-3" data-confirm="Check this PayMongo session now? If PayMongo confirms it is paid, the payment and receipt will be added to this bill." data-confirm-title="Confirm PayMongo payment" data-confirm-accept="Check and reconcile">
-                                    @csrf
-                                    <button class="btn-secondary" type="submit">Check existing payment with PayMongo</button>
-                                    <p class="mt-1 text-xs text-slate-500">Checks this checkout’s status; it does not start a new charge.</p>
-                                </form>
-                            @endif
-                        @endforeach
                         @if ($balance > 0)
-                            @if ($paymongoTestCheckoutAvailable)
-                                @if (! $unreconciledPaymongoCheckout && ! $bill->payMongoBillCheckouts->contains('status', 'review'))
-                                    <form method="POST" action="{{ route('clinic.billing.paymongo.store', $bill) }}" class="mb-3" data-confirm="Continue to the PayMongo test checkout? No payment will be recorded until PayMongo confirms it." data-confirm-title="Start test checkout" data-confirm-accept="Continue">
-                                        @csrf
-                                        <button class="btn-primary" type="submit">Start GCash test checkout</button>
-                                        <p class="mt-1 text-xs text-amber-700">Test mode only; a confirmed checkout is recorded as a clearly labeled test payment and applied to this bill.</p>
-                                    </form>
-                                @endif
-                            @endif
+                            <div class="mb-3 rounded-xl border border-teal-200 bg-teal-50/60 p-3">
+                                <p class="text-sm font-semibold text-slate-900">GCash QR payment</p>
+                                <p class="mt-1 text-xs leading-5 text-slate-700">Ask the patient to scan the QR and pay the remaining balance shown above. Verify the transfer before recording the payment.</p>
+                                <img class="mt-3 w-full max-w-40 rounded-lg border border-slate-200 bg-white p-1" src="{{ asset('images/gcash-deposit-qr.png') }}" alt="Clinic GCash payment QR code">
+                            </div>
                             <form method="POST" action="{{ route('clinic.payments.store', $bill) }}" class="grid gap-2" data-confirm="Record this payment in the bill ledger? Verify the payment method and amounts before continuing." data-confirm-title="Confirm payment" data-confirm-accept="Record payment">
                                 @csrf
                                 <select class="form-input" name="method" required><option value="cash">Cash</option><option value="gcash">GCash</option><option value="other">Other</option></select>
@@ -141,7 +118,7 @@
         </tbody></table></div>
     </section>
     @unless ($isReadOnly)
-        <p class="mt-4 text-sm text-slate-500">Manual cash, GCash, and other entries do not charge an external payment. PayMongo test checkouts are available to staff and admins in local test mode only; confirmed test payments are included in bill balances and reports, and are labeled TEST MODE because no real money is transferred.</p>
+        <p class="mt-4 text-sm text-slate-500">Record cash, GCash, or other payments only after the amount has been received and verified.</p>
     @endunless
 
     <section class="billing-print-report" data-billing-print-report aria-label="Printable billing report">

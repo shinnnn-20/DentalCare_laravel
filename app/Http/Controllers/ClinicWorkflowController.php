@@ -11,6 +11,7 @@ use App\Models\DentalRecord;
 use App\Models\Patient;
 use App\Models\Payment;
 use App\Models\QueueEntry;
+use App\Models\Receipt;
 use App\Models\RfidCard;
 use App\Models\SmsLog;
 use App\Models\User;
@@ -32,6 +33,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class ClinicWorkflowController extends Controller
@@ -248,6 +250,12 @@ class ClinicWorkflowController extends Controller
             $request->merge(['final_price' => str_replace(',', '', $finalPrice)]);
         }
 
+        $downpaymentAmount = $request->input('downpayment_amount');
+        if (is_string($downpaymentAmount)
+            && preg_match('/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/', $downpaymentAmount) === 1) {
+            $request->merge(['downpayment_amount' => str_replace(',', '', $downpaymentAmount)]);
+        }
+
         $itemsInput = $request->input('items');
         if (is_array($itemsInput)) {
             foreach ($itemsInput as $key => $itemData) {
@@ -270,6 +278,8 @@ class ClinicWorkflowController extends Controller
             'discount_type' => ['required', 'string', Rule::in(['none', 'senior', 'pwd', 'percentage'])],
             'discount_value' => $discountValueRules,
             'discount_card_number' => ['nullable', 'string', 'max:100', 'required_if:discount_type,senior,pwd'],
+            'downpayment_amount' => ['nullable', 'numeric', 'decimal:0,2', 'min:0', 'max:1000000'],
+            'downpayment_method' => ['nullable', 'required_with:downpayment_amount', Rule::in(['cash', 'gcash', 'other'])],
         ];
         $messages = [
             'discount_card_number.required_if' => 'Enter the Senior or PWD card number before applying this discount.',
@@ -348,9 +358,16 @@ class ClinicWorkflowController extends Controller
 
         $discountBasisPoints = (int) round($discountValue * 100);
         $discountCents = intdiv($subtotalCents * $discountBasisPoints + 5000, 10000);
+        $downpaymentCents = (int) round((float) ($data['downpayment_amount'] ?? 0) * 100);
 
-        $bill = DB::transaction(function () use ($appointment, $request, $subtotalCents, $discountType, $discountCardNumber, $discountValue, $discountCents, $itemRows, $appointmentCompletion): Bill {
+        $bill = DB::transaction(function () use ($appointment, $request, $data, $subtotalCents, $discountType, $discountCardNumber, $discountValue, $discountCents, $downpaymentCents, $itemRows, $appointmentCompletion): Bill {
             $totalCents = $subtotalCents - $discountCents;
+            if ($downpaymentCents > $totalCents) {
+                throw ValidationException::withMessages([
+                    'downpayment_amount' => 'The downpayment cannot exceed the final bill total.',
+                ]);
+            }
+
             $bill = Bill::create([
                 'bill_number' => 'B-PENDING-'.Str::uuid(),
                 'patient_id' => $appointment->patient_id,
@@ -362,12 +379,33 @@ class ClinicWorkflowController extends Controller
                 'discount_card_number' => $discountCardNumber,
                 'discount' => number_format($discountCents / 100, 2, '.', ''),
                 'total' => number_format($totalCents / 100, 2, '.', ''),
-                'payment_status' => $totalCents === 0 ? 'paid' : 'unpaid',
+                'payment_status' => $totalCents === 0 || $downpaymentCents === $totalCents
+                    ? 'paid'
+                    : ($downpaymentCents > 0 ? 'partially_paid' : 'unpaid'),
             ]);
             $bill->update(['bill_number' => sprintf('B-%s-%06d', now()->format('Y'), $bill->id)]);
 
             foreach ($itemRows as $row) {
                 $bill->items()->create($row);
+            }
+
+            if ($downpaymentCents > 0) {
+                $payment = Payment::create([
+                    'bill_id' => $bill->id,
+                    'transaction_id' => 'TXN-PENDING-'.Str::uuid(),
+                    'amount' => number_format($downpaymentCents / 100, 2, '.', ''),
+                    'applied_amount' => number_format($downpaymentCents / 100, 2, '.', ''),
+                    'change_amount' => '0.00',
+                    'method' => $data['downpayment_method'],
+                    'processed_by' => $request->user()->id,
+                ]);
+                $payment->update(['transaction_id' => sprintf('TXN-%s-%06d', now()->format('Ymd'), $payment->id)]);
+
+                $receipt = Receipt::create([
+                    'payment_id' => $payment->id,
+                    'receipt_number' => 'AR-PENDING-'.Str::uuid(),
+                ]);
+                $receipt->update(['receipt_number' => sprintf('AR-%s-%06d', now()->format('Y'), $receipt->id)]);
             }
 
             $appointment->update(['status' => 'billed']);
@@ -383,13 +421,20 @@ class ClinicWorkflowController extends Controller
                 number_format((float) $item['unit_price'], 2),
             ))
             ->join('; ');
+        $downpaymentSummary = $downpaymentCents > 0
+            ? sprintf(
+                '; downpayment PHP %s via %s',
+                number_format($downpaymentCents / 100, 2),
+                strtoupper($data['downpayment_method']),
+            )
+            : '';
         $auditTrail->record(
             $request->user(),
             'bill_created',
             'billing',
             $bill,
             sprintf(
-                'Created bill %s for patient %s from appointment #%d; items: %s; subtotal PHP %s, discount %s%% (PHP %s), total PHP %s.',
+                'Created bill %s for patient %s from appointment #%d; items: %s; subtotal PHP %s, discount %s%% (PHP %s), total PHP %s%s.',
                 $bill->bill_number,
                 $appointment->patient->user->name,
                 $appointment->id,
@@ -398,6 +443,7 @@ class ClinicWorkflowController extends Controller
                 number_format((float) $bill->discount_value, 2),
                 number_format((float) $bill->discount, 2),
                 number_format((float) $bill->total, 2),
+                $downpaymentSummary,
             ),
         );
         $notifications->notifyClinicStaff(
@@ -459,7 +505,7 @@ class ClinicWorkflowController extends Controller
 
         return view('billing.index', [
             'bills' => Bill::query()
-                ->with(['creator', 'patient.user', 'appointment', 'items.treatingDentist', 'payments.receipt', 'payMongoBillCheckouts'])
+                ->with(['creator', 'patient.user', 'appointment', 'items.treatingDentist', 'payments.receipt'])
                 ->where('bills.created_at', '>=', $dateStart)
                 ->where('bills.created_at', '<', $dateEnd)
                 ->when(
@@ -477,7 +523,6 @@ class ClinicWorkflowController extends Controller
                 ->get(),
             'selectedBillId' => isset($filters['bill']) ? (int) $filters['bill'] : null,
             'selectedDate' => $selectedDate,
-            'paymongoTestCheckoutAvailable' => $this->paymongoTestCheckoutAvailable(),
             'isReadOnly' => false,
         ]);
     }
@@ -505,20 +550,6 @@ class ClinicWorkflowController extends Controller
                 ->latest()
                 ->paginate(20),
         ]);
-    }
-
-    private function paymongoTestCheckoutAvailable(): bool
-    {
-        $secretKey = config('services.paymongo.secret');
-        $baseUrl = config('services.paymongo.base_url');
-        $webhookSecret = config('services.paymongo.webhook_secret');
-
-        return (app()->isLocal() || (app()->environment('testing') && app()->runningUnitTests()))
-            && is_string($secretKey)
-            && str_starts_with($secretKey, 'sk_test_')
-            && $baseUrl === 'https://api.paymongo.com/v2'
-            && is_string($webhookSecret)
-            && $webhookSecret !== '';
     }
 
     private function authorizeAssignedBranch(Request $request, Appointment $appointment): void

@@ -61,6 +61,15 @@
                     <div><dt class="text-slate-500">Amount paid</dt><dd class="mt-1 font-semibold">{{ config('clinic.currency_symbol') }}{{ number_format($paid, 2) }}</dd></div>
                     <div><dt class="text-slate-500">Remaining balance</dt><dd class="mt-1 font-semibold">{{ config('clinic.currency_symbol') }}{{ number_format($balance, 2) }}</dd></div>
                 </dl>
+                @if ($balance > 0)
+                    <section class="mt-5 grid gap-3 rounded-xl border border-teal-200 bg-teal-50/60 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
+                        <div>
+                            <h3 class="font-semibold text-slate-900">Pay your remaining balance with GCash</h3>
+                            <p class="mt-1 text-sm leading-6 text-slate-700">Scan the QR code and enter the remaining balance shown above. Please show your payment confirmation to clinic staff so they can verify and record it.</p>
+                        </div>
+                        <img class="mx-auto w-full max-w-40 rounded-lg border border-slate-200 bg-white p-1" src="{{ asset('images/gcash-deposit-qr.png') }}" alt="Clinic GCash payment QR code">
+                    </section>
+                @endif
                 @if ($bill->payments->isNotEmpty())
                     <div class="mt-4 border-t border-slate-100 pt-4">
                         <h3 class="mb-2 text-sm font-semibold">Payment history</h3>

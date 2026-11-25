@@ -2048,6 +2048,98 @@ class ClinicWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_bill_creation_records_a_verified_downpayment_and_displays_the_gcash_qr_for_the_balance(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00201');
+        $service = Service::factory()->create(['price' => 1200]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'in_consultation',
+        ]);
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'treating_dentist_id' => $treatingDentist->id,
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('clinic.bills.create', $appointment))
+            ->assertSee('Downpayment amount (₱)')
+            ->assertSee('name="downpayment_method"', false);
+
+        $this->post(route('clinic.bills.store', $appointment), [
+            'discount_type' => 'none',
+            'downpayment_amount' => '350.00',
+            'downpayment_method' => 'gcash',
+        ])->assertRedirectToRoute('clinic.billing.index');
+
+        $bill = Bill::query()->where('appointment_id', $appointment->id)->firstOrFail();
+        $payment = Payment::query()->sole();
+        $receipt = Receipt::query()->sole();
+        $this->assertDatabaseHas('bills', [
+            'id' => $bill->id,
+            'total' => '1200.00',
+            'payment_status' => 'partially_paid',
+        ]);
+        $this->assertDatabaseHas('payments', [
+            'id' => $payment->id,
+            'bill_id' => $bill->id,
+            'amount' => '350.00',
+            'applied_amount' => '350.00',
+            'method' => 'gcash',
+            'processed_by' => $staff->id,
+        ]);
+        $this->assertDatabaseHas('receipts', [
+            'id' => $receipt->id,
+            'payment_id' => $payment->id,
+        ]);
+        $this->assertSame('billed', $appointment->fresh()->status);
+
+        $this->get(route('clinic.billing.index'))
+            ->assertSee('GCash QR payment')
+            ->assertSee(asset('images/gcash-deposit-qr.png'), false)
+            ->assertDontSee('PayMongo');
+        $this->actingAs($patient->user)
+            ->get(route('patient.billing'))
+            ->assertSee('Pay your remaining balance with GCash')
+            ->assertSee(asset('images/gcash-deposit-qr.png'), false)
+            ->assertSee('Remaining balance');
+    }
+
+    public function test_bill_creation_rejects_a_downpayment_greater_than_the_final_total(): void
+    {
+        $staff = User::factory()->create(['role' => 'staff']);
+        $patient = $this->createPatient('P-2026-00202');
+        $service = Service::factory()->create(['price' => 1200]);
+        $appointment = Appointment::factory()->for($patient)->for($service)->create([
+            'status' => 'in_consultation',
+        ]);
+        $treatingDentist = User::factory()->create([
+            'role' => 'doctor',
+            'branch_id' => $appointment->branch_id,
+        ]);
+        DentalRecord::factory()->for($patient)->for($appointment)->create([
+            'treating_dentist_id' => $treatingDentist->id,
+        ]);
+
+        $this->actingAs($staff)
+            ->post(route('clinic.bills.store', $appointment), [
+                'discount_type' => 'none',
+                'downpayment_amount' => '1,200.01',
+                'downpayment_method' => 'gcash',
+            ])
+            ->assertSessionHasErrors([
+                'downpayment_amount' => 'The downpayment cannot exceed the final bill total.',
+            ]);
+
+        $this->assertDatabaseCount('bills', 0);
+        $this->assertDatabaseCount('payments', 0);
+        $this->assertDatabaseCount('receipts', 0);
+        $this->assertSame('in_consultation', $appointment->fresh()->status);
+    }
+
     public function test_new_bill_rejects_discount_percentages_outside_zero_to_one_hundred(): void
     {
         $staff = User::factory()->create(['role' => 'staff']);

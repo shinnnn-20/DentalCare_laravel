@@ -17,7 +17,7 @@
                 </div>
                 <p class="mt-2 text-sm text-slate-500">{{ $appointment->patient->user->name }} · Appointment #{{ $appointment->id }}</p>
             </div>
-            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}" data-confirm="Create this bill with the displayed services, final amounts, and discount?" data-confirm-title="Confirm bill" data-confirm-accept="Create bill">
+            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}" data-confirm="Create this bill with the displayed services, final amounts, discount, and any downpayment?" data-confirm-title="Confirm bill" data-confirm-accept="Create bill">
                 @csrf
                 @include('billing._dentist-select', ['service' => $services->first()])
                 @if ($appointment->service->requires_price_confirmation)
@@ -46,6 +46,7 @@
                     </label>
                 </div>
                 @include('billing._discount-card-number')
+                @include('billing._downpayment-fields')
                 <div class="grid gap-1 rounded-xl border border-teal-100 bg-teal-50/60 p-4 text-sm">
                     <p>Calculated discount amount: <strong data-discount-amount>{{ config('clinic.currency_symbol') }}0.00</strong></p>
                     <p>Final bill total: <strong data-discounted-total>{{ config('clinic.currency_symbol') }}0.00</strong></p>
@@ -75,7 +76,7 @@
                 <p class="mt-3 text-sm text-slate-500 border-t border-slate-200 pt-2">{{ $appointment->patient->user->name }} · Appointment #{{ $appointment->id }}</p>
             </div>
 
-            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}" data-confirm="Create this bill with the displayed services, final amounts, and discount?" data-confirm-title="Confirm bill" data-confirm-accept="Create bill">
+            <form method="POST" action="{{ route('clinic.bills.store', $appointment) }}" class="mt-5 grid gap-4" data-bill-discount data-bill-base-cents="{{ $fixedSubtotalCents }}" data-confirm="Create this bill with the displayed services, final amounts, discount, and any downpayment?" data-confirm-title="Confirm bill" data-confirm-accept="Create bill">
                 @csrf
                 @foreach ($services as $service)
                     @include('billing._dentist-select', ['service' => $service])
@@ -114,6 +115,7 @@
                     </label>
                 </div>
                 @include('billing._discount-card-number')
+                @include('billing._downpayment-fields')
                 <div class="grid gap-1 rounded-xl border border-teal-100 bg-teal-50/60 p-4 text-sm">
                     <p>Calculated discount amount: <strong data-discount-amount>{{ config('clinic.currency_symbol') }}0.00</strong></p>
                     <p>Final bill total: <strong data-discounted-total>{{ config('clinic.currency_symbol') }}0.00</strong></p>

@@ -130,11 +130,12 @@ A dental record must be saved before a bill can be created for the appointment.
 
 1. After the dental record is saved, open **Create bill** for the appointment.
 2. Review the service items and amounts carefully. Apply any appropriate discount and confirm the final bill amount.
-3. Select **Create bill**.
-4. In **Billing & payments**, find the bill and check its total and remaining balance.
-5. When payment is received, choose the payment method and enter the amount received and the amount applied to the bill. For cash, the amount received may be greater than the amount applied; the difference is recorded as change. For other methods, enter the exact amount being applied.
-6. Select **Record payment**. The system updates the bill and generates an Acknowledgement Receipt.
-7. Open or print the receipt for the patient. Remind the patient that it is not an Official Receipt or a BIR-compliant Sales Invoice.
+3. If a downpayment has already been received and verified, enter its amount and payment method. The system applies it to the bill and generates a receipt.
+4. Select **Create bill**.
+5. In **Billing & payments**, find the bill and check its total and remaining balance. Patients can also see the GCash QR code and remaining balance in **My billing**.
+6. For a GCash payment, have the patient scan the QR code, then verify the transfer before recording it. Choose the payment method and enter the amount received and the amount applied to the bill. For cash, the amount received may be greater than the amount applied; the difference is recorded as change. For other methods, enter the exact amount being applied.
+7. Select **Record payment**. The system updates the bill and generates an Acknowledgement Receipt.
+8. Open or print the receipt for the patient. Remind the patient that it is not an Official Receipt or a BIR-compliant Sales Invoice.
 
 Partial payments are allowed. The appointment is marked completed after treatment is recorded and the bill is fully paid. If a later add-on service creates a balance, the appointment may return to billed status until the balance is paid.
 
