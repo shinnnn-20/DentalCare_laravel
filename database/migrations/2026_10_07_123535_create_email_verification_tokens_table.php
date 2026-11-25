@@ -16,7 +16,7 @@ return new class extends Migration
             $table->foreignId('user_id')->primary()->constrained()->cascadeOnDelete();
             $table->char('token_hash', 64)->unique();
             $table->timestamp('expires_at')->index();
-            $table->timestamp('created_at');
+            $table->timestamp('created_at')->useCurrent();
         });
 
         DB::table('users')

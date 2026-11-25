@@ -20,10 +20,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use RuntimeException;
+use Throwable;
 
 class AppointmentController extends Controller
 {
@@ -63,7 +65,7 @@ class AppointmentController extends Controller
         }
 
         $appointments = Appointment::query()
-            ->with(['patient.user', 'service', 'services', 'branch', 'queueEntry', 'dentalRecord', 'bill.items'])
+            ->with(['patient.user', 'service', 'services', 'branch', 'queueEntry', 'dentalRecord', 'bill.items', 'paymentProofReviewer'])
             ->when($filters['appointment_id'] ?? null, fn ($query, $appointmentId) => $query->whereKey($appointmentId))
             ->when($request->user()->role === 'patient', fn ($query) => $query->whereBelongsTo($request->user()->patient()->firstOrFail()))
             ->when($hasAssignedBranch, fn ($query) => $query->where('branch_id', $user->branch_id))
@@ -381,6 +383,10 @@ class AppointmentController extends Controller
         $isDoctor = $user->hasRole('doctor');
         abort_unless($isPatient || $user->hasRole('admin', 'staff', 'doctor'), 403);
         abort_if($user->hasRole('doctor') && $user->branch_id === null, 403);
+        if ($isPatient && ! $request->filled('payment_method')) {
+            $request->merge(['payment_method' => 'walk_in']);
+        }
+        $isGcashRequest = $isPatient && $request->input('payment_method') === 'gcash';
         if ($isDoctor && ! $request->exists('booking_mode')) {
             $request->merge(['booking_mode' => 'walk_in']);
         }
@@ -406,6 +412,10 @@ class AppointmentController extends Controller
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
             'patient_id' => [$isPatient ? 'nullable' : 'required', 'integer', 'exists:patients,id'],
             'booking_mode' => [$isDoctor ? 'sometimes' : 'prohibited', Rule::in(['walk_in', 'appointment'])],
+            'payment_method' => [$isPatient ? 'required' : 'prohibited', Rule::in(['walk_in', 'gcash'])],
+            'payment_proof' => $isGcashRequest
+                ? ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120']
+                : ['prohibited'],
             'service_id' => [empty($serviceIds) ? 'required' : 'nullable', 'integer', 'exists:services,id'],
             'service_ids' => ['nullable', 'array'],
             'service_ids.*' => ['integer', 'exists:services,id'],
@@ -448,41 +458,61 @@ class AppointmentController extends Controller
 
         $requiresBranchApproval = $isScheduledAppointment
             && (int) $user->branch_id !== $branchId;
-        $appointment = DB::transaction(function () use ($isPatient, $isScheduledRequest, $isScheduledAppointment, $patient, $services, $startsAt, $durationMinutes, $data, $request, $branchId): Appointment {
-            Branch::query()->whereKey($branchId)->lockForUpdate()->firstOrFail();
-            if ($isScheduledRequest) {
-                $this->ensureAppointmentDateAvailable($startsAt, $branchId);
-            }
-            $slotKeys = [];
-            if (! $isScheduledRequest) {
-                $this->ensureAppointmentAvailability($startsAt, $durationMinutes, $branchId);
-                $slotKeys = $this->appointmentSlotKeys($startsAt, $durationMinutes);
-                $this->claimAppointmentSlots($slotKeys, $branchId);
-            }
-            $appointment = Appointment::create([
-                'patient_id' => $patient->id,
-                'branch_id' => $branchId,
-                'service_id' => $services->first()->id,
-                'created_by' => $request->user()->id,
-                'type' => $isPatient ? 'online' : ($isScheduledAppointment ? 'appointment' : 'walk_in'),
-                'starts_at' => $startsAt,
-                'duration_minutes' => $durationMinutes,
-                'status' => $isScheduledRequest ? 'pending' : 'checked_in',
-                'notes' => $data['notes'] ?? null,
-            ]);
+        $proofPath = null;
+        try {
+            $appointment = DB::transaction(function () use ($isPatient, $isGcashRequest, $isScheduledRequest, $isScheduledAppointment, $patient, $services, $startsAt, $durationMinutes, $data, $request, $branchId, &$proofPath): Appointment {
+                Branch::query()->whereKey($branchId)->lockForUpdate()->firstOrFail();
+                if ($isScheduledRequest) {
+                    $this->ensureAppointmentDateAvailable($startsAt, $branchId);
+                }
+                $slotKeys = [];
+                if (! $isScheduledRequest) {
+                    $this->ensureAppointmentAvailability($startsAt, $durationMinutes, $branchId);
+                    $slotKeys = $this->appointmentSlotKeys($startsAt, $durationMinutes);
+                    $this->claimAppointmentSlots($slotKeys, $branchId);
+                }
+                $appointment = Appointment::create([
+                    'patient_id' => $patient->id,
+                    'branch_id' => $branchId,
+                    'service_id' => $services->first()->id,
+                    'created_by' => $request->user()->id,
+                    'payment_method' => $isPatient ? $data['payment_method'] : null,
+                    'payment_proof_status' => $isGcashRequest ? 'pending_review' : null,
+                    'type' => $isPatient ? 'online' : ($isScheduledAppointment ? 'appointment' : 'walk_in'),
+                    'starts_at' => $startsAt,
+                    'duration_minutes' => $durationMinutes,
+                    'status' => $isScheduledRequest ? 'pending' : 'checked_in',
+                    'notes' => $data['notes'] ?? null,
+                ]);
 
-            $appointment->services()->sync($services->pluck('id'));
+                $appointment->services()->sync($services->pluck('id'));
 
-            if (! $isScheduledRequest) {
-                $this->attachAppointmentSlots($slotKeys, $branchId, $appointment->id);
+                if ($isGcashRequest) {
+                    $proofPath = $request->file('payment_proof')->store('appointment-payment-proofs', 'local');
+                    if (! is_string($proofPath)) {
+                        throw new RuntimeException('The GCash receipt image could not be stored.');
+                    }
+
+                    $appointment->update(['payment_proof_path' => $proofPath]);
+                }
+
+                if (! $isScheduledRequest) {
+                    $this->attachAppointmentSlots($slotKeys, $branchId, $appointment->id);
+                }
+
+                if (! $isPatient && ! $isScheduledAppointment) {
+                    $this->addToQueue($appointment);
+                }
+
+                return $appointment;
+            });
+        } catch (Throwable $exception) {
+            if (is_string($proofPath)) {
+                Storage::disk('local')->delete($proofPath);
             }
 
-            if (! $isPatient && ! $isScheduledAppointment) {
-                $this->addToQueue($appointment);
-            }
-
-            return $appointment;
-        });
+            throw $exception;
+        }
 
         $scheduleLabel = $this->formatAppointmentSchedule($appointment, 'M j, Y g:i A', 'M j, Y');
         $auditTrail->record(
@@ -677,6 +707,16 @@ class AppointmentController extends Controller
 
             if (! in_array($lockedAppointment->status, $allowedFrom, true)) {
                 throw ValidationException::withMessages(['status' => 'This appointment cannot be changed from its current status.']);
+            }
+
+            if (
+                $action === 'approve'
+                && $lockedAppointment->payment_method === 'gcash'
+                && $lockedAppointment->payment_proof_status !== 'verified'
+            ) {
+                throw ValidationException::withMessages([
+                    'status' => 'Verify the GCash receipt before approving this appointment.',
+                ]);
             }
 
             if ($action === 'approve' && $lockedAppointment->branch_id === null) {

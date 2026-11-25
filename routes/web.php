@@ -4,6 +4,7 @@ use App\Http\Controllers\AccountPasswordController;
 use App\Http\Controllers\AdditionalServiceController;
 use App\Http\Controllers\AppointmentAvailabilityController;
 use App\Http\Controllers\AppointmentController;
+use App\Http\Controllers\AppointmentPaymentProofController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ClinicNotificationController;
 use App\Http\Controllers\ClinicWorkflowController;
@@ -81,12 +82,17 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::get('/appointments/availability', [AppointmentController::class, 'availability'])->name('appointments.availability');
     Route::get('/appointments', [AppointmentController::class, 'index'])->name('appointments.index');
     Route::post('/appointments', [AppointmentController::class, 'store'])->name('appointments.store');
+    Route::get('/appointments/{appointment}/payment-proof', [AppointmentPaymentProofController::class, 'showProof'])
+        ->name('appointments.payment-proof');
     Route::post('/clinic/appointment-capacities', [AppointmentController::class, 'storeDailyCapacity'])
         ->middleware('role:admin,staff')
         ->name('clinic.appointment-capacities.store');
     Route::post('/appointments/{appointment}/action/{action}', [AppointmentController::class, 'transition'])
         ->whereIn('action', ['approve', 'reject', 'cancel', 'call', 'consult', 'no-show'])
         ->name('appointments.transition');
+    Route::post('/appointments/{appointment}/payment-proof', [AppointmentPaymentProofController::class, 'resubmitProof'])
+        ->middleware('role:patient')
+        ->name('appointments.payment-proof.resubmit');
     Route::patch('/clinic/appointments/{appointment}/reschedule', [AppointmentController::class, 'reschedule'])
         ->middleware('role:admin,staff,doctor')
         ->name('clinic.appointments.reschedule');
@@ -102,6 +108,9 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     });
 
     Route::prefix('clinic')->name('clinic.')->middleware('role:admin,staff,doctor')->group(function (): void {
+        Route::patch('/appointments/{appointment}/payment-proof', [AppointmentPaymentProofController::class, 'reviewProof'])
+            ->middleware('role:admin,staff')
+            ->name('appointments.payment-proof.review');
         Route::get('/appointment-records', [AppointmentController::class, 'index'])->name('appointment-records');
         Route::get('/patients', [PatientController::class, 'index'])->name('patients.index');
         Route::get('/patients/create', [PatientController::class, 'create'])

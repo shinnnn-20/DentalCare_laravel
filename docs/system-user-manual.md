@@ -43,6 +43,12 @@ The schedule uses 30-minute appointment slots, Monday through Saturday, from 10:
 
 If the request is **Rejected**, contact the clinic to discuss another time. If **Cancel** is available beside an appointment, you can use it to cancel a pending or approved appointment. Contact the clinic if you need help changing an appointment.
 
+### Submit GCash receipt proof
+
+When requesting an appointment, choose **Pay at clinic (walk-in)** or **GCash (receipt review)**. For GCash, use the clinic QR code shown below Notes as arranged with the clinic, then upload a JPG, PNG, or WebP screenshot of the receipt (up to 5 MB). No preset payment amount is required when booking.
+
+The appointment remains **Pending** until the clinic reviews it. Staff must verify a GCash receipt before they can approve the appointment, and verification does not itself approve the appointment or pay its final bill. If staff rejects the receipt, upload a replacement from the appointment record while the appointment is pending or approved.
+
 ### Visit the clinic
 
 1. Arrive at the branch and appointment time confirmed by the clinic.
@@ -84,6 +90,8 @@ Clinic team members sign in with an account created by the clinic administrator.
 5. To change a future appointment time, use the appointment's rescheduling option and select an available time.
 
 Patients can see the appointment status in their portal. Approval and rejection may also trigger a clinic notification.
+
+For GCash bookings, open **Appointment Records**, select **View receipt screenshot**, and compare the proof with the payment received. Use **Verify receipt** or **Reject receipt**. Verification does not approve the appointment; after verifying it, select **Approve** separately. If the receipt is rejected, the patient can submit a replacement while the appointment is pending or approved.
 
 ### Register a walk-in
 

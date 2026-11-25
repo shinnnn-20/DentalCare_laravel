@@ -20,7 +20,7 @@
                     </div>
                 </div>
             </div>
-            <form method="POST" action="{{ route('appointments.store') }}" class="grid gap-5 p-5 sm:grid-cols-2 sm:p-7 xl:grid-cols-12" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-schedule-confirm="{{ auth()->user()->role === 'patient' ? 'Submit this appointment date for front-desk approval?' : 'Register this walk-in appointment and add it to the queue?' }}" data-schedule-confirm-title="Confirm appointment" @if (auth()->user()->role === 'patient') data-patient-booking data-max-treatments="2" @endif @if (auth()->user()->hasRole('doctor')) data-doctor-booking data-doctor-branch-id="{{ auth()->user()->branch_id }}" @endif>
+            <form method="POST" action="{{ route('appointments.store') }}" class="grid gap-5 p-5 sm:grid-cols-2 sm:p-7 xl:grid-cols-12" data-appointment-schedule-form data-availability-url="{{ route('appointments.availability') }}" data-current-month="{{ today(config('clinic.timezone'))->format('Y-m') }}" data-schedule-confirm="{{ auth()->user()->role === 'patient' ? 'Submit this appointment date for front-desk approval?' : 'Register this walk-in appointment and add it to the queue?' }}" data-schedule-confirm-title="Confirm appointment" @if (auth()->user()->role === 'patient') enctype="multipart/form-data" data-patient-booking data-max-treatments="2" @endif @if (auth()->user()->hasRole('doctor')) data-doctor-booking data-doctor-branch-id="{{ auth()->user()->branch_id }}" @endif>
                 @csrf
                 <label class="form-label sm:col-span-2 xl:col-span-4">Branch
                     <select class="form-input" name="branch_id" data-branch-select required>
@@ -200,7 +200,34 @@
                     <p class="hidden rounded-xl bg-teal-50 px-4 py-3 text-sm font-medium text-teal-900 sm:col-span-2 xl:col-span-12" data-availability-message role="status" aria-live="polite"></p>
                     <p class="hidden rounded-xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800 sm:col-span-2 xl:col-span-12" data-sunday-error role="alert">The Dental Clinic is closed on Sundays. Please select another date.</p>
                 @endif
-                <label class="form-label sm:col-span-2 xl:col-span-12">Notes <span class="font-normal text-slate-400">(optional)</span><input class="form-input" name="notes" maxlength="2000" placeholder="Reason for visit"></label>
+                @if (auth()->user()->role === 'patient')
+                    <label class="form-label sm:col-span-2 xl:col-span-6">Payment method
+                        <select class="form-input" name="payment_method" data-patient-payment-method required>
+                            <option value="walk_in" @selected(old('payment_method', 'walk_in') === 'walk_in')>Pay at clinic (walk-in)</option>
+                            <option value="gcash" @selected(old('payment_method') === 'gcash')>GCash (receipt review)</option>
+                        </select>
+                        @error('payment_method')
+                            <span class="mt-1 block text-sm text-rose-700">{{ $message }}</span>
+                        @enderror
+                    </label>
+                @endif
+                <label class="form-label sm:col-span-2 xl:col-span-12">Notes <span class="font-normal text-slate-400">(optional)</span><input class="form-input" name="notes" maxlength="2000" placeholder="Reason for visit" value="{{ old('notes') }}"></label>
+                @if (auth()->user()->role === 'patient')
+                    <section class="grid gap-4 rounded-2xl border border-teal-200 bg-teal-50/60 p-4 sm:col-span-2 sm:p-5 xl:col-span-12" data-gcash-receipt-panel @class(['hidden' => old('payment_method', 'walk_in') !== 'gcash'])>
+                        <div>
+                            <h3 class="font-semibold text-slate-900">GCash receipt for appointment review</h3>
+                            <p class="mt-1 text-sm text-slate-700">Use the clinic's GCash QR code as arranged with the clinic, then upload your receipt screenshot. No preset payment amount is required when booking. Staff must verify the receipt before they can approve your appointment. Receipt verification does not approve the appointment or pay your final bill.</p>
+                        </div>
+                        <img class="mx-auto w-full max-w-64 rounded-xl border border-slate-200 bg-white p-2" src="{{ asset('images/gcash-deposit-qr.png') }}" alt="Clinic GCash payment QR code">
+                        <label class="form-label">Upload GCash receipt screenshot
+                            <input class="form-input" type="file" name="payment_proof" accept="image/jpeg,image/png,image/webp" data-payment-proof required @disabled(old('payment_method', 'walk_in') !== 'gcash')>
+                            <span class="mt-1 block text-xs font-normal text-slate-500">JPG, PNG, or WebP; maximum 5 MB.</span>
+                            @error('payment_proof')
+                                <span class="mt-1 block text-sm text-rose-700">{{ $message }}</span>
+                            @enderror
+                        </label>
+                    </section>
+                @endif
                 <div class="sm:col-span-2 xl:col-span-12">
                     <button class="btn-primary w-full sm:w-auto" data-booking-submit>{{ auth()->user()->role === 'patient' ? 'Submit appointment request' : 'Add walk-in to queue' }}</button>
                 </div>
@@ -366,9 +393,60 @@
                                 @endforelse
                             </div>
                         </td><td data-label="Type" class="capitalize">{{ str_replace('_', ' ', $appointment->type) }}</td>
-                        <td data-label="Status"><span class="status-badge capitalize">{{ str_replace('_', ' ', $appointment->status) }}</span></td>
+                        <td data-label="Status">
+                            <span class="status-badge capitalize">{{ str_replace('_', ' ', $appointment->status) }}</span>
+                            @if ($appointment->payment_method === 'walk_in')
+                                <p class="mt-1 text-xs text-slate-600">Payment: Pay at clinic</p>
+                            @elseif ($appointment->payment_method === 'gcash')
+                                <p class="mt-1 text-xs font-medium text-slate-700">Payment: GCash</p>
+                                <p class="text-xs text-slate-600">Receipt: {{ match ($appointment->payment_proof_status) {
+                                    'pending_review' => 'Pending staff review',
+                                    'verified' => 'Verified',
+                                    'rejected' => 'Rejected',
+                                    default => 'Not submitted',
+                                } }}</p>
+                            @endif
+                        </td>
                         <td data-label="Queue">{{ $appointment->queueEntry?->queue_number ?? '—' }}</td>
                         <td data-label="Actions"><div class="flex flex-wrap gap-2">
+                            @if (
+                                $isAppointmentRecordsPage
+                                && auth()->user()->hasRole('admin', 'staff')
+                                && $appointment->payment_method === 'gcash'
+                                && $appointment->payment_proof_path !== null
+                            )
+                                <a class="btn-small" href="{{ route('appointments.payment-proof', $appointment) }}" target="_blank" rel="noopener">View receipt screenshot</a>
+                                @if ($appointment->payment_proof_status === 'pending_review')
+                                    <form method="POST" action="{{ route('clinic.appointments.payment-proof.review', $appointment) }}" data-confirm="Confirm that the GCash receipt matches the payment received?" data-confirm-title="Verify GCash receipt" data-confirm-accept="Verify receipt">
+                                        @csrf
+                                        @method('PATCH')
+                                        <input type="hidden" name="status" value="verified">
+                                        <button class="btn-small">Verify receipt</button>
+                                    </form>
+                                    <form method="POST" action="{{ route('clinic.appointments.payment-proof.review', $appointment) }}" data-confirm="Reject this GCash receipt? The patient can submit a replacement while the appointment is active." data-confirm-title="Reject GCash receipt" data-confirm-accept="Reject receipt" data-confirm-variant="warning">
+                                        @csrf
+                                        @method('PATCH')
+                                        <input type="hidden" name="status" value="rejected">
+                                        <button class="btn-danger">Reject receipt</button>
+                                    </form>
+                                @elseif ($appointment->payment_proof_reviewed_at)
+                                    <span class="text-xs text-slate-500">Reviewed by {{ $appointment->paymentProofReviewer?->name ?? 'Clinic staff' }} · {{ $appointment->payment_proof_reviewed_at->timezone(config('clinic.timezone'))->format('M j, Y g:i A') }}</span>
+                                @endif
+                            @endif
+                            @if (
+                                auth()->user()->role === 'patient'
+                                && $appointment->payment_method === 'gcash'
+                                && $appointment->payment_proof_status === 'rejected'
+                                && in_array($appointment->status, ['pending', 'approved'], true)
+                            )
+                                <form method="POST" action="{{ route('appointments.payment-proof.resubmit', $appointment) }}" enctype="multipart/form-data" class="grid max-w-xs gap-2">
+                                    @csrf
+                                    <label class="form-label text-xs">Upload replacement receipt
+                                        <input class="form-input" type="file" name="payment_proof" accept="image/jpeg,image/png,image/webp" required>
+                                    </label>
+                                    <button class="btn-small justify-self-start">Resubmit receipt</button>
+                                </form>
+                            @endif
                             @if (auth()->user()->role === 'patient' && in_array($appointment->status, ['pending', 'approved'], true))
                                 <form method="POST" action="{{ route('appointments.transition', [$appointment, 'cancel']) }}" data-confirm="Cancel this appointment request?" data-confirm-title="Cancel appointment" data-confirm-accept="Cancel appointment" data-confirm-variant="warning">@csrf<button class="btn-danger">Cancel</button></form>
                             @elseif (auth()->user()->hasRole('admin', 'staff', 'doctor'))
@@ -429,7 +507,12 @@
                                 @endif
                                 @if (auth()->user()->hasRole('admin', 'staff', 'doctor'))
                                     @if ($appointment->status === 'pending' && auth()->user()->hasRole('admin', 'staff'))
-                                        @if (! in_array($appointment->type, ['online', 'appointment'], true))
+                                        @if (
+                                            $appointment->payment_method === 'gcash'
+                                            && $appointment->payment_proof_status !== 'verified'
+                                        )
+                                            <p class="max-w-48 text-xs font-medium text-amber-800">Verify the GCash receipt before approving.</p>
+                                        @elseif (! in_array($appointment->type, ['online', 'appointment'], true))
                                             <form method="POST" action="{{ route('appointments.transition', [$appointment, 'approve']) }}" data-confirm="Approve this appointment for the selected date?" data-confirm-title="Approve appointment" data-confirm-accept="Approve">@csrf<button class="btn-small">Approve</button></form>
                                         @elseif (
                                             $capacityManagementBranchId !== (int) $appointment->branch_id
@@ -486,6 +569,9 @@
             const sundayMessage = 'The Dental Clinic is closed on Sundays. Please select another date.';
             const patientBooking = form.hasAttribute('data-patient-booking');
             const doctorBooking = form.hasAttribute('data-doctor-booking');
+            const paymentMethodSelect = form.querySelector('[data-patient-payment-method]');
+            const gcashReceiptPanel = form.querySelector('[data-gcash-receipt-panel]');
+            const paymentProofInput = form.querySelector('[data-payment-proof]');
             const selectedDateLabel = form.querySelector('[data-selected-date-label]');
             const bookingModeSelect = form.querySelector('[data-booking-mode]');
             const walkInPatientRegistrationButton = form.querySelector('[data-walk-in-patient-register]');
@@ -496,6 +582,16 @@
             const excludedAppointmentBranchId = form.dataset.excludeAppointmentBranchId;
             const serviceSelects = form.querySelectorAll('[data-service-category]');
             const serviceTreatmentPickers = [];
+            const updateGcashDepositPanel = () => {
+                const isGcashSelected = patientBooking && paymentMethodSelect?.value === 'gcash';
+                gcashReceiptPanel?.classList.toggle('hidden', !isGcashSelected);
+                if (paymentProofInput) {
+                    paymentProofInput.disabled = !isGcashSelected;
+                    paymentProofInput.required = isGcashSelected;
+                }
+            };
+            paymentMethodSelect?.addEventListener('change', updateGcashDepositPanel);
+            updateGcashDepositPanel();
 
             serviceSelects.forEach((select, index) => {
                 const picker = document.createElement('div');
